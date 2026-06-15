@@ -1,0 +1,42 @@
+#!/bin/bash
+# 规则：dev-ai-release 只接受 cherry-pick，禁止直接提交和 merge
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [ "$BRANCH" != "dev-ai-release" ]; then
+  exit 0
+fi
+
+# 检查 commit message 是否包含 cherry-pick 签名
+MSG_FILE="$1"
+if [ ! -f "$MSG_FILE" ]; then
+  # amend / merge 场景，允许通过（由 prepare-commit-msg 辅助判断）
+  exit 0
+fi
+
+MSG=$(cat "$MSG_FILE")
+
+# cherry-pick 自动追加的签名
+if echo "$MSG" | grep -q "(cherry picked from commit"; then
+  exit 0
+fi
+
+# 手动 cherry-pick 标记：commit message 以 [cherry-pick] 开头
+if echo "$MSG" | grep -q "^\[cherry-pick\]"; then
+  exit 0
+fi
+
+echo "❌ dev-ai-release 只接受 cherry-pick，禁止直接提交！"
+echo ""
+echo "正确流程："
+echo "  git checkout dev-ai-release"
+echo "  git cherry-pick -x <commit-hash>   # 从 dev-ai 摘取提交"
+echo "  # 或者手动标记："
+echo "  git commit -m '[cherry-pick] <消息>'"
+echo ""
+echo "发布完整流程："
+echo "  git checkout dev-ai-release"
+echo "  git rebase dev                     # 基于最新上游"
+echo "  git cherry-pick -x <hash1> <hash2> # 摘取 dev-ai 的改动"
+echo "  bun run build --single             # 编译"
+echo "  cp dist/*/opencode ~/.opencode/bin/ # 替换"
+echo "  git push origin dev-ai-release"
+exit 1
