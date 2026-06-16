@@ -1,3 +1,57 @@
+## Deploy & Update (AI Operations Guide)
+
+This section covers how to build, deploy, replace, and update the opencode binary on this machine.
+Follow these steps exactly and in order.
+
+### Platform
+
+- OS: Linux, Arch: x64
+- Install path: `~/.opencode/bin/opencode`
+- Build tool: Bun (in `packages/opencode/`)
+
+### Quick Build (current platform only)
+
+```bash
+cd packages/opencode && bun run build --single
+```
+
+Output: `dist/opencode-linux-x64/bin/opencode`
+
+### Quick Build + Replace (compile & hot-swap)
+
+```bash
+cd packages/opencode && bun run build --single && \
+  cp dist/opencode-linux-x64/bin/opencode ~/.opencode/bin/opencode
+```
+
+After replacement, the user must **restart opencode** for the new binary to take effect.
+
+### Full Update Workflow
+
+When user says "update opencode" or "pull latest and rebuild":
+
+1. `git pull origin dev` (or the current branch)
+2. `cd packages/opencode && bun run build --single`
+3. `cp dist/opencode-linux-x64/bin/opencode ~/.opencode/bin/opencode`
+4. Tell user to restart opencode
+
+### Build Flags
+
+| Flag | Effect |
+|------|--------|
+| `--single` | Build only for current platform (much faster) |
+| `--baseline` | Also build baseline (no AVX2) variant |
+| `--skip-install` | Skip `bun install` step |
+| `--sourcemaps` | Include sourcemaps in output |
+
+### Troubleshooting
+
+- **typecheck fails on push**: pre-push hook runs `turbo typecheck`. Only fix errors in changed packages. If errors are pre-existing and unrelated, use `git push --no-verify` with user confirmation.
+- **build fails with missing deps**: run `bun install` in repo root first.
+- **binary doesn't start**: check `~/.opencode/bin/opencode --version`, verify arch matches.
+
+---
+
 - To regenerate the JavaScript SDK, run `./packages/sdk/js/script/build.ts`.
 - The default branch in this repo is `dev`.
 - Local `main` ref may not exist; use `dev` or `origin/dev` for diffs.
