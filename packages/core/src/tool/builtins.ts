@@ -14,6 +14,10 @@ import { TodoWriteTool } from "./todowrite"
 import { WebFetchTool } from "./webfetch"
 import { WebSearchTool } from "./websearch"
 import { WriteTool } from "./write"
+import { MemoryRecordTool } from "./memory-record"
+import { MemoryReadTool } from "./memory-read"
+import { MemoryReviewTool } from "./memory-review"
+import { DreamingCompressTool } from "./dreaming-compress"
 
 /**
  * Composes only the shipped Location-scoped built-in tool transforms.
@@ -41,4 +45,8 @@ export const locationLayer = Layer.mergeAll(
   WebFetchTool.layer,
   WebSearchTool.layer.pipe(Layer.provide(WebSearchTool.defaultConfigLayer)),
   WriteTool.layer,
+  MemoryRecordTool.layer,
+  MemoryReadTool.layer,
+  MemoryReviewTool.layer,
+  DreamingCompressTool.layer,
 )

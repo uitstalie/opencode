@@ -547,6 +547,84 @@ export const layer = Layer.effect(
             })
         }
         yield* events.publish(Event.Compacted, { sessionID: input.sessionID })
+
+        // Launch memory-extract agent (fire-and-forget daemon)
+        yield* Effect.gen(function* () {
+          yield* Effect.log("[memory-extract] daemon triggered for session " + input.sessionID)
+
+          const { SessionPrompt: mod } = yield* Effect.promise(() => import("@/session/prompt"))
+          const prompt = yield* Effect.serviceOption(mod.Service)
+          if (prompt._tag === "None") {
+            yield* Effect.log("[memory-extract] SessionPrompt service not available, aborting")
+            return
+          }
+
+          const memAgent = yield* agents.get("memory-extract")
+          if (!memAgent) {
+            yield* Effect.log("[memory-extract] agent not found in registry, aborting")
+            return
+          }
+          if (!userMessage.model) {
+            yield* Effect.log("[memory-extract] no model available, aborting")
+            return
+          }
+
+          const msgs = yield* session.messages({ sessionID: input.sessionID })
+          const history = msgs.slice(-20).map((m) => {
+            const role = m.info.role
+            const text = m.parts
+              .filter((p): p is Extract<typeof p, { type: "text" }> => p.type === "text")
+              .map((p) => p.text).join("\n")
+            return `[${role}]: ${text}`
+          }).join("\n\n")
+
+          yield* Effect.log("[memory-extract] creating child session, history lines: " + history.split("\n").length)
+
+          const child = yield* session.create({
+            parentID: input.sessionID,
+            title: "memory-extract",
+            agent: "memory-extract",
+            permission: [
+              { permission: "memory_record", pattern: "*", action: "allow" },
+              { permission: "memory_read", pattern: "*", action: "allow" },
+              { permission: "memory_review", pattern: "*", action: "allow" },
+              { permission: "dreaming_compress", pattern: "*", action: "allow" },
+              { permission: "question", pattern: "*", action: "allow" },
+            ],
+          })
+
+          yield* Effect.log("[memory-extract] child session created: " + child.id + " (parent: " + input.sessionID + ")")
+
+          yield* prompt.value.prompt({
+            sessionID: child.id,
+            agent: "memory-extract",
+            model: { modelID: userMessage.model.modelID, providerID: userMessage.model.providerID },
+            parts: [
+              {
+                type: "text",
+                text: [
+                  "请从以下对话中按三层结构提取长期记忆（项目层 → 全局层 → dreaming 层）：",
+                  "",
+                  "1. 先调用 memory_read(scope=project) 和 memory_read(scope=user) 了解已有记忆",
+                  "2. 分析对话，识别可提取的结论/偏好/决策",
+                  "3. 调用 memory_review 查重后，用 memory_record 写入",
+                  "4. 如果全局记忆 ≥ 10 条，调用 dreaming_compress(dryRun=true) 检查",
+                  "5. 无新记忆 → 回复「无新记忆」，不强行写入",
+                  "",
+                  "--- 对话历史 ---",
+                  history,
+                ].join("\n"),
+              },
+            ],
+          })
+
+          yield* Effect.log("[memory-extract] prompt submitted for child session: " + child.id)
+        }).pipe(
+          Effect.tapError((error) =>
+            Effect.logError("[memory-extract] daemon fiber failed: " + String(error)),
+          ),
+          Effect.forkDetach,
+        )
       }
       return result
     })

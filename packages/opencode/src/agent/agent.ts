@@ -14,6 +14,7 @@ import PROMPT_COMPACTION from "./prompt/compaction.txt"
 import PROMPT_EXPLORE from "./prompt/explore.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
+import PROMPT_MEMORY_EXTRACT from "./prompt/memory-extract.txt"
 import { Permission } from "@/permission"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
 import { Global } from "@opencode-ai/core/global"
@@ -259,6 +260,26 @@ export const layer = Layer.effect(
               user,
             ),
             prompt: PROMPT_SUMMARY,
+          },
+          "memory-extract": {
+            name: "memory-extract",
+            description: "Extract long-term memory from conversation history. Hidden agent triggered automatically after session compaction.",
+            mode: "primary",
+            options: {},
+            native: true,
+            hidden: true,
+            permission: Permission.merge(
+              defaults,
+              Permission.fromConfig({
+                memory_record: "allow",
+                memory_read: "allow",
+                memory_review: "allow",
+                dreaming_compress: "allow",
+                question: "allow",
+              }),
+              user,
+            ),
+            prompt: PROMPT_MEMORY_EXTRACT,
           },
         }
 
