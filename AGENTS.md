@@ -1,3 +1,14 @@
+# fake_opencode — opencode 源码开发与部署
+
+基于 [uitstalie/opencode](https://github.com/uitstalie/opencode.git) fork，进行定制开发和本地运行。
+插件系统已废弃，全部通过源码编译二进制运行。
+
+- **默认分支**：`dev`
+- **工作区**：本仓库即为可直接编辑的源码
+- 修改源码后需 编译 → 替换二进制 → 重启 opencode
+
+---
+
 ## Deploy & Update (AI Operations Guide)
 
 This section covers how to build, deploy, replace, and update the opencode binary on this machine.
