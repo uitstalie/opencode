@@ -37,6 +37,7 @@ import { SessionStatus } from "./status"
 import { LLM } from "./llm"
 import { enabled as templateEnabled } from "./prompt/template"
 import { PromptTemplate, TemplateSection } from "./prompt/template"
+import { loadRoleForPrompt } from "./prompt/role"
 import { Shell } from "@opencode-ai/core/shell"
 import { ShellID } from "@/tool/shell/id"
 import { FSUtil } from "@opencode-ai/core/fs-util"
@@ -1329,6 +1330,12 @@ export const layer = Layer.effect(
                     const capSection = new TemplateSection("capabilities")
                     capSection.content = skills
                     t.set(capSection)
+                  }
+                  const roleContent = loadRoleForPrompt()
+                  if (roleContent) {
+                    const styleSection = new TemplateSection("style")
+                    styleSection.content = roleContent
+                    t.set(styleSection)
                   }
                   return [t.render()]
                 })()
