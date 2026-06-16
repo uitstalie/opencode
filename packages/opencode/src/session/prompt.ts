@@ -35,6 +35,8 @@ import { Tool } from "@/tool/tool"
 import { Permission } from "@/permission"
 import { SessionStatus } from "./status"
 import { LLM } from "./llm"
+import { enabled as templateEnabled } from "./prompt/template"
+import { PromptTemplate, TemplateSection } from "./prompt/template"
 import { Shell } from "@opencode-ai/core/shell"
 import { ShellID } from "@/tool/shell/id"
 import { FSUtil } from "@opencode-ai/core/fs-util"
@@ -1312,7 +1314,25 @@ export const layer = Layer.effect(
               instruction.system().pipe(Effect.orDie),
               MessageV2.toModelMessagesEffect(msgs, model),
             ])
-            const system = [...env, ...instructions, ...(skills ? [skills] : [])]
+            const system = templateEnabled()
+              ? (() => {
+                  const t = new PromptTemplate()
+                  const envSection = new TemplateSection("environment")
+                  envSection.content = env.join("\n")
+                  t.set(envSection)
+                  if (instructions.length > 0) {
+                    const instrSection = new TemplateSection("instructions")
+                    instrSection.content = instructions.join("\n\n")
+                    t.set(instrSection)
+                  }
+                  if (skills) {
+                    const capSection = new TemplateSection("capabilities")
+                    capSection.content = skills
+                    t.set(capSection)
+                  }
+                  return [t.render()]
+                })()
+              : [...env, ...instructions, ...(skills ? [skills] : [])]
             const format = lastUser.format ?? { type: "text" as const }
             if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
             const result = yield* handle.process({
