@@ -285,10 +285,8 @@ export function createRoutes(
   )
 }
 
-export const routes = createRoutes()
-
 export const webHandler = lazy(() =>
-  HttpRouter.toWebHandler(routes, {
+  HttpRouter.toWebHandler(createRoutes(), {
     disableLogger: true,
     memoMap,
     middleware: disposeMiddleware,
