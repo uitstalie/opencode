@@ -214,6 +214,10 @@ const discoverSkills = Effect.fnUntraced(function* (
   }
 
   const configDirs = yield* config.directories()
+  yield* Effect.logInfo("scanning config dirs for skills", {
+    dirs: configDirs,
+    pattern: OPENCODE_SKILL_PATTERN,
+  })
   for (const dir of configDirs) {
     yield* scan(state, dir, OPENCODE_SKILL_PATTERN)
   }
@@ -237,10 +241,15 @@ const discoverSkills = Effect.fnUntraced(function* (
     }
   }
 
-  return {
+  const result = {
     matches: Array.from(state.matches),
     dirs: Array.from(state.dirs),
   }
+  yield* Effect.logInfo("discovered skill files", {
+    count: result.matches.length,
+    files: result.matches,
+  })
+  return result
 })
 
 const loadSkills = Effect.fnUntraced(function* (
@@ -253,7 +262,10 @@ const loadSkills = Effect.fnUntraced(function* (
     discard: true,
   })
 
-  yield* Effect.logInfo("init", { count: Object.keys(state.skills).length })
+  yield* Effect.logInfo("init", {
+    count: Object.keys(state.skills).length,
+    names: Object.keys(state.skills).toSorted(),
+  })
 })
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Skill") {}
