@@ -118,9 +118,20 @@ const add = Effect.fnUntraced(function* (state: State, match: string, events: Ev
     ),
   )
 
-  if (!md) return
+  if (!md) {
+    yield* Effect.logWarning("skill parse returned empty result", { skill: match })
+    return
+  }
 
-  if (!isSkillFrontmatter(md.data)) return
+  if (!isSkillFrontmatter(md.data)) {
+    yield* Effect.logWarning("skill frontmatter validation failed", {
+      skill: match,
+      isRecord: isRecord(md.data),
+      nameType: isRecord(md.data) ? typeof md.data.name : "N/A",
+      descType: isRecord(md.data) ? typeof md.data.description : "N/A",
+    })
+    return
+  }
 
   if (state.skills[md.data.name]) {
     yield* Effect.logWarning("duplicate skill name", {
