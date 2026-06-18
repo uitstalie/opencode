@@ -34,6 +34,15 @@ const CUSTOMIZE_OPENCODE_SKILL_DESCRIPTION =
   "Use ONLY when the user is editing or creating opencode's own configuration: opencode.json, opencode.jsonc, files under .opencode/, or files under ~/.config/opencode/. Also use when creating or fixing opencode agents, subagents, skills, plugins, MCP servers, or permission rules. Do not use for the user's own application code, or for any project that is not configuring opencode itself."
 const CUSTOMIZE_OPENCODE_SKILL_BODY = SkillPlugin.CustomizeOpencodeContent
 
+// Built-in skill that teaches agents how to write valid SKILL.md files.
+// YAML frontmatter failures (unquoted colons, encoding issues) are the most
+// common cause of silently-missing skills. This skill gives agents the format
+// rules so they don't repeat the same mistakes.
+const WRITE_SKILLS_NAME = "write-skills"
+const WRITE_SKILLS_DESCRIPTION =
+  "Use when creating, editing, or debugging opencode SKILL.md files. Covers YAML frontmatter rules, quoting requirements, file encoding, description best practices, and common silent failure modes."
+const WRITE_SKILLS_BODY = SkillPlugin.WriteSkillsContent
+
 export const Info = Schema.Struct({
   name: Schema.String,
   description: Schema.optional(Schema.String),
@@ -214,10 +223,6 @@ const discoverSkills = Effect.fnUntraced(function* (
   }
 
   const configDirs = yield* config.directories()
-  yield* Effect.logInfo("scanning config dirs for skills", {
-    dirs: configDirs,
-    pattern: OPENCODE_SKILL_PATTERN,
-  })
   for (const dir of configDirs) {
     yield* scan(state, dir, OPENCODE_SKILL_PATTERN)
   }
@@ -241,15 +246,10 @@ const discoverSkills = Effect.fnUntraced(function* (
     }
   }
 
-  const result = {
+  return {
     matches: Array.from(state.matches),
     dirs: Array.from(state.dirs),
   }
-  yield* Effect.logInfo("discovered skill files", {
-    count: result.matches.length,
-    files: result.matches,
-  })
-  return result
 })
 
 const loadSkills = Effect.fnUntraced(function* (
@@ -262,10 +262,7 @@ const loadSkills = Effect.fnUntraced(function* (
     discard: true,
   })
 
-  yield* Effect.logInfo("init", {
-    count: Object.keys(state.skills).length,
-    names: Object.keys(state.skills).toSorted(),
-  })
+  yield* Effect.logInfo("init", { count: Object.keys(state.skills).length })
 })
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Skill") {}
@@ -303,6 +300,12 @@ export const layer = Layer.effect(
           description: CUSTOMIZE_OPENCODE_SKILL_DESCRIPTION,
           location: "<built-in>",
           content: CUSTOMIZE_OPENCODE_SKILL_BODY,
+        }
+        s.skills[WRITE_SKILLS_NAME] = {
+          name: WRITE_SKILLS_NAME,
+          description: WRITE_SKILLS_DESCRIPTION,
+          location: "<built-in>",
+          content: WRITE_SKILLS_BODY,
         }
         yield* loadSkills(s, yield* InstanceState.get(discovered), events)
         return s

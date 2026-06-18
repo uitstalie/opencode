@@ -7,8 +7,10 @@ import { Effect } from "effect"
 import { AbsolutePath } from "../schema"
 import { SkillV2 } from "../skill"
 import customizeOpencodeContent from "./skill/customize-opencode.md" with { type: "text" }
+import writeSkillsContent from "./skill/write-skills.md" with { type: "text" }
 
 export const CustomizeOpencodeContent = customizeOpencodeContent
+export const WriteSkillsContent = writeSkillsContent
 
 export const Plugin = define({
   id: "skill",
@@ -23,6 +25,18 @@ export const Plugin = define({
               "Use ONLY when the user is editing or creating opencode's own configuration: opencode.json, opencode.jsonc, files under .opencode/, or files under ~/.config/opencode/. Also use when creating or fixing opencode agents, subagents, commands, skills, plugins, MCP servers, or permission rules. Do not use for the user's own application code, or for any project that is not configuring opencode itself.",
             location: AbsolutePath.make("/builtin/customize-opencode.md"),
             content: CustomizeOpencodeContent,
+          }),
+        }),
+      )
+      editor.source(
+        new SkillV2.EmbeddedSource({
+          type: "embedded",
+          skill: new SkillV2.Info({
+            name: "write-skills",
+            description:
+              "Use when creating, editing, or debugging opencode SKILL.md files. Covers YAML frontmatter rules, quoting requirements, file encoding, description best practices, and common silent failure modes.",
+            location: AbsolutePath.make("/builtin/write-skills.md"),
+            content: WriteSkillsContent,
           }),
         }),
       )
