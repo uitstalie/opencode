@@ -54,25 +54,6 @@ export type Prepared = {
 const mergeOptions = (target: Record<string, any>, source: Record<string, any> | undefined): Record<string, any> =>
   mergeDeep(target, source ?? {}) as Record<string, any>
 
-// ─── structured template builder ────────────────────────
-
-function buildStructuredSystemPrompt(input: PrepareInput): string {
-  // <identity> — provider prompt + agent mode prompt
-  const providerPrompt = input.agent.prompt
-    ? input.agent.prompt
-    : SystemPrompt.provider(input.model).join("\n")
-  const modeAttr = input.agent.mode ? ` mode="${input.agent.mode}"` : ""
-  const identity = `<identity${modeAttr}>\n${providerPrompt.trim()}\n</identity>`
-
-  // user.system (if present) appended
-  const userPart = input.user.system ? [input.user.system] : []
-
-  // <nudge>
-  const nudge = "<nudge>\n[CONSTRAINT NUDGE] memory_read(决策前) → compact_check\n</nudge>"
-
-  return [identity, ...input.system, ...userPart, nudge].join("\n")
-}
-
 // ─── prepare ────────────────────────────────────────────
 
 export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: PrepareInput) {
@@ -82,7 +63,9 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
   const useStructured = templateEnabled()
 
   const rawSystem = useStructured
-    ? buildStructuredSystemPrompt(input)
+    ? [input.system.join("\n"), ...(input.user.system ? [input.user.system] : [])]
+        .filter((x) => x)
+        .join("\n")
     : [
         ...(input.agent.prompt ? [input.agent.prompt] : SystemPrompt.provider(input.model)),
         ...input.system,

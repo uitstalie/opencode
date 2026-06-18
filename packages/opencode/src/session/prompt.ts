@@ -1,3 +1,4 @@
+import { readFileSync, existsSync } from "node:fs"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import path from "path"
@@ -84,6 +85,97 @@ function isOrphanedInterruptedTool(part: SessionV1.ToolPart) {
   // cleanup() marks abandoned tool_use blocks this way after retries/aborts.
   // They are not pending work and must not trigger an assistant-prefill request.
   return part.state.status === "error" && part.state.metadata?.interrupted === true
+}
+
+// ─── structured system prompt builder ────────────────────
+
+/** Load project memory from .opencode/memory/ for the <memory> section. */
+function loadMemoryForPrompt(worktree: string): string | null {
+  const memoryDir = path.join(worktree, ".opencode", "memory")
+  const files = ["conclusion.md", "tech.md"]
+  const parts: string[] = []
+  for (const file of files) {
+    const filepath = path.join(memoryDir, file)
+    if (existsSync(filepath)) {
+      const content = readFileSync(filepath, "utf-8").trim()
+      if (content) parts.push(content)
+    }
+  }
+  return parts.length > 0 ? parts.join("\n\n") : null
+}
+
+function buildStructuredSystem(input: {
+  env: string[]
+  instructions: string[]
+  skills: string | undefined
+  agent: Agent.Info
+  model: Provider.Model
+  worktree: string
+}): string[] {
+  const t = new PromptTemplate()
+
+  // <constraint> P0 — rules (path contains /rules/)
+  const constraintItems = input.instructions.filter(
+    (i) => i.includes("/rules/") || i.includes("\\rules\\"),
+  )
+  const instructionItems = input.instructions.filter((i) => !constraintItems.includes(i))
+
+  if (constraintItems.length > 0) {
+    const c = new TemplateSection("constraint")
+    c.content = constraintItems.join("\n\n")
+    t.set(c)
+  }
+
+  // <identity> P1 — agent prompt or provider default
+  const providerPrompt = input.agent.prompt
+    ? input.agent.prompt
+    : SystemPrompt.provider(input.model).join("\n")
+  const idSection = new TemplateSection("identity")
+  idSection.content = providerPrompt
+  if (input.agent.mode) idSection.mode = input.agent.mode
+  t.set(idSection)
+
+  // <environment> P2
+  const envSection = new TemplateSection("environment")
+  envSection.content = input.env.join("\n")
+  t.set(envSection)
+
+  // <instructions> P3 — non-rule instructions (AGENTS.md etc.)
+  if (instructionItems.length > 0) {
+    const instrSection = new TemplateSection("instructions")
+    instrSection.content = instructionItems.join("\n\n")
+    t.set(instrSection)
+  }
+
+  // <capabilities> P4
+  if (input.skills) {
+    const capSection = new TemplateSection("capabilities")
+    capSection.content = input.skills
+    t.set(capSection)
+  }
+
+  // <style> P5 — role
+  const roleContent = loadRoleForPrompt()
+  if (roleContent) {
+    const styleSection = new TemplateSection("style")
+    styleSection.content = roleContent
+    t.set(styleSection)
+  }
+
+  // <memory> P6
+  const memoryContent = loadMemoryForPrompt(input.worktree)
+  if (memoryContent) {
+    const memSection = new TemplateSection("memory")
+    memSection.content = memoryContent
+    t.set(memSection)
+  }
+
+  // <nudge> P7
+  const nudgeSection = new TemplateSection("nudge")
+  nudgeSection.content = "[CONSTRAINT NUDGE] memory_read(决策前) → compact_check"
+  t.set(nudgeSection)
+
+  return [t.render()]
 }
 
 export interface Interface {
@@ -1316,29 +1408,7 @@ export const layer = Layer.effect(
               MessageV2.toModelMessagesEffect(msgs, model),
             ])
             const system = templateEnabled()
-              ? (() => {
-                  const t = new PromptTemplate()
-                  const envSection = new TemplateSection("environment")
-                  envSection.content = env.join("\n")
-                  t.set(envSection)
-                  if (instructions.length > 0) {
-                    const instrSection = new TemplateSection("instructions")
-                    instrSection.content = instructions.join("\n\n")
-                    t.set(instrSection)
-                  }
-                  if (skills) {
-                    const capSection = new TemplateSection("capabilities")
-                    capSection.content = skills
-                    t.set(capSection)
-                  }
-                  const roleContent = loadRoleForPrompt()
-                  if (roleContent) {
-                    const styleSection = new TemplateSection("style")
-                    styleSection.content = roleContent
-                    t.set(styleSection)
-                  }
-                  return [t.render()]
-                })()
+              ? buildStructuredSystem({ env, instructions, skills, agent, model, worktree: ctx.worktree })
               : [...env, ...instructions, ...(skills ? [skills] : [])]
             const format = lastUser.format ?? { type: "text" as const }
             if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
