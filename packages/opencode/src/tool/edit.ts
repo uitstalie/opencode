@@ -103,6 +103,7 @@ export const EditTool = Tool.define(
                   permission: "edit",
                   patterns: [path.relative(instance.worktree, filePath)],
                   always: ["*"],
+                  scope: filePath,
                   metadata: {
                     filepath: filePath,
                     diff,
@@ -146,6 +147,7 @@ export const EditTool = Tool.define(
                 permission: "edit",
                 patterns: [path.relative(instance.worktree, filePath)],
                 always: ["*"],
+                scope: filePath,
                 metadata: {
                   filepath: filePath,
                   diff,

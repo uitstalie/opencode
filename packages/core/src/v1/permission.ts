@@ -19,6 +19,7 @@ export const Rule = Schema.Struct({
   permission: Schema.String,
   pattern: Schema.String,
   action: Action,
+  scope: Schema.optional(Schema.String),
 }).annotate({ identifier: "PermissionRule" })
 export type Rule = typeof Rule.Type
 
@@ -58,6 +59,7 @@ export const AskInput = Schema.Struct({
   ...Request.fields,
   id: ID.pipe(Schema.optional),
   ruleset: Ruleset,
+  scope: Schema.optional(Schema.String),
 }).annotate({ identifier: "PermissionAskInput" })
 export type AskInput = typeof AskInput.Type
 

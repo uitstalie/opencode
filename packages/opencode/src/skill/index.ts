@@ -337,7 +337,7 @@ export const layer = Layer.effect(
       const s = yield* InstanceState.get(state)
       const list = Object.values(s.skills).toSorted((a, b) => a.name.localeCompare(b.name))
       if (!agent) return list
-      return list.filter((skill) => Permission.evaluate("skill", skill.name, agent.permission).action !== "deny")
+      return list.filter((skill) => Permission.evaluate("skill", skill.name, undefined, agent.permission).action !== "deny")
     })
 
     return Service.of({ get, require, all, dirs, available })

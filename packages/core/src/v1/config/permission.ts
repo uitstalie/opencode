@@ -5,7 +5,12 @@ import { Schema, SchemaGetter } from "effect"
 export const Action = Schema.Literals(["ask", "allow", "deny"]).annotate({ identifier: "PermissionActionConfig" })
 export type Action = Schema.Schema.Type<typeof Action>
 
-export const Object = Schema.Record(Schema.String, Action).annotate({ identifier: "PermissionObjectConfig" })
+export const RuleDetail = Schema.Union([
+  Action,
+  Schema.Struct({ action: Action, scope: Schema.optional(Schema.String) }),
+]).annotate({ identifier: "PermissionRuleDetail" })
+
+export const Object = Schema.Record(Schema.String, RuleDetail).annotate({ identifier: "PermissionObjectConfig" })
 export type Object = Schema.Schema.Type<typeof Object>
 
 export const Rule = Schema.Union([Action, Object]).annotate({ identifier: "PermissionRuleConfig" })

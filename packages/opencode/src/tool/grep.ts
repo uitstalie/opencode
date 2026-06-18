@@ -40,6 +40,7 @@ export const GrepTool = Tool.define(
             permission: "grep",
             patterns: [params.pattern],
             always: ["*"],
+            scope: params.path,
             metadata: {
               pattern: params.pattern,
               path: params.path,

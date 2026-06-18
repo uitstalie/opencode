@@ -36,11 +36,21 @@ interface State {
   approved: PermissionV1.Rule[]
 }
 
-export function evaluate(permission: string, pattern: string, ...rulesets: PermissionV1.Ruleset[]): PermissionV1.Rule {
+export function evaluate(
+  permission: string,
+  pattern: string,
+  opScope: string | undefined,
+  ...rulesets: PermissionV1.Ruleset[]
+): PermissionV1.Rule {
   return (
     rulesets
       .flat()
-      .findLast((rule) => Wildcard.match(permission, rule.permission) && Wildcard.match(pattern, rule.pattern)) ?? {
+      .findLast(
+        (rule) =>
+          Wildcard.match(permission, rule.permission) &&
+          Wildcard.match(pattern, rule.pattern) &&
+          (!rule.scope || !opScope || Wildcard.match(opScope, rule.scope)),
+      ) ?? {
       action: "ask",
       permission,
       pattern: "*",
@@ -81,7 +91,7 @@ export const layer = Layer.effect(
       let needsAsk = false
 
       for (const pattern of request.patterns) {
-        const rule = evaluate(request.permission, pattern, ruleset, approved)
+        const rule = evaluate(request.permission, pattern, request.scope, ruleset, approved)
         yield* Effect.logInfo("evaluated", { permission: request.permission, pattern, action: rule })
         if (rule.action === "deny") {
           return yield* new PermissionV1.DeniedError({
@@ -164,7 +174,7 @@ export const layer = Layer.effect(
       for (const [id, item] of pending.entries()) {
         if (item.info.sessionID !== existing.info.sessionID) continue
         const ok = item.info.patterns.every(
-          (pattern) => evaluate(item.info.permission, pattern, approved).action === "allow",
+          (pattern) => evaluate(item.info.permission, pattern, undefined, approved).action === "allow",
         )
         if (!ok) continue
         pending.delete(id)
@@ -202,7 +212,17 @@ export function fromConfig(permission: ConfigPermissionV1.Info) {
       continue
     }
     ruleset.push(
-      ...Object.entries(value).map(([pattern, action]) => ({ permission: key, pattern: expand(pattern), action })),
+      ...Object.entries(value).map(([pattern, val]) => {
+        if (typeof val === "string") {
+          return { permission: key, pattern: expand(pattern), action: val }
+        }
+        return {
+          permission: key,
+          pattern: expand(pattern),
+          action: val.action,
+          scope: val.scope ? expand(val.scope) : undefined,
+        }
+      }),
     )
   }
   return ruleset

@@ -55,6 +55,7 @@ export const WriteTool = Tool.define(
             permission: "edit",
             patterns: [path.relative(instance.worktree, filepath)],
             always: ["*"],
+            scope: filepath,
             metadata: {
               filepath,
               diff,

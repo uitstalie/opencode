@@ -263,6 +263,7 @@ const parse = Effect.fn("ShellTool.parse")(function* (command: string, ps: boole
 const ask = Effect.fn("ShellTool.ask")(function* (
   ctx: Tool.Context,
   scan: Scan,
+  cwd: string,
   input: { command: string; description: string },
 ) {
   if (scan.dirs.size > 0) {
@@ -289,6 +290,7 @@ const ask = Effect.fn("ShellTool.ask")(function* (
     permission: ShellID.ToolID,
     patterns: Array.from(scan.patterns),
     always: Array.from(scan.always),
+    scope: cwd,
     metadata: {
       command: input.command,
       description: input.description,
@@ -635,7 +637,7 @@ export const ShellTool = Tool.define(
                   )
                   const scan = yield* collect(tree.rootNode, cwd, ps, shell, instanceCtx)
                   if (!containsPath(cwd, instanceCtx)) scan.dirs.add(cwd)
-                  yield* ask(ctx, scan, params)
+                  yield* ask(ctx, scan, cwd, params)
                 }),
               )
 

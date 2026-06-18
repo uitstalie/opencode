@@ -29,6 +29,7 @@ export const GlobTool = Tool.define(
             permission: "glob",
             patterns: [params.pattern],
             always: ["*"],
+            scope: params.path,
             metadata: {
               pattern: params.pattern,
               path: params.path,
