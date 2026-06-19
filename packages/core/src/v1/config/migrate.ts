@@ -86,7 +86,13 @@ function permissions(info?: ConfigPermissionV1.Info, tools?: Readonly<Record<str
       rules.push({ action, resource: "*", effect: rule })
       continue
     }
-    rules.push(...Object.entries(rule).map(([resource, effect]) => ({ action, resource, effect })))
+    rules.push(
+      ...Object.entries(rule).map(([resource, val]) => ({
+        action,
+        resource,
+        effect: typeof val === "string" ? val : val.action,
+      })),
+    )
   }
   return rules.length ? rules : undefined
 }
