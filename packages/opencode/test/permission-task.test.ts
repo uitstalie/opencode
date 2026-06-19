@@ -18,42 +18,42 @@ describe("Permission.evaluate for permission.task", () => {
     }))
 
   test("returns ask when no match (default)", () => {
-    expect(Permission.evaluate("task", "code-reviewer", []).action).toBe("ask")
+    expect(Permission.evaluate("task", "code-reviewer", undefined, undefined,  []).action).toBe("ask")
   })
 
   test("returns deny for explicit deny", () => {
     const ruleset = createRuleset({ "code-reviewer": "deny" })
-    expect(Permission.evaluate("task", "code-reviewer", ruleset).action).toBe("deny")
+    expect(Permission.evaluate("task", "code-reviewer", undefined, undefined,  ruleset).action).toBe("deny")
   })
 
   test("returns allow for explicit allow", () => {
     const ruleset = createRuleset({ "code-reviewer": "allow" })
-    expect(Permission.evaluate("task", "code-reviewer", ruleset).action).toBe("allow")
+    expect(Permission.evaluate("task", "code-reviewer", undefined, undefined,  ruleset).action).toBe("allow")
   })
 
   test("returns ask for explicit ask", () => {
     const ruleset = createRuleset({ "code-reviewer": "ask" })
-    expect(Permission.evaluate("task", "code-reviewer", ruleset).action).toBe("ask")
+    expect(Permission.evaluate("task", "code-reviewer", undefined, undefined,  ruleset).action).toBe("ask")
   })
 
   test("matches wildcard patterns with deny", () => {
     const ruleset = createRuleset({ "orchestrator-*": "deny" })
-    expect(Permission.evaluate("task", "orchestrator-fast", ruleset).action).toBe("deny")
-    expect(Permission.evaluate("task", "orchestrator-slow", ruleset).action).toBe("deny")
-    expect(Permission.evaluate("task", "general", ruleset).action).toBe("ask")
+    expect(Permission.evaluate("task", "orchestrator-fast", undefined, undefined,  ruleset).action).toBe("deny")
+    expect(Permission.evaluate("task", "orchestrator-slow", undefined, undefined,  ruleset).action).toBe("deny")
+    expect(Permission.evaluate("task", "general", undefined, undefined,  ruleset).action).toBe("ask")
   })
 
   test("matches wildcard patterns with allow", () => {
     const ruleset = createRuleset({ "orchestrator-*": "allow" })
-    expect(Permission.evaluate("task", "orchestrator-fast", ruleset).action).toBe("allow")
-    expect(Permission.evaluate("task", "orchestrator-slow", ruleset).action).toBe("allow")
+    expect(Permission.evaluate("task", "orchestrator-fast", undefined, undefined,  ruleset).action).toBe("allow")
+    expect(Permission.evaluate("task", "orchestrator-slow", undefined, undefined,  ruleset).action).toBe("allow")
   })
 
   test("matches wildcard patterns with ask", () => {
     const ruleset = createRuleset({ "orchestrator-*": "ask" })
-    expect(Permission.evaluate("task", "orchestrator-fast", ruleset).action).toBe("ask")
+    expect(Permission.evaluate("task", "orchestrator-fast", undefined, undefined,  ruleset).action).toBe("ask")
     const globalRuleset = createRuleset({ "*": "ask" })
-    expect(Permission.evaluate("task", "code-reviewer", globalRuleset).action).toBe("ask")
+    expect(Permission.evaluate("task", "code-reviewer", undefined, undefined,  globalRuleset).action).toBe("ask")
   })
 
   test("later rules take precedence (last match wins)", () => {
@@ -61,14 +61,14 @@ describe("Permission.evaluate for permission.task", () => {
       "orchestrator-*": "deny",
       "orchestrator-fast": "allow",
     })
-    expect(Permission.evaluate("task", "orchestrator-fast", ruleset).action).toBe("allow")
-    expect(Permission.evaluate("task", "orchestrator-slow", ruleset).action).toBe("deny")
+    expect(Permission.evaluate("task", "orchestrator-fast", undefined, undefined,  ruleset).action).toBe("allow")
+    expect(Permission.evaluate("task", "orchestrator-slow", undefined, undefined,  ruleset).action).toBe("deny")
   })
 
   test("matches global wildcard", () => {
-    expect(Permission.evaluate("task", "any-agent", createRuleset({ "*": "allow" })).action).toBe("allow")
-    expect(Permission.evaluate("task", "any-agent", createRuleset({ "*": "deny" })).action).toBe("deny")
-    expect(Permission.evaluate("task", "any-agent", createRuleset({ "*": "ask" })).action).toBe("ask")
+    expect(Permission.evaluate("task", "any-agent", undefined, undefined,  createRuleset({ "*": "allow" })).action).toBe("allow")
+    expect(Permission.evaluate("task", "any-agent", undefined, undefined,  createRuleset({ "*": "deny" })).action).toBe("deny")
+    expect(Permission.evaluate("task", "any-agent", undefined, undefined,  createRuleset({ "*": "ask" })).action).toBe("ask")
   })
 })
 
@@ -151,9 +151,9 @@ describe("permission.task with real config files", () => {
         const config = yield* load
         const ruleset = Permission.fromConfig(config.permission ?? {})
         // general and orchestrator-fast should be allowed, code-reviewer denied
-        expect(Permission.evaluate("task", "general", ruleset).action).toBe("allow")
-        expect(Permission.evaluate("task", "orchestrator-fast", ruleset).action).toBe("allow")
-        expect(Permission.evaluate("task", "code-reviewer", ruleset).action).toBe("deny")
+        expect(Permission.evaluate("task", "general", undefined, undefined,  ruleset).action).toBe("allow")
+        expect(Permission.evaluate("task", "orchestrator-fast", undefined, undefined,  ruleset).action).toBe("allow")
+        expect(Permission.evaluate("task", "code-reviewer", undefined, undefined,  ruleset).action).toBe("deny")
       }),
     {
       git: true,
@@ -175,9 +175,9 @@ describe("permission.task with real config files", () => {
         const config = yield* load
         const ruleset = Permission.fromConfig(config.permission ?? {})
         // general and code-reviewer should be ask, orchestrator-* denied
-        expect(Permission.evaluate("task", "general", ruleset).action).toBe("ask")
-        expect(Permission.evaluate("task", "code-reviewer", ruleset).action).toBe("ask")
-        expect(Permission.evaluate("task", "orchestrator-fast", ruleset).action).toBe("deny")
+        expect(Permission.evaluate("task", "general", undefined, undefined,  ruleset).action).toBe("ask")
+        expect(Permission.evaluate("task", "code-reviewer", undefined, undefined,  ruleset).action).toBe("ask")
+        expect(Permission.evaluate("task", "orchestrator-fast", undefined, undefined,  ruleset).action).toBe("deny")
       }),
     {
       git: true,
@@ -198,10 +198,10 @@ describe("permission.task with real config files", () => {
       Effect.gen(function* () {
         const config = yield* load
         const ruleset = Permission.fromConfig(config.permission ?? {})
-        expect(Permission.evaluate("task", "general", ruleset).action).toBe("allow")
-        expect(Permission.evaluate("task", "code-reviewer", ruleset).action).toBe("deny")
+        expect(Permission.evaluate("task", "general", undefined, undefined,  ruleset).action).toBe("allow")
+        expect(Permission.evaluate("task", "code-reviewer", undefined, undefined,  ruleset).action).toBe("deny")
         // Unspecified agents default to "ask"
-        expect(Permission.evaluate("task", "unknown-agent", ruleset).action).toBe("ask")
+        expect(Permission.evaluate("task", "unknown-agent", undefined, undefined,  ruleset).action).toBe("ask")
       }),
     {
       git: true,
@@ -224,12 +224,12 @@ describe("permission.task with real config files", () => {
         const ruleset = Permission.fromConfig(config.permission ?? {})
 
         // Verify task permissions
-        expect(Permission.evaluate("task", "general", ruleset).action).toBe("allow")
-        expect(Permission.evaluate("task", "code-reviewer", ruleset).action).toBe("deny")
+        expect(Permission.evaluate("task", "general", undefined, undefined,  ruleset).action).toBe("allow")
+        expect(Permission.evaluate("task", "code-reviewer", undefined, undefined,  ruleset).action).toBe("deny")
 
         // Verify other tool permissions
-        expect(Permission.evaluate("bash", "*", ruleset).action).toBe("allow")
-        expect(Permission.evaluate("edit", "*", ruleset).action).toBe("ask")
+        expect(Permission.evaluate("bash", "*", undefined, undefined,  ruleset).action).toBe("allow")
+        expect(Permission.evaluate("edit", "*", undefined, undefined,  ruleset).action).toBe("ask")
 
         // Verify disabled tools
         const disabled = Permission.disabled(["bash", "edit", "task"], ruleset)
@@ -262,9 +262,9 @@ describe("permission.task with real config files", () => {
         const ruleset = Permission.fromConfig(config.permission ?? {})
 
         // Last matching rule wins - "*" deny is last, so all agents are denied
-        expect(Permission.evaluate("task", "general", ruleset).action).toBe("deny")
-        expect(Permission.evaluate("task", "code-reviewer", ruleset).action).toBe("deny")
-        expect(Permission.evaluate("task", "unknown", ruleset).action).toBe("deny")
+        expect(Permission.evaluate("task", "general", undefined, undefined,  ruleset).action).toBe("deny")
+        expect(Permission.evaluate("task", "code-reviewer", undefined, undefined,  ruleset).action).toBe("deny")
+        expect(Permission.evaluate("task", "unknown", undefined, undefined,  ruleset).action).toBe("deny")
 
         // Since "*": "deny" is the last rule, disabled() finds it with findLast
         // and sees pattern: "*" with action: "deny", so task is disabled
@@ -293,9 +293,9 @@ describe("permission.task with real config files", () => {
         const ruleset = Permission.fromConfig(config.permission ?? {})
 
         // Evaluate uses findLast - "general" allow comes after "*" deny
-        expect(Permission.evaluate("task", "general", ruleset).action).toBe("allow")
+        expect(Permission.evaluate("task", "general", undefined, undefined,  ruleset).action).toBe("allow")
         // Other agents still denied by the earlier "*" deny
-        expect(Permission.evaluate("task", "code-reviewer", ruleset).action).toBe("deny")
+        expect(Permission.evaluate("task", "code-reviewer", undefined, undefined,  ruleset).action).toBe("deny")
 
         // disabled() uses findLast and checks if the last rule has pattern: "*" with action: "deny"
         // In this case, the last rule is {pattern: "general", action: "allow"}, not pattern: "*"

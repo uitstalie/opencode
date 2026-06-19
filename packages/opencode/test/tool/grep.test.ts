@@ -201,7 +201,7 @@ describe("tool.grep", () => {
         ask: (req) =>
           Effect.sync(() => {
             const needsAsk = req.patterns.some(
-              (pattern) => Permission.evaluate(req.permission, pattern, ruleset).action !== "allow",
+              (pattern) => Permission.evaluate(req.permission, pattern, undefined, undefined, ruleset).action !== "allow",
             )
             if (needsAsk) requests.push(req)
           }),

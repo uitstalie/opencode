@@ -141,14 +141,14 @@ test("fromConfig - preserves top-level config key order", () => {
   expect(wildcardFirst.map((r) => r.permission)).toEqual(["*", "bash"])
   expect(specificFirst.map((r) => r.permission)).toEqual(["bash", "*"])
 
-  expect(Permission.evaluate("bash", "ls", wildcardFirst).action).toBe("allow")
-  expect(Permission.evaluate("bash", "ls", specificFirst).action).toBe("deny")
+  expect(Permission.evaluate("bash", "ls", undefined, undefined,  wildcardFirst).action).toBe("allow")
+  expect(Permission.evaluate("bash", "ls", undefined, undefined,  specificFirst).action).toBe("deny")
 })
 
 test("fromConfig - wildcard acts as fallback when it appears before specifics", () => {
   const ruleset = Permission.fromConfig({ "*": "ask", bash: "allow" })
-  expect(Permission.evaluate("edit", "foo.ts", ruleset).action).toBe("ask")
-  expect(Permission.evaluate("bash", "ls", ruleset).action).toBe("allow")
+  expect(Permission.evaluate("edit", "foo.ts", undefined, undefined,  ruleset).action).toBe("ask")
+  expect(Permission.evaluate("bash", "ls", undefined, undefined,  ruleset).action).toBe("allow")
 })
 
 test("fromConfig - top-level ordering is not sorted by wildcard specificity", () => {
@@ -164,15 +164,15 @@ test("fromConfig - top-level ordering is not sorted by wildcard specificity", ()
 test("fromConfig - sub-pattern insertion order inside a tool key is preserved", () => {
   const ruleset = Permission.fromConfig({ bash: { "*": "deny", "git *": "allow" } })
   expect(ruleset.map((r) => r.pattern)).toEqual(["*", "git *"])
-  expect(Permission.evaluate("bash", "rm foo", ruleset).action).toBe("deny")
-  expect(Permission.evaluate("bash", "git status", ruleset).action).toBe("allow")
+  expect(Permission.evaluate("bash", "rm foo", undefined, undefined,  ruleset).action).toBe("deny")
+  expect(Permission.evaluate("bash", "git status", undefined, undefined,  ruleset).action).toBe("allow")
 })
 
 test("fromConfig - documented fallback-first example", () => {
   const ruleset = Permission.fromConfig({ "*": "ask", bash: "allow", edit: "deny" })
-  expect(Permission.evaluate("bash", "ls", ruleset).action).toBe("allow")
-  expect(Permission.evaluate("edit", "foo.ts", ruleset).action).toBe("deny")
-  expect(Permission.evaluate("read", "foo.ts", ruleset).action).toBe("ask")
+  expect(Permission.evaluate("bash", "ls", undefined, undefined,  ruleset).action).toBe("allow")
+  expect(Permission.evaluate("edit", "foo.ts", undefined, undefined,  ruleset).action).toBe("deny")
+  expect(Permission.evaluate("read", "foo.ts", undefined, undefined,  ruleset).action).toBe("ask")
 })
 
 test("fromConfig - expands exact tilde to home directory", () => {
@@ -182,13 +182,13 @@ test("fromConfig - expands exact tilde to home directory", () => {
 
 test("evaluate - matches expanded tilde pattern", () => {
   const ruleset = Permission.fromConfig({ external_directory: { "~/projects/*": "allow" } })
-  const result = Permission.evaluate("external_directory", `${os.homedir()}/projects/file.txt`, ruleset)
+  const result = Permission.evaluate("external_directory", `${os.homedir()}/projects/file.txt`, undefined, undefined, ruleset)
   expect(result.action).toBe("allow")
 })
 
 test("evaluate - matches expanded $HOME pattern", () => {
   const ruleset = Permission.fromConfig({ external_directory: { "$HOME/projects/*": "allow" } })
-  const result = Permission.evaluate("external_directory", `${os.homedir()}/projects/file.txt`, ruleset)
+  const result = Permission.evaluate("external_directory", `${os.homedir()}/projects/file.txt`, undefined, undefined, ruleset)
   expect(result.action).toBe("allow")
 })
 
@@ -265,8 +265,8 @@ test("merge - config permission overrides default ask", () => {
   const config: PermissionV1.Ruleset = [{ permission: "bash", pattern: "*", action: "allow" }]
   const merged = Permission.merge(defaults, config)
 
-  expect(Permission.evaluate("bash", "ls", merged).action).toBe("allow")
-  expect(Permission.evaluate("edit", "foo.ts", merged).action).toBe("ask")
+  expect(Permission.evaluate("bash", "ls", undefined, undefined,  merged).action).toBe("allow")
+  expect(Permission.evaluate("edit", "foo.ts", undefined, undefined,  merged).action).toBe("ask")
 })
 
 test("merge - config ask overrides default allow", () => {
@@ -274,23 +274,23 @@ test("merge - config ask overrides default allow", () => {
   const config: PermissionV1.Ruleset = [{ permission: "bash", pattern: "*", action: "ask" }]
   const merged = Permission.merge(defaults, config)
 
-  expect(Permission.evaluate("bash", "ls", merged).action).toBe("ask")
+  expect(Permission.evaluate("bash", "ls", undefined, undefined,  merged).action).toBe("ask")
 })
 
 // evaluate tests
 
 test("evaluate - exact pattern match", () => {
-  const result = Permission.evaluate("bash", "rm", [{ permission: "bash", pattern: "rm", action: "deny" }])
+  const result = Permission.evaluate("bash", "rm", undefined, undefined,  [{ permission: "bash", pattern: "rm", action: "deny" }])
   expect(result.action).toBe("deny")
 })
 
 test("evaluate - wildcard pattern match", () => {
-  const result = Permission.evaluate("bash", "rm", [{ permission: "bash", pattern: "*", action: "allow" }])
+  const result = Permission.evaluate("bash", "rm", undefined, undefined,  [{ permission: "bash", pattern: "*", action: "allow" }])
   expect(result.action).toBe("allow")
 })
 
 test("evaluate - last matching rule wins", () => {
-  const result = Permission.evaluate("bash", "rm", [
+  const result = Permission.evaluate("bash", "rm", undefined, undefined,  [
     { permission: "bash", pattern: "*", action: "allow" },
     { permission: "bash", pattern: "rm", action: "deny" },
   ])
@@ -298,7 +298,7 @@ test("evaluate - last matching rule wins", () => {
 })
 
 test("evaluate - last matching rule wins (wildcard after specific)", () => {
-  const result = Permission.evaluate("bash", "rm", [
+  const result = Permission.evaluate("bash", "rm", undefined, undefined,  [
     { permission: "bash", pattern: "rm", action: "deny" },
     { permission: "bash", pattern: "*", action: "allow" },
   ])
@@ -306,12 +306,12 @@ test("evaluate - last matching rule wins (wildcard after specific)", () => {
 })
 
 test("evaluate - glob pattern match", () => {
-  const result = Permission.evaluate("edit", "src/foo.ts", [{ permission: "edit", pattern: "src/*", action: "allow" }])
+  const result = Permission.evaluate("edit", "src/foo.ts", undefined, undefined,  [{ permission: "edit", pattern: "src/*", action: "allow" }])
   expect(result.action).toBe("allow")
 })
 
 test("evaluate - last matching glob wins", () => {
-  const result = Permission.evaluate("edit", "src/components/Button.tsx", [
+  const result = Permission.evaluate("edit", "src/components/Button.tsx", undefined, undefined,  [
     { permission: "edit", pattern: "src/*", action: "deny" },
     { permission: "edit", pattern: "src/components/*", action: "allow" },
   ])
@@ -319,7 +319,7 @@ test("evaluate - last matching glob wins", () => {
 })
 
 test("evaluate - order matters for specificity", () => {
-  const result = Permission.evaluate("edit", "src/components/Button.tsx", [
+  const result = Permission.evaluate("edit", "src/components/Button.tsx", undefined, undefined,  [
     { permission: "edit", pattern: "src/components/*", action: "allow" },
     { permission: "edit", pattern: "src/*", action: "deny" },
   ])
@@ -327,29 +327,29 @@ test("evaluate - order matters for specificity", () => {
 })
 
 test("evaluate - unknown permission returns ask", () => {
-  const result = Permission.evaluate("unknown_tool", "anything", [
+  const result = Permission.evaluate("unknown_tool", "anything", undefined, undefined,  [
     { permission: "bash", pattern: "*", action: "allow" },
   ])
   expect(result.action).toBe("ask")
 })
 
 test("evaluate - empty ruleset returns ask", () => {
-  const result = Permission.evaluate("bash", "rm", [])
+  const result = Permission.evaluate("bash", "rm", undefined, undefined,  [])
   expect(result.action).toBe("ask")
 })
 
 test("evaluate - no matching pattern returns ask", () => {
-  const result = Permission.evaluate("edit", "etc/passwd", [{ permission: "edit", pattern: "src/*", action: "allow" }])
+  const result = Permission.evaluate("edit", "etc/passwd", undefined, undefined,  [{ permission: "edit", pattern: "src/*", action: "allow" }])
   expect(result.action).toBe("ask")
 })
 
 test("evaluate - empty rules array returns ask", () => {
-  const result = Permission.evaluate("bash", "rm", [])
+  const result = Permission.evaluate("bash", "rm", undefined, undefined,  [])
   expect(result.action).toBe("ask")
 })
 
 test("evaluate - multiple matching patterns, last wins", () => {
-  const result = Permission.evaluate("edit", "src/secret.ts", [
+  const result = Permission.evaluate("edit", "src/secret.ts", undefined, undefined,  [
     { permission: "edit", pattern: "*", action: "ask" },
     { permission: "edit", pattern: "src/*", action: "allow" },
     { permission: "edit", pattern: "src/secret.ts", action: "deny" },
@@ -358,7 +358,7 @@ test("evaluate - multiple matching patterns, last wins", () => {
 })
 
 test("evaluate - non-matching patterns are skipped", () => {
-  const result = Permission.evaluate("edit", "src/foo.ts", [
+  const result = Permission.evaluate("edit", "src/foo.ts", undefined, undefined,  [
     { permission: "edit", pattern: "*", action: "ask" },
     { permission: "edit", pattern: "test/*", action: "deny" },
     { permission: "edit", pattern: "src/*", action: "allow" },
@@ -367,7 +367,7 @@ test("evaluate - non-matching patterns are skipped", () => {
 })
 
 test("evaluate - exact match at end wins over earlier wildcard", () => {
-  const result = Permission.evaluate("bash", "/bin/rm", [
+  const result = Permission.evaluate("bash", "/bin/rm", undefined, undefined,  [
     { permission: "bash", pattern: "*", action: "allow" },
     { permission: "bash", pattern: "/bin/rm", action: "deny" },
   ])
@@ -375,7 +375,7 @@ test("evaluate - exact match at end wins over earlier wildcard", () => {
 })
 
 test("evaluate - wildcard at end overrides earlier exact match", () => {
-  const result = Permission.evaluate("bash", "/bin/rm", [
+  const result = Permission.evaluate("bash", "/bin/rm", undefined, undefined,  [
     { permission: "bash", pattern: "/bin/rm", action: "deny" },
     { permission: "bash", pattern: "*", action: "allow" },
   ])
@@ -385,24 +385,24 @@ test("evaluate - wildcard at end overrides earlier exact match", () => {
 // wildcard permission tests
 
 test("evaluate - wildcard permission matches any permission", () => {
-  const result = Permission.evaluate("bash", "rm", [{ permission: "*", pattern: "*", action: "deny" }])
+  const result = Permission.evaluate("bash", "rm", undefined, undefined,  [{ permission: "*", pattern: "*", action: "deny" }])
   expect(result.action).toBe("deny")
 })
 
 test("evaluate - wildcard permission with specific pattern", () => {
-  const result = Permission.evaluate("bash", "rm", [{ permission: "*", pattern: "rm", action: "deny" }])
+  const result = Permission.evaluate("bash", "rm", undefined, undefined,  [{ permission: "*", pattern: "rm", action: "deny" }])
   expect(result.action).toBe("deny")
 })
 
 test("evaluate - glob permission pattern", () => {
-  const result = Permission.evaluate("mcp_server_tool", "anything", [
+  const result = Permission.evaluate("mcp_server_tool", "anything", undefined, undefined,  [
     { permission: "mcp_*", pattern: "*", action: "allow" },
   ])
   expect(result.action).toBe("allow")
 })
 
 test("evaluate - specific permission and wildcard permission combined", () => {
-  const result = Permission.evaluate("bash", "rm", [
+  const result = Permission.evaluate("bash", "rm", undefined, undefined,  [
     { permission: "*", pattern: "*", action: "deny" },
     { permission: "bash", pattern: "*", action: "allow" },
   ])
@@ -410,7 +410,7 @@ test("evaluate - specific permission and wildcard permission combined", () => {
 })
 
 test("evaluate - wildcard permission does not match when specific exists", () => {
-  const result = Permission.evaluate("edit", "src/foo.ts", [
+  const result = Permission.evaluate("edit", "src/foo.ts", undefined, undefined,  [
     { permission: "*", pattern: "*", action: "deny" },
     { permission: "edit", pattern: "src/*", action: "allow" },
   ])
@@ -418,7 +418,7 @@ test("evaluate - wildcard permission does not match when specific exists", () =>
 })
 
 test("evaluate - multiple matching permission patterns combine rules", () => {
-  const result = Permission.evaluate("mcp_dangerous", "anything", [
+  const result = Permission.evaluate("mcp_dangerous", "anything", undefined, undefined,  [
     { permission: "*", pattern: "*", action: "ask" },
     { permission: "mcp_*", pattern: "*", action: "allow" },
     { permission: "mcp_dangerous", pattern: "*", action: "deny" },
@@ -427,7 +427,7 @@ test("evaluate - multiple matching permission patterns combine rules", () => {
 })
 
 test("evaluate - wildcard permission fallback for unknown tool", () => {
-  const result = Permission.evaluate("unknown_tool", "anything", [
+  const result = Permission.evaluate("unknown_tool", "anything", undefined, undefined,  [
     { permission: "*", pattern: "*", action: "ask" },
     { permission: "bash", pattern: "*", action: "allow" },
   ])
@@ -435,7 +435,7 @@ test("evaluate - wildcard permission fallback for unknown tool", () => {
 })
 
 test("evaluate - later wildcard permission can override earlier specific permission", () => {
-  const result = Permission.evaluate("bash", "rm", [
+  const result = Permission.evaluate("bash", "rm", undefined, undefined,  [
     { permission: "bash", pattern: "*", action: "allow" },
     { permission: "*", pattern: "*", action: "deny" },
   ])
@@ -445,7 +445,7 @@ test("evaluate - later wildcard permission can override earlier specific permiss
 test("evaluate - merges multiple rulesets", () => {
   const config: PermissionV1.Ruleset = [{ permission: "bash", pattern: "*", action: "allow" }]
   const approved: PermissionV1.Ruleset = [{ permission: "bash", pattern: "rm", action: "deny" }]
-  const result = Permission.evaluate("bash", "rm", config, approved)
+  const result = Permission.evaluate("bash", "rm", undefined, undefined,  config, approved)
   expect(result.action).toBe("deny")
 })
 

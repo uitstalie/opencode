@@ -857,8 +857,8 @@ it.instance("subtask child inherits parent session external_directory allow", ()
     expect(rules).toEqual(
       expect.arrayContaining([{ permission: "external_directory", pattern: "/tmp/allowed/*", action: "allow" }]),
     )
-    expect(Permission.evaluate("external_directory", "/tmp/allowed/file", rules).action).toBe("allow")
-    expect(Permission.evaluate("task", "anything", rules).action).toBe("deny")
+    expect(Permission.evaluate("external_directory", "/tmp/allowed/file", undefined, undefined,  rules).action).toBe("allow")
+    expect(Permission.evaluate("task", "anything", undefined, undefined,  rules).action).toBe("deny")
   }),
 )
 
@@ -885,7 +885,7 @@ noLLMServer.instance("prompt tools replace previous prompt tool rules", () =>
 
     const reloaded = yield* sessions.get(session.id)
     expect(reloaded.permission).toEqual([{ permission: "read", pattern: "*", action: "allow" }])
-    expect(Permission.evaluate("bash", "anything", reloaded.permission ?? []).action).toBe("ask")
+    expect(Permission.evaluate("bash", "anything", undefined, undefined,  reloaded.permission ?? []).action).toBe("ask")
   }),
 )
 
