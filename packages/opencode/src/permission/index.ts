@@ -40,22 +40,28 @@ export function evaluate(
   permission: string,
   pattern: string,
   opScope: string | undefined,
+  projectRoot: string | undefined,
   ...rulesets: PermissionV1.Ruleset[]
 ): PermissionV1.Rule {
-  return (
-    rulesets
-      .flat()
-      .findLast(
-        (rule) =>
-          Wildcard.match(permission, rule.permission) &&
-          Wildcard.match(pattern, rule.pattern) &&
-          (!rule.scope || !opScope || Wildcard.match(opScope, rule.scope)),
-      ) ?? {
-      action: "ask",
-      permission,
-      pattern: "*",
-    }
-  )
+  const expandedScope = (scope: string) => {
+    if (projectRoot === undefined) return scope
+    return scope.replaceAll("$PROJECT", projectRoot)
+  }
+  const all = rulesets.flat()
+  // Iterate backward (findLast semantics): last matching rule wins
+  for (let i = all.length - 1; i >= 0; i--) {
+    const rule = all[i]
+    if (!Wildcard.match(permission, rule.permission)) continue
+    if (!Wildcard.match(pattern, rule.pattern)) continue
+    // No scope constraint, or no opScope info → rule applies as-is
+    if (!rule.scope || !opScope) return rule
+    // Scope matches → rule applies with action
+    if (Wildcard.match(opScope, expandedScope(rule.scope))) return rule
+    // Scope doesn't match, but rule has others → apply others action
+    if (rule.others) return { ...rule, action: rule.others }
+    // Scope doesn't match and no others → skip this rule
+  }
+  return { action: "ask", permission, pattern: "*" }
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Permission") {}
@@ -91,7 +97,7 @@ export const layer = Layer.effect(
       let needsAsk = false
 
       for (const pattern of request.patterns) {
-        const rule = evaluate(request.permission, pattern, request.scope, ruleset, approved)
+        const rule = evaluate(request.permission, pattern, request.scope, request.projectRoot, ruleset, approved)
         yield* Effect.logInfo("evaluated", { permission: request.permission, pattern, action: rule })
         if (rule.action === "deny") {
           return yield* new PermissionV1.DeniedError({
@@ -174,7 +180,7 @@ export const layer = Layer.effect(
       for (const [id, item] of pending.entries()) {
         if (item.info.sessionID !== existing.info.sessionID) continue
         const ok = item.info.patterns.every(
-          (pattern) => evaluate(item.info.permission, pattern, undefined, approved).action === "allow",
+          (pattern) => evaluate(item.info.permission, pattern, undefined, undefined, approved).action === "allow",
         )
         if (!ok) continue
         pending.delete(id)
@@ -221,6 +227,7 @@ export function fromConfig(permission: ConfigPermissionV1.Info) {
           pattern: expand(pattern),
           action: val.action,
           scope: val.scope ? expand(val.scope) : undefined,
+          others: val.others,
         }
       }),
     )

@@ -7,7 +7,7 @@ export type Action = Schema.Schema.Type<typeof Action>
 
 export const RuleDetail = Schema.Union([
   Action,
-  Schema.Struct({ action: Action, scope: Schema.optional(Schema.String) }),
+  Schema.Struct({ action: Action, scope: Schema.optional(Schema.String), others: Schema.optional(Action) }),
 ]).annotate({ identifier: "PermissionRuleDetail" })
 
 export const Object = Schema.Record(Schema.String, RuleDetail).annotate({ identifier: "PermissionObjectConfig" })

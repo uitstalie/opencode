@@ -258,6 +258,7 @@ export const ReadTool = Tool.define<
         always: ["*"],
         metadata: {},
         scope: filepath,
+        projectRoot: instance.worktree,
       })
 
       if (!stat) return yield* miss(filepath)

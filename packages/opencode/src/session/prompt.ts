@@ -1050,7 +1050,7 @@ export const layer = Layer.effect(
         }
 
         if (part.type === "agent") {
-          const perm = Permission.evaluate("task", part.name, undefined, ag.permission)
+          const perm = Permission.evaluate("task", part.name, undefined, undefined, ag.permission)
           const hint = perm.action === "deny" ? " . Invoked by user; guaranteed to exist." : ""
           return [
             { ...part, messageID: info.id, sessionID: input.sessionID },

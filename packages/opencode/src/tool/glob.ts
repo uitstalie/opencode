@@ -30,6 +30,7 @@ export const GlobTool = Tool.define(
             patterns: [params.pattern],
             always: ["*"],
             scope: params.path,
+            projectRoot: ins.worktree,
             metadata: {
               pattern: params.pattern,
               path: params.path,

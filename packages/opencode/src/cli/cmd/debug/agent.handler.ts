@@ -182,7 +182,7 @@ const createToolContext = Effect.fn("Cli.debug.agent.createToolContext")(functio
     ask(req: Omit<PermissionV1.Request, "id" | "sessionID" | "tool">) {
       return Effect.sync(() => {
         for (const pattern of req.patterns) {
-          const rule = Permission.evaluate(req.permission, pattern, undefined, ruleset)
+          const rule = Permission.evaluate(req.permission, pattern, undefined, undefined, ruleset)
           if (rule.action === "deny") {
             throw new PermissionV1.DeniedError({ ruleset })
           }
