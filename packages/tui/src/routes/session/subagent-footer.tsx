@@ -11,6 +11,7 @@ import { useCommandShortcut, useOpencodeKeymap } from "../../keymap"
 export function SubagentFooter() {
   const route = useRouteData("session")
   const sync = useSync()
+  const { theme } = useTheme()
   const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
   const session = createMemo(() => sync.session.get(route.sessionID))
 
@@ -69,7 +70,6 @@ export function SubagentFooter() {
     }
   })
 
-  const { theme } = useTheme()
   const keymap = useOpencodeKeymap()
   const parentShortcut = useCommandShortcut("session.parent")
   const previousShortcut = useCommandShortcut("session.child.previous")
