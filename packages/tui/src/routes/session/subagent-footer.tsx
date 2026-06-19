@@ -43,6 +43,10 @@ export function SubagentFooter() {
     const pct = model?.limit.context ? `${Math.round((tokens / model.limit.context) * 100)}%` : undefined
     const cost = session()?.cost ?? 0
 
+    const cacheHits = last.tokens.cache.read
+    const cacheTotal = cacheHits + last.tokens.input
+    const cacheRate = cacheTotal > 0 ? `${Math.round((cacheHits / cacheTotal) * 100)}%` : undefined
+
     const money = new Intl.NumberFormat("en-US", {
       style: "currency",
       currency: "USD",
@@ -51,6 +55,7 @@ export function SubagentFooter() {
     return {
       context: pct ? `${Locale.number(tokens)} (${pct})` : Locale.number(tokens),
       cost: cost > 0 ? money.format(cost) : undefined,
+      cache: cacheRate ? `cache: ${cacheRate}` : undefined,
     }
   })
 
@@ -88,7 +93,7 @@ export function SubagentFooter() {
             <Show when={usage()}>
               {(item) => (
                 <text fg={theme.textMuted} wrapMode="none">
-                  {[item().context, item().cost].filter(Boolean).join(" · ")}
+                  {[item().context, item().cache, item().cost].filter(Boolean).join(" · ")}
                 </text>
               )}
             </Show>
