@@ -40,12 +40,19 @@ export function SubagentFooter() {
     if (tokens <= 0) return
 
     const model = sync.data.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
-    const pct = model?.limit.context ? `${Math.round((tokens / model.limit.context) * 100)}%` : undefined
+    const pct = model?.limit.context ? Math.round((tokens / model.limit.context) * 100) : undefined
     const cost = session()?.cost ?? 0
 
     const cacheHits = last.tokens.cache.read
     const cacheTotal = cacheHits + last.tokens.input
-    const cacheRate = cacheTotal > 0 ? `${Math.round((cacheHits / cacheTotal) * 100)}%` : undefined
+    const cacheRate = cacheTotal > 0 ? Math.round((cacheHits / cacheTotal) * 100) : undefined
+
+    const pctColor = pct !== undefined
+      ? pct < 25 ? theme.success : pct <= 50 ? theme.warning : theme.error
+      : undefined
+    const cacheColor = cacheRate !== undefined
+      ? cacheRate < 90 ? theme.error : cacheRate <= 95 ? theme.warning : theme.success
+      : undefined
 
     const money = new Intl.NumberFormat("en-US", {
       style: "currency",
@@ -53,9 +60,12 @@ export function SubagentFooter() {
     })
 
     return {
-      context: pct ? `${Locale.number(tokens)} (${pct})` : Locale.number(tokens),
+      context: Locale.number(tokens),
+      pct: pct !== undefined ? `${pct}%` : undefined,
+      pctColor,
       cost: cost > 0 ? money.format(cost) : undefined,
-      cache: cacheRate ? `cache: ${cacheRate}` : undefined,
+      cacheRate: cacheRate !== undefined ? `${cacheRate}%` : undefined,
+      cacheColor,
     }
   })
 
@@ -92,8 +102,16 @@ export function SubagentFooter() {
             </Show>
             <Show when={usage()}>
               {(item) => (
-                <text fg={theme.textMuted} wrapMode="none">
-                  {[item().context, item().cache, item().cost].filter(Boolean).join(" · ")}
+                <text wrapMode="none">
+                  <span style={{ fg: theme.textMuted }}>{item().context}</span>
+                  {item().pct && <span style={{ fg: item().pctColor }}> ({item().pct})</span>}
+                  {item().cacheRate && (
+                    <>
+                      <span style={{ fg: theme.textMuted }}> · cache: </span>
+                      <span style={{ fg: item().cacheColor }}>{item().cacheRate}</span>
+                    </>
+                  )}
+                  {item().cost && <span style={{ fg: theme.textMuted }}> · {item().cost}</span>}
                 </text>
               )}
             </Show>
