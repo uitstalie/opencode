@@ -120,6 +120,13 @@ function buildStructuredSystem(input: {
   )
   const instructionItems = input.instructions.filter((i) => !constraintItems.includes(i))
 
+  if (!existsSync(path.join(input.worktree, "AGENTS.md")) || !existsSync(path.join(input.worktree, ".opencode"))) {
+    instructionItems.unshift(
+      "[onboarding] 项目缺少 AGENTS.md 或 .opencode 结构。建议用户运行 /init 以完成项目初始化。" +
+      "如果项目已有等效文件（如 CLAUDE.md、.cursor/rules/），先迁移到 opencode 标准结构。",
+    )
+  }
+
   if (constraintItems.length > 0) {
     const c = new TemplateSection("constraint")
     c.content = constraintItems.join("\n\n")

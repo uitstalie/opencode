@@ -77,7 +77,7 @@ export const layer = Layer.effect(
 
       commands[Default.INIT] = {
         name: Default.INIT,
-        description: "guided AGENTS.md setup",
+        description: "setup AGENTS.md, memory, rules, and project config",
         source: "command",
         get template() {
           return PROMPT_INITIALIZE.replace("${path}", ctx.worktree)

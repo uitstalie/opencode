@@ -1,66 +1,128 @@
-Create or update `AGENTS.md` for this repository.
-
-The goal is a compact instruction file that helps future OpenCode sessions avoid mistakes and ramp up quickly. Every line should answer: "Would an agent likely miss this without help?" If not, leave it out.
-
-User-provided focus or constraints (honor these):
+Initialize this project for opencode: create or improve `AGENTS.md`, scaffold `.opencode/` structure, and set up minimal config.
+User-provided focus or constraints:
 $ARGUMENTS
 
-## How to investigate
+## Phase 1: Project Check
+
+Inspect the project root and report status (✅/❌) for each:
+
+| Check | Required |
+|-------|----------|
+| `AGENTS.md` | ✅ |
+| `opencode.json` | ✅ |
+| `.opencode/knowledge/` | optional |
+| `.opencode/rules/` | optional |
+| `.opencode/memory/progress.md` | ✅ |
+| `.opencode/memory/TODO.md` | ✅ |
+| `.opencode/memory/tech.md` | recommended |
+| `.opencode/memory/conclusion.md` | recommended |
+
+Detect tech stack from root markers (lightweight, no deep scan):
+- Bun: `bunfig.toml`, `package.json` with workspaces
+- TypeScript: `tsconfig.json`
+- Effect: `packages/core/src/` + `effect` dep
+- Monorepo: `workspaces` in package.json or `pnpm-workspace.yaml`
+- Drizzle: `*sql.ts` files
+
+Only note frameworks when clearly detected.
+
+## Phase 2: Investigation
 
 Read the highest-value sources first:
 - `README*`, root manifests, workspace config, lockfiles
-- build, test, lint, formatter, typecheck, and codegen config
-- CI workflows and pre-commit / task runner config
-- existing instruction files (`AGENTS.md`, `CLAUDE.md`, `.cursor/rules/`, `.cursorrules`, `.github/copilot-instructions.md`)
-- repo-local OpenCode config such as `opencode.json`
+- Build, test, lint, formatter, typecheck, and codegen config
+- CI workflows, pre-commit / task runner config
+- Existing instruction files (`AGENTS.md`, `CLAUDE.md`, `.cursor/rules/`, `.cursorrules`, `.github/copilot-instructions.md`)
+- Local opencode config (`opencode.json`)
 
-If architecture is still unclear after reading config and docs, inspect a small number of representative code files to find the real entrypoints, package boundaries, and execution flow. Prefer reading the files that explain how the system is wired together over random leaf files.
+Prefer executable sources over prose. If docs conflict with config, trust the executable source.
 
-Prefer executable sources of truth over prose. If docs conflict with config or scripts, trust the executable source and only keep what you can verify.
+Extract high-signal facts an agent needs:
+- Exact developer commands (build, test single, lint, typecheck)
+- Required command order when it matters
+- Monorepo / package boundaries and entrypoints
+- Framework quirks: generated code, codegen, build artifacts, special env loading
+- Testing quirks: fixtures, integration test prereqs, flaky suites
+- Conventions that differ from framework defaults
 
-## What to extract
+## Phase 3: Memory V2
 
-Look for the highest-signal facts for an agent working in this repo:
-- exact developer commands, especially non-obvious ones
-- how to run a single test, a single package, or a focused verification step
-- required command order when it matters, such as `lint -> typecheck -> test`
-- monorepo or multi-package boundaries, ownership of major directories, and the real app/library entrypoints
-- framework or toolchain quirks: generated code, migrations, codegen, build artifacts, special env loading, dev servers, infra deploy flow
-- repo-specific style or workflow conventions that differ from defaults
-- testing quirks: fixtures, integration test prerequisites, snapshot workflows, required services, flaky or expensive suites
-- important constraints from existing instruction files worth preserving
+`.opencode/memory/` stores project-level structured memory:
 
-Good `AGENTS.md` content is usually hard-earned context that took reading multiple files to infer.
+| File | Content | Required |
+|------|---------|----------|
+| `progress.md` | Key milestones and progress | ✅ |
+| `TODO.md` | Current tasks, priority-leveled | ✅ |
+| `tech.md` | Tech stack, build commands, key paths | recommended |
+| `conclusion.md` | Stable decisions, constraints, architecture notes | recommended |
+
+User-level memory lives at `~/.config/opencode/memory/`.
+
+## Phase 4: Rules
+
+Default rule to recommend for every project: `git-safety.md` (prevents dangerous git operations).
+
+For projects with:
+- TypeScript → also recommend `core-operating-rules.md`
+- Web dependencies → also recommend `internet-rules.md`
+
+Rules directory layout:
+- `~/.config/opencode/rules/` — global rules
+- `~/.config/opencode/shared-rules/` — shared rule pool
+- `.opencode/rules/` — project-level rules
+
+Mount rules via `opencode.json.instructions` using paths like `~/.config/opencode/shared-rules/<name>.md`.
+
+## Phase 5: Scaffold
+
+**Ask user to confirm before writing each file.** Never overwrite existing files.
+
+### AGENTS.md
+Include only repo-specific guidance. Every line should answer: "Would an agent likely miss this without help?"
+- Exact dev commands (build, test single, typecheck, deploy)
+- Architecture notes not obvious from filenames
+- Framework / toolchain quirks
+- Conventions that differ from standards
+- Testing gotchas and required prerequisites
+- References to existing instruction sources worth preserving
+
+Exclude: generic advice, long tutorials, obvious conventions, speculative claims.
+
+### opencode.json
+Minimal project config:
+```json
+{
+  "$schema": "https://opencode.ai/schema/v1.json",
+  "instructions": []
+}
+```
+Append recommended rule paths to `instructions`.
+
+### Memory files
+- `progress.md`: current project phase and recent milestones
+- `TODO.md`: immediate next tasks (3-level priority)
+- `tech.md`: stack summary + key commands + critical paths (if project warrants it)
+- `conclusion.md`: key design decisions (if any are stable)
+
+## Phase 6: Config Assembly
+
+1. Read existing `opencode.json`
+2. For each recommended rule, check if already in `instructions`
+3. Generate diff for user review
+4. Write only after user confirms
+5. Add rules, never remove existing ones
+
+## Constraints
+
+- Report first, confirm before writing
+- Never overwrite existing files — improve in place
+- Only write project-level config — never touch `~/.config/opencode/`
+- Memory files: prefer empty over speculative
+- If AGENTS.md exists, reconcile it with codebase rather than rewriting
 
 ## Questions
 
-Only ask the user questions if the repo cannot answer something important. Use the `question` tool for one short batch at most.
+Only ask when the repo cannot answer. One short batch at most.
 
-Good questions:
-- undocumented team conventions
-- branch / PR / release expectations
-- missing setup or test prerequisites that are known but not written down
-
-Do not ask about anything the repo already makes clear.
-
-## Writing rules
-
-Include only high-signal, repo-specific guidance such as:
-- exact commands and shortcuts the agent would otherwise guess wrong
-- architecture notes that are not obvious from filenames
-- conventions that differ from language or framework defaults
-- setup requirements, environment quirks, and operational gotchas
-- references to existing instruction sources that matter
-
-Exclude:
-- generic software advice
-- long tutorials or exhaustive file trees
-- obvious language conventions
-- speculative claims or anything you could not verify
-- content better stored in another file referenced via `opencode.json` `instructions`
-
-When in doubt, omit.
-
-Prefer short sections and bullets. If the repo is simple, keep the file simple. If the repo is large, summarize the few structural facts that actually change how an agent should work.
-
-If `AGENTS.md` already exists at `${path}`, improve it in place rather than rewriting blindly. Preserve verified useful guidance, delete fluff or stale claims, and reconcile it with the current codebase.
+Good questions: undocumented team conventions, branch/PR expectations, missing setup prerequisites.
+Do NOT ask about anything the repo already makes clear.
