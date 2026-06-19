@@ -36,6 +36,8 @@ export const GrepTool = Tool.define(
             throw new Error("pattern is required")
           }
 
+          const ins = yield* InstanceState.context
+
           yield* ctx.ask({
             permission: "grep",
             patterns: [params.pattern],
@@ -49,7 +51,6 @@ export const GrepTool = Tool.define(
             },
           })
 
-          const ins = yield* InstanceState.context
           const requested = path.isAbsolute(params.path ?? ins.directory)
             ? (params.path ?? ins.directory)
             : path.join(ins.directory, params.path ?? ".")
