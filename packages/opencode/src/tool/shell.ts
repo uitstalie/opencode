@@ -267,6 +267,20 @@ const ask = Effect.fn("ShellTool.ask")(function* (
   projectRoot: string,
   input: { command: string; description: string },
 ) {
+  if (scan.patterns.size > 0) {
+    yield* ctx.ask({
+      permission: ShellID.ToolID,
+      patterns: Array.from(scan.patterns),
+      always: Array.from(scan.always),
+      scope: opScope,
+      projectRoot: projectRoot,
+      metadata: {
+        command: input.command,
+        description: input.description,
+      },
+    })
+  }
+
   if (scan.dirs.size > 0) {
     const directories = Array.from(scan.dirs)
     const globs = directories.map((dir) => {
@@ -285,19 +299,6 @@ const ask = Effect.fn("ShellTool.ask")(function* (
       },
     })
   }
-
-  if (scan.patterns.size === 0) return
-  yield* ctx.ask({
-    permission: ShellID.ToolID,
-    patterns: Array.from(scan.patterns),
-    always: Array.from(scan.always),
-    scope: opScope,
-    projectRoot: projectRoot,
-    metadata: {
-      command: input.command,
-      description: input.description,
-    },
-  })
 })
 
 function cmd(shell: string, command: string, cwd: string, env: NodeJS.ProcessEnv) {
