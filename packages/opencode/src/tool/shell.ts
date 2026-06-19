@@ -263,7 +263,7 @@ const parse = Effect.fn("ShellTool.parse")(function* (command: string, ps: boole
 const ask = Effect.fn("ShellTool.ask")(function* (
   ctx: Tool.Context,
   scan: Scan,
-  cwd: string,
+  opScope: string,
   projectRoot: string,
   input: { command: string; description: string },
 ) {
@@ -291,7 +291,7 @@ const ask = Effect.fn("ShellTool.ask")(function* (
     permission: ShellID.ToolID,
     patterns: Array.from(scan.patterns),
     always: Array.from(scan.always),
-    scope: cwd,
+    scope: opScope,
     projectRoot: projectRoot,
     metadata: {
       command: input.command,
@@ -639,7 +639,12 @@ export const ShellTool = Tool.define(
                   )
                   const scan = yield* collect(tree.rootNode, cwd, ps, shell, instanceCtx)
                   if (!containsPath(cwd, instanceCtx)) scan.dirs.add(cwd)
-                  yield* ask(ctx, scan, cwd, instanceCtx.worktree, params)
+                  // Compute opScope: if any scanned path is outside project, use it;
+                  // otherwise use cwd. This ensures scope rules apply to file targets.
+                  const dirs = Array.from(scan.dirs)
+                  const external = dirs.find((d) => !containsPath(d, instanceCtx))
+                  const opScope = external ?? cwd
+                  yield* ask(ctx, scan, opScope, instanceCtx.worktree, params)
                 }),
               )
 
