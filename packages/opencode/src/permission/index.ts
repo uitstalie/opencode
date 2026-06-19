@@ -47,6 +47,15 @@ export function evaluate(
     if (projectRoot === undefined) return scope
     return scope.replaceAll("$PROJECT", projectRoot)
   }
+  const scopeMatch = (op: string, scope: string) => {
+    if (Wildcard.match(op, scope)) return true
+    // $PROJECT/** should also match the project root itself
+    if (scope.endsWith("/**")) {
+      const parent = scope.slice(0, -3)
+      if (op === parent) return true
+    }
+    return false
+  }
   const all = rulesets.flat()
   // Iterate backward (findLast semantics): last matching rule wins
   for (let i = all.length - 1; i >= 0; i--) {
@@ -56,7 +65,7 @@ export function evaluate(
     // No scope constraint, or no opScope info → rule applies as-is
     if (!rule.scope || !opScope) return rule
     // Scope matches → rule applies with action
-    if (Wildcard.match(opScope, expandedScope(rule.scope))) return rule
+    if (scopeMatch(opScope, expandedScope(rule.scope))) return rule
     // Scope doesn't match, but rule has others → apply others action
     if (rule.others) return { ...rule, action: rule.others }
     // Scope doesn't match and no others → skip this rule
