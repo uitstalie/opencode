@@ -3,6 +3,7 @@
 ## 高优先级
 - [x] 验证完整 8-section 渲染管线端到端效果（启动 opencode 检查实际 system prompt 输出）
 - [x] 升级 project-onboarding skill：适配 memory V2 + `.opencode/memory/` 检查
+- [ ] TUI status bar 颜色编码：context%（绿/黄/红）和 cache rate（红/黄/绿），使用 theme.success/warning/error，拆分 `<span>` 分别着色
 
 ## 中优先级
 - [ ] nudge 内容动态化：从 constraint 规则自动生成 nudge，替代 `request.ts:71` 硬编码

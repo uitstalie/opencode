@@ -1,6 +1,6 @@
 # Project Progress
 
-> 最后更新：2026-06-18
+> 最后更新：2026-06-19
 
 ## 已完成
 
@@ -43,8 +43,22 @@
 - `customize-opencode`：opencode 自身配置参考
 - `write-skills`（新增）：指导 agent 写 SKILL.md 的格式、YAML 引号规则、编码和常见陷阱
 
+### Permission 系统 scope 字段 #decision #architecture
+- 设计文档：`doc/permission-system-architecture.md`、`doc/permission-scope-design.md`、`doc/tui-bottom-bar-analysis.md`
+- `Rule.scope?: string`：路径作用域，支持 glob 语法，`$PROJECT` 动态 token
+- `RuleDetail = Action | { action, scope, others }`：`others` 字段处理非匹配路径的 fallback 行为
+- `evaluate()` 扩展：`opScope` / `projectRoot` 参数、`$PROJECT` 展开、`scopeMatch()` 匹配器
+- 全工具适配：bash（从 shell parser `scan.dirs` 提取文件路径）、read、edit、write、glob、grep 均传递 scope + projectRoot
+- 用户配置：`cat`/`rm` 限制 `$PROJECT/**`（others: deny），`edit` 敏感路径对齐 `read`，`external_directory` 默认 ask
+- 修复：`$PROJECT/**` 正确匹配项目根目录自身；bash opScope 使用解析出的文件路径而非仅 cwd
+
+### TUI 状态栏增强
+- 移除 `opencode-token-monitor` 插件
+- Prompt + SubagentFooter 新增 `cache: XX%` 显示（token 数和 cost 之间）
+
 ## 进行中
 - project-onboarding skill 升级（适配 memory V2 + 新项目架构）
+- TUI status bar 颜色编码：context%（绿/黄/红）和 cache rate（红/黄/绿），使用 `theme.success` / `theme.warning` / `theme.error`
 
 ## 待办
 - 清理 `doc/` 下设计文档中标记的 TODO/待接入点
