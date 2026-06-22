@@ -26,8 +26,8 @@ const skipEmbedWebUi = process.argv.includes("--skip-embed-web-ui")
 
 const createEmbeddedWebUIBundle = async () => {
   const appDir = path.join(import.meta.dirname, "../../app")
-  if (!fs.existsSync(appDir)) {
-    console.log(`Web UI app directory not found, skipping Web UI bundle`)
+  if (!fs.existsSync(path.join(appDir, "package.json"))) {
+    console.log(`Web UI app package not found, skipping Web UI bundle`)
     return null
   }
   console.log(`Building Web UI to embed in the binary`)

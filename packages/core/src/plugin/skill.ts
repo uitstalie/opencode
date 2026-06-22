@@ -28,7 +28,7 @@ export const Plugin = define({
           }),
         }),
       )
-      editor.source(
+      draft.source(
         new SkillV2.EmbeddedSource({
           type: "embedded",
           skill: new SkillV2.Info({
