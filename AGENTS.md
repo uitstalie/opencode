@@ -31,20 +31,24 @@ Output: `dist/opencode-linux-x64/bin/opencode`
 ### Quick Build + Replace (compile & hot-swap)
 
 ```bash
-cd packages/opencode && bun run build --single && \
+cd packages/opencode && bun run build --single --skip-embed-web-ui && \
+  cp ~/.opencode/bin/opencode ~/.opencode/bin/opencode.bak && \
   cp dist/opencode-linux-x64/bin/opencode ~/.opencode/bin/opencode
 ```
 
 After replacement, the user must **restart opencode** for the new binary to take effect.
+
+⚠️ **Always backup before replacing**: copy `~/.opencode/bin/opencode` to `~/.opencode/bin/opencode.bak` first. If the new binary fails, restore with `cp ~/.opencode/bin/opencode.bak ~/.opencode/bin/opencode`.
 
 ### Full Update Workflow
 
 When user says "update opencode" or "pull latest and rebuild":
 
 1. `git pull origin dev` (or the current branch)
-2. `cd packages/opencode && bun run build --single`
-3. `cp dist/opencode-linux-x64/bin/opencode ~/.opencode/bin/opencode`
-4. Tell user to restart opencode
+2. `cd packages/opencode && bun run build --single --skip-embed-web-ui`
+3. `cp ~/.opencode/bin/opencode ~/.opencode/bin/opencode.bak`
+4. `cp dist/opencode-linux-x64/bin/opencode ~/.opencode/bin/opencode`
+5. Tell user to restart opencode
 
 ### Build Flags
 
