@@ -43,6 +43,14 @@ const WRITE_SKILLS_DESCRIPTION =
   "Use when creating, editing, or debugging opencode SKILL.md files. Covers YAML frontmatter rules, quoting requirements, file encoding, description best practices, and common silent failure modes."
 const WRITE_SKILLS_BODY = SkillPlugin.WriteSkillsContent
 
+// Built-in skill that teaches agents the memory system: 3 layers (project / global / dreaming),
+// 4 project targets (progress / TODO / tech / conclusion), 4 global categories (preferences /
+// constraints / patterns / style), write protocol (read → review → write), and anti-patterns.
+const MEMORY_GUIDE_NAME = "memory-guide"
+const MEMORY_GUIDE_DESCRIPTION =
+  "Use when the agent needs to read, write, review, or understand the project/global/dreaming memory system. Covers memory layer architecture, target semantics, write protocol, tag system, and anti-patterns. Load before any memory_record, memory_review, or dreaming_compress operation."
+const MEMORY_GUIDE_BODY = SkillPlugin.MemoryGuideContent
+
 export const Info = Schema.Struct({
   name: Schema.String,
   description: Schema.optional(Schema.String),
@@ -306,6 +314,12 @@ export const layer = Layer.effect(
           description: WRITE_SKILLS_DESCRIPTION,
           location: "<built-in>",
           content: WRITE_SKILLS_BODY,
+        }
+        s.skills[MEMORY_GUIDE_NAME] = {
+          name: MEMORY_GUIDE_NAME,
+          description: MEMORY_GUIDE_DESCRIPTION,
+          location: "<built-in>",
+          content: MEMORY_GUIDE_BODY,
         }
         yield* loadSkills(s, yield* InstanceState.get(discovered), events)
         return s

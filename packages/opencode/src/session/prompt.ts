@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from "node:fs"
+import { existsSync } from "node:fs"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import path from "path"
@@ -89,19 +89,53 @@ function isOrphanedInterruptedTool(part: SessionV1.ToolPart) {
 
 // ─── structured system prompt builder ────────────────────
 
-/** Load project memory from .opencode/memory/ for the <memory> section. */
-function loadMemoryForPrompt(worktree: string): string | null {
-  const memoryDir = path.join(worktree, ".opencode", "memory")
-  const files = ["conclusion.md", "tech.md"]
-  const parts: string[] = []
-  for (const file of files) {
-    const filepath = path.join(memoryDir, file)
-    if (existsSync(filepath)) {
-      const content = readFileSync(filepath, "utf-8").trim()
-      if (content) parts.push(content)
-    }
-  }
-  return parts.length > 0 ? parts.join("\n\n") : null
+/** Generate the memory system guide for the <memory> section. */
+function loadMemoryForPrompt(): string {
+  return [
+    "# Memory System",
+    "",
+    "You have a three-layer memory system. Use it to persist stable conclusions, preferences, and patterns.",
+    "",
+    "## Layers",
+    "",
+    "| Layer | Scope | Storage | Targets / Categories |",
+    "|-------|-------|---------|---------------------|",
+    "| Project | project | SQLite + .opencode/memory/ | progress, TODO, tech, conclusion |",
+    "| Global | user | ~/.config/opencode/memory/ | preferences, constraints, patterns, style |",
+    "| Dreaming | dreaming | ~/.config/opencode/memory/dreaming/ | per-project hashed files |",
+    "",
+    "## Reading",
+    "",
+    "- Technical or architectural decision → `memory_read(scope=project)`",
+    "- Style, preference, or workflow choice → `memory_read(scope=user)`",
+    "- Cross-project pattern discovery → `memory_read(scope=user, layer=dreaming)`",
+    "- Filter by target/category: `memory_read(scope=project, target=tech)`",
+    "",
+    "## Writing (Read → Review → Write)",
+    "",
+    "1. `memory_read(...)` to understand existing state",
+    "2. `memory_review(...)` to check for duplicates",
+    "3. `memory_record(scope=..., content=..., target/name=..., tags=[...])` to persist",
+    "",
+    "Only record stable conclusions. Never record: transient debug sessions, single git commands, in-progress steps, error traces, or implementation trivia (line numbers, variable names).",
+    "",
+    "### When to record what",
+    "",
+    "- Work milestone reached → `memory_record(scope=project, target=progress, ...)`",
+    "- Non-transient pending task → `memory_record(scope=project, target=TODO, ...)`",
+    "- Technical choice with rationale → `memory_record(scope=project, target=tech, ...)`",
+    "- Strategic project decision → `memory_record(scope=project, target=conclusion, ...)`",
+    "- Preference seen ≥2 times → `memory_record(scope=user, name=preferences, ...)`",
+    "- Hard constraint stated → `memory_record(scope=user, name=constraints, ...)`",
+    "- Reusable workflow pattern → `memory_record(scope=user, name=patterns, ...)`",
+    "- Style convention ≥2 times → `memory_record(scope=user, name=style, ...)`",
+    "",
+    "## Dreaming",
+    "",
+    "Dreaming merges and refines global memory. Use `dreaming_compress(dryRun=true)` to preview, then `dreaming_compress(dryRun=false)` to apply. Trigger only when: global preferences ≥10, user explicitly requests, or duplicate entries are obvious.",
+    "",
+    "For complete memory operation details (tags, anti-patterns, full write protocol), load the `memory-guide` skill.",
+  ].join("\n")
 }
 
 function buildStructuredSystem(input: {
@@ -170,12 +204,9 @@ function buildStructuredSystem(input: {
   }
 
   // <memory> P6
-  const memoryContent = loadMemoryForPrompt(input.worktree)
-  if (memoryContent) {
-    const memSection = new TemplateSection("memory")
-    memSection.content = memoryContent
-    t.set(memSection)
-  }
+  const memSection = new TemplateSection("memory")
+  memSection.content = loadMemoryForPrompt()
+  t.set(memSection)
 
   // <nudge> P7
   const nudgeSection = new TemplateSection("nudge")

@@ -7,9 +7,11 @@ import { Effect } from "effect"
 import { AbsolutePath } from "../schema"
 import { SkillV2 } from "../skill"
 import customizeOpencodeContent from "./skill/customize-opencode.md" with { type: "text" }
+import memoryGuideContent from "./skill/memory-guide.md" with { type: "text" }
 import writeSkillsContent from "./skill/write-skills.md" with { type: "text" }
 
 export const CustomizeOpencodeContent = customizeOpencodeContent
+export const MemoryGuideContent = memoryGuideContent
 export const WriteSkillsContent = writeSkillsContent
 
 export const Plugin = define({
@@ -25,6 +27,18 @@ export const Plugin = define({
               "Use ONLY when the user is editing or creating opencode's own configuration: opencode.json, opencode.jsonc, files under .opencode/, or files under ~/.config/opencode/. Also use when creating or fixing opencode agents, subagents, commands, skills, plugins, MCP servers, or permission rules. Do not use for the user's own application code, or for any project that is not configuring opencode itself.",
             location: AbsolutePath.make("/builtin/customize-opencode.md"),
             content: CustomizeOpencodeContent,
+          }),
+        }),
+      )
+      draft.source(
+        new SkillV2.EmbeddedSource({
+          type: "embedded",
+          skill: new SkillV2.Info({
+            name: "memory-guide",
+            description:
+              "Use when the agent needs to read, write, review, or understand the project/global/dreaming memory system. Covers memory layer architecture, target semantics, write protocol, tag system, and anti-patterns. Load before any memory_record, memory_review, or dreaming_compress operation.",
+            location: AbsolutePath.make("/builtin/memory-guide.md"),
+            content: MemoryGuideContent,
           }),
         }),
       )
