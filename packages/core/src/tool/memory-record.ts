@@ -82,6 +82,17 @@ function insertProjectMemory(db: Database, target: string, content: string, tags
   )
 }
 
+function syncProjectMd(dir: string, target: string, content: string, tags: readonly string[]): void {
+  const filepath = join(dir, ".opencode", "memory", `${target}.md`)
+  if (existsSync(filepath)) {
+    const existing = readFileSync(filepath, "utf-8")
+    if (existing.includes(content)) return // skip duplicate
+  }
+  const tagStr = tags.length > 0 ? " " + tags.join(" ") : ""
+  const line = `- ${content}${tagStr}\n`
+  writeFileSync(filepath, line, { flag: "a" })
+}
+
 function writeDreamingEntry(dir: string, content: string, tags: readonly string[]): string {
   ensureDreamingDir()
   const projectHash = createHash("sha256").update(dir).digest("hex").slice(0, 12)
@@ -143,6 +154,7 @@ export const layer = Layer.effectDiscard(
               const projDir = location.directory
               const db = ensureProjectDb(projDir)
               insertProjectMemory(db, input.target, input.content, tags)
+              syncProjectMd(projDir, input.target, input.content, tags)
               return `已写入项目记忆: ${input.target}/${input.content}`
             }).pipe(
               Effect.mapError((err) => {
