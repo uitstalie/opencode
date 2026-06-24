@@ -1,0 +1,5 @@
+Restores a file to a previous state using a saved undo snapshot.
+
+Use this tool to undo a previous edit, write, or apply_patch operation. You must provide the `undoHash` that was returned in the metadata of the previous tool call you want to reverse.
+
+After restoring, the tool returns a new `redoHash` so the undo itself can be reversed if needed.

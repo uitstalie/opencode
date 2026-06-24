@@ -10,6 +10,8 @@ import { Format } from "../../src/format"
 import { Agent } from "../../src/agent/agent"
 import { EventV2Bridge } from "../../src/event-v2-bridge"
 import { Truncate } from "@/tool/truncate"
+import { Undo } from "../../src/tool/undo"
+import { UndoEditTool } from "../../src/tool/undo-edit"
 import { SessionID, MessageID } from "../../src/session/schema"
 import * as Tool from "../../src/tool/tool"
 import { testEffect } from "../lib/effect"
@@ -36,6 +38,7 @@ const layer = Layer.mergeAll(
   Format.defaultLayer,
   EventV2Bridge.defaultLayer,
   Truncate.defaultLayer,
+  Undo.defaultLayer,
   Agent.defaultLayer,
 )
 
@@ -572,6 +575,113 @@ describe("tool.edit", () => {
         ])
 
         expect(yield* load(filepath)).toBe("top = 1\nmiddle = keep\nbottom = 2\n")
+      }),
+    )
+  })
+
+  describe("undo", () => {
+    const undoInit = Effect.fn("UndoTest.init")(function* () {
+      const info = yield* UndoEditTool
+      return yield* info.init()
+    })
+
+    const undoRun = Effect.fn("UndoTest.run")(function* (
+      args: Tool.InferParameters<typeof UndoEditTool>,
+      next: Tool.Context = ctx,
+    ) {
+      const tool = yield* undoInit()
+      return yield* tool.execute(args, next)
+    })
+
+    it.instance("edit returns undoHash by default", () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const filepath = path.join(test.directory, "file.txt")
+        yield* put(filepath, "old content")
+
+        const result = yield* run({ filePath: filepath, oldString: "old", newString: "new" })
+
+        expect(result.metadata.undoHash).toBeTruthy()
+        expect(result.metadata.undoHash).not.toBe("")
+        expect(result.output).toContain("undoHash:")
+      }),
+    )
+
+    it.instance("edit with undo:false does not save undoHash", () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const filepath = path.join(test.directory, "file.txt")
+        yield* put(filepath, "old content")
+
+        const result = yield* run({
+          filePath: filepath,
+          oldString: "old",
+          newString: "new",
+          undo: false,
+        })
+
+        expect(result.metadata.undoHash).toBe("")
+        expect(result.output).not.toContain("undoHash:")
+      }),
+    )
+
+    it.instance("undo restores file content", () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const filepath = path.join(test.directory, "file.txt")
+        yield* put(filepath, "before edit")
+
+        const editResult = yield* run({
+          filePath: filepath,
+          oldString: "before edit",
+          newString: "after edit",
+        })
+
+        expect(yield* load(filepath)).toBe("after edit")
+
+        yield* undoRun({
+          filePath: filepath,
+          undoHash: editResult.metadata.undoHash,
+        })
+
+        expect(yield* load(filepath)).toBe("before edit")
+      }),
+    )
+
+    it.instance("undo → undo chain restores to edited state", () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const filepath = path.join(test.directory, "file.txt")
+        yield* put(filepath, "original")
+
+        // Edit 1: original → v1
+        const e1 = yield* run({
+          filePath: filepath,
+          oldString: "original",
+          newString: "v1",
+        })
+        expect(yield* load(filepath)).toBe("v1")
+
+        // Undo 1: v1 → original
+        const u1 = yield* undoRun({
+          filePath: filepath,
+          undoHash: e1.metadata.undoHash,
+        })
+        expect(yield* load(filepath)).toBe("original")
+
+        // Undo 2 (chain): original → v1 (use u1's returned undoHash)
+        const u2 = yield* undoRun({
+          filePath: filepath,
+          undoHash: u1.metadata.undoHash,
+        })
+        expect(yield* load(filepath)).toBe("v1")
+
+        // Undo 3 (chain): v1 → original (use u2's returned undoHash)
+        yield* undoRun({
+          filePath: filepath,
+          undoHash: u2.metadata.undoHash,
+        })
+        expect(yield* load(filepath)).toBe("original")
       }),
     )
   })

@@ -14,6 +14,7 @@ import DESCRIPTION from "./apply_patch.txt"
 import { FileSystem } from "@opencode-ai/core/filesystem"
 import { Format } from "../format"
 import * as Bom from "@/util/bom"
+import { Undo } from "./undo"
 
 export const Parameters = Schema.Struct({
   patchText: Schema.String.annotate({ description: "The full patch text that describes all changes to be made" }),
@@ -26,6 +27,7 @@ export const ApplyPatchTool = Tool.define(
     const afs = yield* FSUtil.Service
     const format = yield* Format.Service
     const events = yield* EventV2Bridge.Service
+    const undo = yield* Undo.Service
 
     const run = Effect.fn("ApplyPatchTool.execute")(function* (
       params: Schema.Schema.Type<typeof Parameters>,
@@ -214,6 +216,15 @@ export const ApplyPatchTool = Tool.define(
         },
       })
 
+      // Save undo blobs for all affected files before applying changes
+      const undoHashes: Record<string, string> = {}
+      for (const change of fileChanges) {
+        for (const fp of [change.filePath, change.movePath].filter(Boolean)) {
+          const hash = yield* undo.saveFileBlob(fp!).pipe(Effect.orElseSucceed(() => ""))
+          if (hash) undoHashes[fp!] = hash
+        }
+      }
+
       // Apply the changes
       const updates: Array<{ file: string; event: "add" | "change" | "unlink" }> = []
 
@@ -298,6 +309,7 @@ export const ApplyPatchTool = Tool.define(
           diff: totalDiff,
           files,
           diagnostics,
+          undoHashes,
         },
         output,
       }

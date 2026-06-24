@@ -14,6 +14,7 @@ import { InstanceState } from "@/effect/instance-state"
 import { trimDiff } from "./edit"
 import { assertExternalDirectoryEffect } from "./external-directory"
 import * as Bom from "@/util/bom"
+import { Undo } from "./undo"
 
 const MAX_PROJECT_DIAGNOSTICS_FILES = 5
 
@@ -21,6 +22,9 @@ export const Parameters = Schema.Struct({
   content: Schema.String.annotate({ description: "The content to write to the file" }),
   filePath: Schema.String.annotate({
     description: "The absolute path to the file to write (must be absolute, not relative)",
+  }),
+  undo: Schema.optional(Schema.Boolean).annotate({
+    description: "Save a file snapshot before writing so the change can be undone. Set to false to skip (default true)",
   }),
 })
 
@@ -31,11 +35,12 @@ export const WriteTool = Tool.define(
     const fs = yield* FSUtil.Service
     const events = yield* EventV2Bridge.Service
     const format = yield* Format.Service
+    const undo = yield* Undo.Service
 
     return {
       description: DESCRIPTION,
       parameters: Parameters,
-      execute: (params: { content: string; filePath: string }, ctx: Tool.Context) =>
+      execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
           const instance = yield* InstanceState.context
           const filepath = path.isAbsolute(params.filePath)
@@ -63,6 +68,12 @@ export const WriteTool = Tool.define(
             },
           })
 
+          const shouldUndo = params.undo !== false
+
+          const undoHash = shouldUndo
+            ? yield* undo.saveFileBlob(filepath).pipe(Effect.orElseSucceed(() => ""))
+            : yield* Effect.succeed("")
+
           yield* fs.writeWithDirs(filepath, Bom.join(contentNew, desiredBom))
           if (yield* format.file(filepath)) {
             yield* Bom.syncFile(fs, filepath, desiredBom)
@@ -74,6 +85,7 @@ export const WriteTool = Tool.define(
           })
 
           let output = "Wrote file successfully."
+          if (undoHash) output += ` (undoHash: ${undoHash})`
           yield* lsp.touchFile(filepath, "document")
           const diagnostics = yield* lsp.diagnostics()
           const normalizedFilepath = FSUtil.normalizePath(filepath)
@@ -96,7 +108,8 @@ export const WriteTool = Tool.define(
             metadata: {
               diagnostics,
               filepath,
-              exists: exists,
+              exists,
+              undoHash,
             },
             output,
           }

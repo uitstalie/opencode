@@ -9,6 +9,7 @@ import { Format } from "../../src/format"
 import { Agent } from "../../src/agent/agent"
 import { EventV2Bridge } from "../../src/event-v2-bridge"
 import { Truncate } from "@/tool/truncate"
+import { Undo } from "../../src/tool/undo"
 import { TestInstance } from "../fixture/fixture"
 import { SessionID, MessageID } from "../../src/session/schema"
 import { testEffect } from "../lib/effect"
@@ -20,6 +21,7 @@ const it = testEffect(
     Format.defaultLayer,
     EventV2Bridge.defaultLayer,
     Truncate.defaultLayer,
+    Undo.defaultLayer,
     Agent.defaultLayer,
   ),
 )

@@ -17,6 +17,7 @@ import { InstanceState } from "@/effect/instance-state"
 import { Snapshot } from "@/snapshot"
 import { assertExternalDirectoryEffect } from "./external-directory"
 import { FSUtil } from "@opencode-ai/core/fs-util"
+import { Undo } from "./undo"
 import * as Bom from "@/util/bom"
 
 function normalizeLineEndings(text: string): string {
@@ -53,6 +54,9 @@ export const Parameters = Schema.Struct({
   replaceAll: Schema.optional(Schema.Boolean).annotate({
     description: "Replace all occurrences of oldString (default false)",
   }),
+  undo: Schema.optional(Schema.Boolean).annotate({
+    description: "Save a file snapshot before editing so the change can be undone. Set to false to skip (default true)",
+  }),
 })
 
 export const EditTool = Tool.define(
@@ -62,6 +66,7 @@ export const EditTool = Tool.define(
     const afs = yield* FSUtil.Service
     const format = yield* Format.Service
     const events = yield* EventV2Bridge.Service
+    const undo = yield* Undo.Service
 
     return {
       description: DESCRIPTION,
@@ -76,6 +81,8 @@ export const EditTool = Tool.define(
             throw new Error("No changes to apply: oldString and newString are identical.")
           }
 
+          const shouldUndo = params.undo !== false
+
           const instance = yield* InstanceState.context
           const filePath = path.isAbsolute(params.filePath)
             ? params.filePath
@@ -85,6 +92,7 @@ export const EditTool = Tool.define(
           let diff = ""
           let contentOld = ""
           let contentNew = ""
+          let undoHash = ""
           yield* lock(filePath).withPermits(1)(
             Effect.gen(function* () {
               if (params.oldString === "") {
@@ -110,6 +118,9 @@ export const EditTool = Tool.define(
                     diff,
                   },
                 })
+                if (shouldUndo) {
+                  undoHash = yield* undo.saveFileBlob(filePath)
+                }
                 yield* afs.writeWithDirs(filePath, Bom.join(contentNew, desiredBom))
                 if (yield* format.file(filePath)) {
                   contentNew = yield* Bom.syncFile(afs, filePath, desiredBom)
@@ -156,6 +167,10 @@ export const EditTool = Tool.define(
                 },
               })
 
+              if (shouldUndo) {
+                undoHash = yield* undo.saveFileBlob(filePath).pipe(Effect.orElseSucceed(() => ""))
+              }
+
               yield* afs.writeWithDirs(filePath, Bom.join(contentNew, desiredBom))
               if (yield* format.file(filePath)) {
                 contentNew = yield* Bom.syncFile(afs, filePath, desiredBom)
@@ -193,11 +208,13 @@ export const EditTool = Tool.define(
             metadata: {
               diff,
               filediff,
+              undoHash,
               diagnostics: {},
             },
           })
 
           let output = "Edit applied successfully."
+          if (undoHash) output += ` (undoHash: ${undoHash})`
           yield* lsp.touchFile(filePath, "document")
           const diagnostics = yield* lsp.diagnostics()
           const normalizedFilePath = FSUtil.normalizePath(filePath)
@@ -209,6 +226,7 @@ export const EditTool = Tool.define(
               diagnostics,
               diff,
               filediff,
+              undoHash,
             },
             title: `${path.relative(instance.worktree, filePath)}`,
             output,
