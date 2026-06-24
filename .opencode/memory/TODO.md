@@ -7,6 +7,8 @@
 - [x] 测试：edit undo 参数、undo 还原、undo 链式撤回 4 个用例
 
 ## 高优先级
+- [ ] **Rust TUI Phase 0**：`cargo init`、ratatui/crossterm/tonic 依赖、hello world 验证
+- [ ] **Rust TUI Phase 1**：`.proto` 定义 + gRPC client + 后端 sidecar
 - [ ] nudge 内容动态化：从 constraint 规则自动生成 nudge，替代 `request.ts` 硬编码
 
 ## 中优先级

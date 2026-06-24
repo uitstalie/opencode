@@ -48,8 +48,14 @@
 - undo-blobs GC（每 10 次保存扫描清理 >24h 的 blob）
 - 测试：4 个 undo 用例（参数开关、还原、链式撤回），edit 33 用例全通过
 
+### Rust TUI 重写 — 前期策划
+- TUI 架构分析：147 文件、~27K 行、@opentui/solid (闭源)、REST+SSE 通信
+- 分支 `opencode-rust-tui` 已创建
+- 设计文档 `doc/rust-tui-design.md` 定稿：ratatui + gRPC + 全量重写 + 5 阶段实施
+- 核心决策：ratatui/crossterm 渲染、tonic/prost gRPC 协议、独立 sidecar、~7K Rust 预估
+
 ## 进行中
-- nudge 内容动态化：从 constraint 规则自动生成 nudge
+- Rust TUI 重写：Phase 0 环境搭建待启动
 
 ## 待修复（预存问题）
 - core: DatabaseMigration 超时、LocationServiceMap 隔离、Npm.add 超时
