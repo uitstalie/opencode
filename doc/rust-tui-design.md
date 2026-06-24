@@ -494,7 +494,118 @@ Phase 3+: TUI 在 core 稳定后开始搭建
 
 ---
 
-## 8. 实施阶段（修订 2）
+## 8. Phase 1 范围（硬边界）
+
+### 8.1 工具：全部 13 个
+
+| 工具 | Phase 1 CLI | Phase 1 TUI |
+|------|-------------|-------------|
+| `bash` | `debug tool run bash` ✅ | 摘要显示 `🔧 bash: <command>` |
+| `read` | `debug tool run read` ✅ | 同上 |
+| `edit` | `debug tool run edit` ✅ | 同上 |
+| `write` | `debug tool run write` ✅ | 同上 |
+| `glob` | `debug tool run glob` ✅ | 同上 |
+| `grep` | `debug tool run grep` ✅ | 同上 |
+| `webfetch` | `debug tool run webfetch` ✅ | 同上 |
+| `websearch` | `debug tool run websearch` ✅ | 同上 |
+| `question` | `debug tool run question` ✅ | 弹窗：选项选择 |
+| `todowrite` | `debug tool run todowrite` ✅ | 摘要 |
+| `skill` | `debug tool run skill` ✅ | 摘要 |
+| `task` | `debug tool run task` ✅ | 摘要（子 agent 异步） |
+| `undo_edit` | `debug tool run undo_edit` ✅ | 摘要 |
+| `apply_patch` | `debug tool run apply_patch` ✅ | 摘要 |
+
+### 8.2 TUI 显示：纯文本 + 工具摘要
+
+```
+┌─ opencode ──────────────────────────────────────────┐
+│                                                      │
+│  user: 创建一个 hello.txt 写入 Hello World             │
+│                                                      │
+│  assistant: 我来创建这个文件。                          │
+│                                                      │
+│  🔧 write: hello.txt                                 │
+│     Wrote file successfully.                         │
+│                                                      │
+│  assistant: 文件已创建。                               │
+│                                                      │
+├──────────────────────────────────────────────────────┤
+│  > _                                        [Send]   │
+└──────────────────────────────────────────────────────┘
+```
+
+**不包含（Phase 1 不做）**：
+- ❌ Markdown 渲染（反引号、标题、列表等）
+- ❌ 语法高亮
+- ❌ Diff 查看器
+- ❌ 侧边栏
+- ❌ 首页 session 列表
+- ❌ 快捷键帮助 (which-key)
+- ❌ 通知系统
+- ❌ 主题切换
+- ❌ 思考模式切换
+- ❌ 滚动加速曲线
+
+### 8.3 权限弹窗：最简实现
+
+```
+┌─ Permission ────────────────────────────────────────┐
+│                                                      │
+│  bash: rm -rf /tmp/test                              │
+│                                                      │
+│  [A] Allow  [D] Deny                                 │
+│                                                      │
+└──────────────────────────────────────────────────────┘
+```
+
+只有两个选项：Allow / Deny。无 scope 显示、无 always 选项、无 reason 输入。
+
+### 8.4 页面：仅 Session 视图
+
+启动后直接进入 session 视图（新建 session）。无首页路由、无多 session 切换。
+
+### 8.5 CLI Debug：全覆盖
+
+```bash
+# Provider
+opencode debug provider list
+opencode debug provider test openai --prompt "hello"
+opencode debug provider models openai
+
+# Tool (全部 13 个)
+opencode debug tool list
+opencode debug tool run bash --params '{"command":"ls -la"}'
+opencode debug tool schema edit
+
+# Config
+opencode debug config validate
+opencode debug config show
+opencode debug config path
+
+# Permission
+opencode debug permission check edit ./src/main.rs
+opencode debug permission check bash .
+
+# System Prompt
+opencode debug prompt show --mode build
+
+# E2E
+opencode debug e2e "创建 hello.txt 写入 Hello World"
+```
+
+### 8.6 Phase 1 完成标准
+
+- [ ] `cargo build --release` 编译通过，零 warning
+- [ ] `opencode debug provider test openai` 返回 LLM 响应
+- [ ] `opencode debug tool run <name>` 全部 13 个工具通过
+- [ ] `opencode debug config validate` 对合法/非法配置分别返回正确结果
+- [ ] `opencode debug permission check` 返回 allow/deny/ask
+- [ ] `opencode debug e2e "..."` 完整 tool loop 执行成功
+- [ ] `opencode` (无参数) 启动 TUI，输入 prompt 后看到消息和工具执行
+
+---
+
+## 9. 实施阶段（修订 3）
 
 ### Phase 0: CLI 骨架 + Provider（2-3 天）
 
@@ -507,74 +618,78 @@ Phase 3+: TUI 在 core 稳定后开始搭建
 - [ ] `provider/openai.rs`：`chat()` + streaming
 - [ ] `cli/debug/provider.rs`：list / test / models 命令
 - [ ] `opencode debug provider test openai --prompt "hello"`
-- [ ] **验证**: `echo $?` 为 0，输出 LLM 响应 + usage
 
-### Phase 1: 全部工具 + 配置（4-6 天）
+### Phase 1: 全部工具 + Config + Session + 最小 TUI（7-10 天）
 
-**目标**: 所有工具能通过 `opencode debug tool run` 执行；配置正确加载。**此时无 TUI。**
+**目标**: 全部 13 个工具可 CLI 测试；`opencode` 启动 TUI 能聊天 + 工具调用
 
-- [ ] `core/config.rs`：JSONC 加载 + 验证
+**A. 工具 + 配置（3-4 天，纯 CLI）**
+
+- [ ] `core/config.rs`：JSONC 加载 + validate + show + path
 - [ ] `core/tool.rs`：Tool trait + ToolRegistry
+- [ ] `tool/bash.rs` → `opencode debug tool run bash`
+- [ ] `tool/read.rs` / `edit.rs` / `write.rs` / `glob.rs` / `grep.rs`
+- [ ] `tool/webfetch.rs` / `websearch.rs` / `question.rs` / `todowrite.rs`
+- [ ] `tool/skill.rs` / `task.rs` / `undo_edit.rs` / `apply_patch.rs`
+- [ ] `undo.rs`：git2 blob store
+- [ ] `cli/debug/tool.rs`：list / run / schema（全部 13 个）
 - [ ] `cli/debug/config.rs`：validate / show / path
-- [ ] `tool/bash.rs` → `opencode debug tool run bash --params '{"command":"ls"}'`
-- [ ] `tool/read.rs` / `tool/edit.rs` / `tool/write.rs`
-- [ ] `tool/glob.rs` / `tool/grep.rs`
-- [ ] `cli/debug/tool.rs`：list / run / schema
-- [ ] `opencode debug config validate` 通过
-- [ ] **验证**: 所有工具独立可执行，输出符合预期
+- [ ] `cli/debug/permission.rs`：check <tool> <path>
+- [ ] `cli/debug/prompt.rs`：show
+- [ ] `cli/debug/session.rs`：list / show
+- [ ] `cli/debug/e2e.rs`：完整 tool loop
 
-### Phase 2: Session + Permission + E2E（4-6 天）
-
-**目标**: 接近现有 opencode 的完整交互
+**B. Session + Permission + System Prompt（2-3 天）**
 
 - [ ] `core/session.rs`：Session/Messages 模型，sled 持久化
-- [ ] `core/config.rs`：JSONC 配置加载 + 验证
-- [ ] `core/permission.rs`：权限评估 (allow/deny/ask，glob scope)
+- [ ] `core/permission.rs`：Rule.scope 评估 + $PROJECT 展开
 - [ ] `core/system_prompt.rs`：8 section 模板渲染
-- [ ] `core/event.rs`：事件定义
-- [ ] `tui/view/home.rs`：Session 列表首页
-- [ ] `tool/webfetch.rs`：HTTP 抓取
-- [ ] `tool/websearch.rs`：搜索
-- [ ] `tool/question.rs`：弹窗确认
-- [ ] `tool/todowrite.rs`：TODO 列表
-- [ ] `tool/skill.rs`：Skill 加载
-- [ ] `tui/keymap/`：快捷键系统（Normal/Insert/Command 模式）
-- [ ] **验证**: 能创建 session、聊天、重启后恢复历史
+- [ ] `core/event.rs`：事件类型定义
 
-### Phase 3: Diff + 语法高亮（5-7 天）
+**C. 最小 TUI（2-3 天）**
+
+- [ ] `tui/app.rs`：ratatui + crossterm 终端初始化，事件循环
+- [ ] `tui/state.rs`：AppState (Arc<RwLock>)，dispatch/reduce
+- [ ] `tui/view/session.rs`：纯文本消息列表 + 滚动
+- [ ] `tui/widget/prompt.rs`：tui-textarea 多行输入，Enter 发送
+- [ ] 工具调用显示：`🔧 tool_name: summary`
+- [ ] 权限弹窗：`[A] Allow  [D] Deny`
+- [ ] LLM streaming → TUI 实时文本追加
+- [ ] tool loop：LLM → tool call → execute → result → LLM
+
+**Phase 1 完成标准**: 见 §8.6
+
+### Phase 2: Markdown + 语法高亮 + Diff（5-7 天）
 
 - [ ] tree-sitter 编译集成（10 核心语言）
 - [ ] `tui/highlight/`：代码块自动高亮
-- [ ] `tui/builtins/diff.rs`：Git diff + last turn diff
-- [ ] 分屏 / 统一视图
+- [ ] `tui/widget/markdown.rs`：pulldown-cmark → ratatui-markdown
+- [ ] `tui/builtins/diff.rs`：Git diff + last turn diff，分屏/统一视图
 - [ ] `tui/builtins/sidebar.rs`：文件树（notify 实时更新）
-- [ ] `tui/widget/markdown.rs`：Markdown 渲染
-- [ ] `tool/undo.rs` + `tool/undo_edit.rs`：撤销工具（git2 blob store）
-- [ ] `tool/apply_patch.rs`：批量 patch
-- [ ] **验证**: 打开有改动的 git 仓库，diff viewer 正常显示
 
-### Phase 4: 内置插件 + 主题（3-5 天）
+### Phase 3: 内置插件 + 主题 + 打磨（4-6 天）
 
 - [ ] `tui/builtins/which_key.rs`：快捷键帮助
 - [ ] `tui/builtins/notify.rs`：通知系统
 - [ ] `tui/builtins/theme.rs`：主题切换
 - [ ] `tui/theme/`：6 个内置主题 + ANSI palette
+- [ ] `tui/keymap/`：Normal/Insert/Command 模式
 - [ ] `tui/config/kv.rs`：sled 持久化用户偏好
 - [ ] 错误处理完善（重连、超时、provider 切换）
+- [ ] 首页 session 列表
 
-### Phase 5: 清理 + 文档（2-3 天）
+### Phase 4: 清理 TS 代码（2-3 天）
 
 - [ ] 移除 `packages/tui/`
-- [ ] 移除 `packages/opencode/`（TypeScript backend）
+- [ ] 移除 `packages/opencode/`
 - [ ] 更新 Makefile：单一 `cargo build --release`
-- [ ] 更新 AGENTS.md：移除 bun 构建指令
-- [ ] 用户迁移文档（opencode.json 兼容性说明）
+- [ ] 更新 AGENTS.md
 
-**总预估**: 18-28 天
+**总预估**: 20-29 天
 
 ---
 
-## 8. 关键差异：v2 vs v3
+## 10. v2 vs v3 关键差异
 
 | 维度 | v2 | v3 |
 |------|-----|-----|
@@ -588,7 +703,7 @@ Phase 3+: TUI 在 core 稳定后开始搭建
 
 ---
 
-## 9. 风险
+## 11. 风险
 
 | 风险 | 概率 | 缓解 |
 |------|------|------|
@@ -601,7 +716,7 @@ Phase 3+: TUI 在 core 稳定后开始搭建
 
 ---
 
-## 10. 已决问题（v3）
+## 12. 已决问题（v3）
 
 | # | 问题 | 决策 |
 |---|------|------|
@@ -618,7 +733,7 @@ Phase 3+: TUI 在 core 稳定后开始搭建
 
 ---
 
-## 11. Proto Definitions for V3
+## 13. Proto Definitions for V3
 
 No proto or gRPC. Provider-specific JSON payloads are the only wire format.
 
