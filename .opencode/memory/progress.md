@@ -1,66 +1,57 @@
 # Project Progress
 
-> 最后更新：2026-06-19
+> 最后更新：2026-06-24
 
 ## 已完成
 
 ### 基础设施
-- 插件系统废弃，`plugins/`、`plugin-config/` 及相关状态文件已全部清理
-- `~/.config/opencode/` 全局目录大清理：97MB → 340K，删除 node_modules (72MB)、插件日志 (25MB)、废弃插件配置和代码、空目录
-- 项目定位改为 opencode 源码开发与部署
-- AGENTS.md 顶部新增 `Deploy & Update` 部署运维指南
-- 修复 enterprise `custom-elements.d.ts` 错误引用和 server `routes` 导出丢失
-- 清理所有非 TUI 包（app, desktop, slack, stats, storybook, containers, console, vscode, specs, perf）
-- 清理上游 README 翻译和 CONTRIBUTING 文件
-- Build 脚本修复：`packages/app` 不存在时自动跳过 Web UI 构建，无需手动 `--skip-embed-web-ui`
-- `~/.config/opencode/` 配置从原仓库迁移到本地，项目级 `.opencode/` 纳入源码仓库管理
+- 插件系统废弃，全部源码编译；`~/.config/opencode/` 清理 97MB → 340K
+- 剔除非 TUI 包（app, desktop, slack, stats 等）
+- 项目级 `.opencode/` 配置纳入源码仓库，AGENTS.md 新增部署运维指南
+- Build 脚本修复：`packages/app` 缺失时自动跳过 Web UI 构建
 
-### System Prompt 模板化项目
-- 设计文档：`doc/prompt-architecture.md`、`doc/system-prompt-template-design.md`、`doc/flag-openai-disable-structured-prompt.md`
-- 8 个语义 section 标签（`<constraint>` → `<nudge>`，优先级 P0-P7）
-- `OPENCODE_DISABLE_STRUCTURED_PROMPT` flag：一键回退到旧扁平拼接
-- 角色注入功能：从 config 读取 role 并注入 system prompt
-- **渲染管线完整实现**：
-  - `template.ts`：`PromptTemplate` / `TemplateSection` 类 + 8 个 section 渲染器
-  - `role.ts`：从 `~/.config/opencode/plugin-config/runtime-orchestrator/` 加载 role 内容
-  - `prompt.ts`：`buildStructuredSystem()` 统一构建全部 8 个 section
-  - `request.ts`：删除 `buildStructuredSystemPrompt()`，模板启用时直接透传 `input.system`
+### System Prompt 模板化
+- 8 个语义 section（`<constraint>` → `<nudge>`），优先级 P0–P7
+- 完整渲染管线：`template.ts` → `role.ts` → `prompt.ts` → `request.ts`
+- Role 注入：从 `~/.config/opencode/plugin-config/runtime-orchestrator/` 加载
+
+### Permission Scope 系统
+- `Rule.scope`（glob）+ `$PROJECT` 动态 token + `others` fallback
+- 6 个工具全适配（bash 特殊：从 shell parser `scan.dirs` 提取文件路径）
+- `external_directory` 保留独立配置
+
+### TUI
+- 状态栏新增 cache hit rate
+- 颜色编码：context%（绿<25%/黄25-50%/红>50%）、cache rate（红<90%/黄90-95%/绿>95%）
+- TDZ crash 修复（useTheme 移到 memo 之前）
 
 ### Memory V2
-- 设计定稿：`runtime-orchestrator-memory-v2-design.md`
-- 按 scope 分流存储（项目 SQLite + 全局 .md 文件）
-- 异步后台提取：插件内直调 LLM API，绕开 agent/session
-- 4 个核心工具，精简工具层
-- 背景记忆提取 via daemon fiber
-
-### 诊断与修复
-- Skill 加载问题排查：确认 YAML frontmatter 中未引号 `:` 导致 gray-matter 解析为空对象，skill 静默丢失
-- `project-onboarding` / `plugin-dev` description 加双引号修复
-- `add()` 函数补防御性日志：`!md` 和 `!isSkillFrontmatter` 路径不再静默
-- 确认系统提示跨会话缓存机制：Context Epoch 基线跨进程重启复用
+- 设计定稿：项目 SQLite + 全局 .md 分流存储
+- 4 个核心工具：`memory_review`、`memory_record`、`dreaming_compress`、`todowrite`
+- Daemon fiber 后台提取骨架完成，`memory_record` 已支持 markdown 同步
 
 ### 内置 Skill
 - `customize-opencode`：opencode 自身配置参考
-- `write-skills`（新增）：指导 agent 写 SKILL.md 的格式、YAML 引号规则、编码和常见陷阱
+- `write-skills`：SKILL.md 格式、YAML 引号规则、常见陷阱
 
-### Permission 系统 scope 字段 #decision #architecture
-- 设计文档：`doc/permission-system-architecture.md`、`doc/permission-scope-design.md`、`doc/tui-bottom-bar-analysis.md`
-- `Rule.scope?: string`：路径作用域，支持 glob 语法，`$PROJECT` 动态 token
-- `RuleDetail = Action | { action, scope, others }`：`others` 字段处理非匹配路径的 fallback 行为
-- `evaluate()` 扩展：`opScope` / `projectRoot` 参数、`$PROJECT` 展开、`scopeMatch()` 匹配器
-- 全工具适配：bash（从 shell parser `scan.dirs` 提取文件路径）、read、edit、write、glob、grep 均传递 scope + projectRoot
-- 用户配置：`cat`/`rm` 限制 `$PROJECT/**`（others: deny），`edit` 敏感路径对齐 `read`，`external_directory` 默认 ask
-- 修复：`$PROJECT/**` 正确匹配项目根目录自身；bash opScope 使用解析出的文件路径而非仅 cwd
+### Init
+- `/init` 集成 project-onboarding skill + scaffold 感知
+- Template 重写为 action-oriented
 
-### TUI 状态栏增强
-- 移除 `opencode-token-monitor` 插件
-- Prompt + SubagentFooter 新增 `cache: XX%` 显示（token 数和 cost 之间）
+### 诊断填充
+- Skill 加载静默失败修复（YAML `:` 无引号 → gray-matter 解析失败 + 防御性日志）
+- 确认 Context Epoch 跨进程重启复用机制
+
+### Edit Undo Phase 2
+- inline `undo` 参数回归（edit.ts / write.ts → `undo?: boolean`，默认 true）
+- 连续多步撤回链（undo_edit 返回 redoHash 作为新 undoHash → undo → undo → undo）
+- undo-blobs GC（每 10 次保存扫描清理 >24h 的 blob）
+- 测试：4 个 undo 用例（参数开关、还原、链式撤回），edit 33 用例全通过
 
 ## 进行中
-- project-onboarding skill 升级（适配 memory V2 + 新项目架构）
-- TUI status bar 颜色编码：context%（绿/黄/红）和 cache rate（红/黄/绿），使用 `theme.success` / `theme.warning` / `theme.error`
+- nudge 内容动态化：从 constraint 规则自动生成 nudge
 
-## 待办
-- 清理 `doc/` 下设计文档中标记的 TODO/待接入点
-- Memory V2 后台提取接入实际 LLM API 调用链
-- nudge 内容动态化（从约束规则自动生成，替代硬编码）
+## 待修复（预存问题）
+- core: DatabaseMigration 超时、LocationServiceMap 隔离、Npm.add 超时
+- opencode: permission.task 实时配置加载超时
+- typecheck: server.ts + prompt.test.ts 类型错误（Effect Layer 推断）
