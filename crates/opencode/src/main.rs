@@ -1,0 +1,49 @@
+//! OpenCode — AI coding agent (Rust rewrite)
+//!
+//! Entry point. Parses CLI args and dispatches to TUI or debug subcommands.
+
+mod cli;
+mod core;
+mod provider;
+mod tool;
+mod tui;
+
+use clap::Parser;
+
+#[derive(Parser)]
+#[command(name = "opencode", version, about = "AI coding agent")]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(clap::Subcommand)]
+enum Command {
+    /// Debug and test commands
+    Debug {
+        #[command(subcommand)]
+        cmd: cli::DebugCmd,
+    },
+}
+
+fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "opencode=info".into()),
+        )
+        .init();
+
+    let cli = Cli::parse();
+
+    match cli.command {
+        Some(Command::Debug { cmd }) => cli::run_debug(cmd)?,
+        None => {
+            tracing::info!("No subcommand provided. TUI not yet implemented.");
+            println!("Usage: opencode debug <subcommand>");
+            println!("Run 'opencode debug --help' for available debug commands.");
+        }
+    }
+
+    Ok(())
+}

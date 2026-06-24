@@ -1,0 +1,76 @@
+[package]
+name = "opencode"
+version = "0.0.0-dev"
+edition = "2024"
+description = "OpenCode AI coding agent — Rust rewrite"
+license = "MIT"
+
+[[bin]]
+name = "opencode"
+path = "src/main.rs"
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# TUI (Phase 1C)
+ratatui = "0.28"
+crossterm = "0.27"
+tui-textarea = "0.6"
+
+# Storage
+sled = "0.34"
+
+# Tools
+glob = "0.3"
+
+# Error handling
+thiserror = "1"
+anyhow = "1"
+
+# Async trait
+async-trait = "0.1"
+
+# Stream utilities
+futures = "0.3"
+
+# Diff (Phase 2)
+similar = "2"
+
+# Markdown (Phase 2)
+# pulldown-cmark = "0.12"
+# ratatui-markdown = "0.1"
+
+# Syntax highlight (Phase 2)
+# tree-sitter = "0.23"
+
+# File watching (Phase 2)
+# notify = "7"
+
+# Clipboard (Phase 2)
+# arboard = "3"
+
+# Fuzzy matching (Phase 2)
+# nucleo = "0.5"
+
+# Git (undo blob store — Phase 1A)
+# git2 = "0.19"
+
+[dev-dependencies]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
