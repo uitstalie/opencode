@@ -3,11 +3,7 @@
  *
  * Replaces the old `join("\n")` flat concatenation with semantic XML-like
  * `<section>` tags that help the LLM distinguish constraint types by priority.
- *
- * Rollback: set OPENCODE_DISABLE_STRUCTURED_PROMPT=true to use the old flat path.
  */
-
-import { Flag } from "@opencode-ai/core/flag/flag"
 
 // ─── types ──────────────────────────────────────────────
 
@@ -223,9 +219,3 @@ export class PromptTemplate {
   }
 }
 
-// ─── feature flag ───────────────────────────────────────
-
-/** True when structured template should be used instead of flat join. */
-export function enabled(): boolean {
-  return !Flag.OPENCODE_DISABLE_STRUCTURED_PROMPT
-}

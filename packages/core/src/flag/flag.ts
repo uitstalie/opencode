@@ -33,9 +33,6 @@ export const Flag = {
   OPENCODE_SERVER_USERNAME: process.env["OPENCODE_SERVER_USERNAME"],
   OPENCODE_DISABLE_FFF: fff === undefined ? process.platform === "win32" : truthy("OPENCODE_DISABLE_FFF"),
 
-  // Structured system prompt — temporary rollback flag
-  OPENCODE_DISABLE_STRUCTURED_PROMPT: truthy("OPENCODE_DISABLE_STRUCTURED_PROMPT"),
-
   // Experimental
   OPENCODE_EXPERIMENTAL_FILEWATCHER: Config.boolean("OPENCODE_EXPERIMENTAL_FILEWATCHER").pipe(
     Config.withDefault(false),

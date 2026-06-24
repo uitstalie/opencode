@@ -36,7 +36,6 @@ import { Tool } from "@/tool/tool"
 import { Permission } from "@/permission"
 import { SessionStatus } from "./status"
 import { LLM } from "./llm"
-import { enabled as templateEnabled } from "./prompt/template"
 import { PromptTemplate, TemplateSection } from "./prompt/template"
 import { loadRoleForPrompt } from "./prompt/role"
 import { Shell } from "@opencode-ai/core/shell"
@@ -1445,9 +1444,7 @@ export const layer = Layer.effect(
               instruction.system().pipe(Effect.orDie),
               MessageV2.toModelMessagesEffect(msgs, model),
             ])
-            const system = templateEnabled()
-              ? buildStructuredSystem({ env, instructions, skills, agent, model, worktree: ctx.worktree })
-              : [...env, ...instructions, ...(skills ? [skills] : [])]
+            const system = buildStructuredSystem({ env, instructions, skills, agent, model, worktree: ctx.worktree })
             const format = lastUser.format ?? { type: "text" as const }
             if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
             const result = yield* handle.process({

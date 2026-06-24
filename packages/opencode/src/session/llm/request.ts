@@ -8,8 +8,7 @@ import type { Agent } from "@/agent/agent"
 import type { MessageV2 } from "../message-v2"
 import type { Provider } from "@/provider/provider"
 import { ProviderTransform } from "@/provider/transform"
-import { SystemPrompt } from "../system"
-import { enabled as templateEnabled } from "../prompt/template"
+
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Effect, Record } from "effect"
 import { jsonSchema, tool as aiTool, type ModelMessage, type Tool } from "ai"
@@ -60,19 +59,9 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
   const isOpenaiOauth = input.provider.id === "openai" && input.auth?.type === "oauth"
 
   // ── system prompt assembly ──
-  const useStructured = templateEnabled()
-
-  const rawSystem = useStructured
-    ? [input.system.join("\n"), ...(input.user.system ? [input.user.system] : [])]
-        .filter((x) => x)
-        .join("\n")
-    : [
-        ...(input.agent.prompt ? [input.agent.prompt] : SystemPrompt.provider(input.model)),
-        ...input.system,
-        ...(input.user.system ? [input.user.system] : []),
-      ]
-        .filter((x) => x)
-        .join("\n")
+  const rawSystem = [input.system.join("\n"), ...(input.user.system ? [input.user.system] : [])]
+    .filter((x) => x)
+    .join("\n")
 
   const system = [rawSystem]
 
