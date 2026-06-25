@@ -35,6 +35,10 @@ sled = "0.34"
 
 # Tools
 glob = "0.3"
+regex = "1"
+walkdir = "2"
+urlencoding = "2"
+hex = "0.4"
 
 # Error handling
 thiserror = "1"
