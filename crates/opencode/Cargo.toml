@@ -45,6 +45,7 @@ async-trait = "0.1"
 
 # Stream utilities
 futures = "0.3"
+async-stream = "0.3"
 
 # Diff (Phase 2)
 similar = "2"

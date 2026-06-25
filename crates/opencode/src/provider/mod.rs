@@ -1,1 +1,1 @@
-// provider module (Phase 1)
+pub mod openai_compat;
