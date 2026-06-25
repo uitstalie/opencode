@@ -30,18 +30,18 @@ pub struct Config {
 }
 
 /// Per-provider configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderConfig {
-    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub api_key: Option<String>,
 
-    #[serde(alias = "baseURL", default)]
+    #[serde(skip_serializing_if = "Option::is_none", default, alias = "baseURL")]
     pub base_url: Option<String>,
 
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub models: HashMap<String, ModelConfig>,
 
-    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub options: Option<serde_json::Value>,
 }
 
@@ -76,15 +76,10 @@ impl Config {
         let mut config = Config::default();
 
         // Load global config
-        if let Some(home) = dirs_fallback() {
-            let global_path = PathBuf::from(&home)
-                .join(".config")
-                .join("opencode")
-                .join("opencode.json");
-            if global_path.exists() {
-                if let Ok(c) = Self::load_file(&global_path) {
-                    config.merge(c);
-                }
+        let global_path = Self::global_config_path();
+        if global_path.exists() {
+            if let Ok(c) = Self::load_file(&global_path) {
+                config.merge(c);
             }
         }
 
@@ -99,7 +94,17 @@ impl Config {
         Ok(config)
     }
 
-    fn load_file(path: &PathBuf) -> anyhow::Result<Config> {
+    /// Path to the global opencode config
+    pub fn global_config_path() -> PathBuf {
+        let home = dirs_fallback().unwrap_or_else(|| "~".to_string());
+        PathBuf::from(&home)
+            .join(".config")
+            .join("opencode")
+            .join("opencode.json")
+    }
+
+    /// Load config from a single file
+    pub fn load_file(path: &PathBuf) -> anyhow::Result<Config> {
         let content = std::fs::read_to_string(path)?;
         // Strip JSONC comments (simple // and /* */)
         let stripped = strip_jsonc_comments(&content);
@@ -176,7 +181,7 @@ fn dirs_fallback() -> Option<String> {
 }
 
 /// Strip // line comments and /* */ block comments from JSONC
-fn strip_jsonc_comments(input: &str) -> String {
+pub fn strip_jsonc_comments(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
 
