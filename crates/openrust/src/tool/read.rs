@@ -10,7 +10,7 @@ pub struct ReadTool;
 impl Tool for ReadTool {
     fn name(&self) -> &'static str { "read" }
     fn description(&self) -> &'static str {
-        "Read a file from the filesystem. Use offset/limit for large files."
+        "Read a file (like cat but with line numbers, offset, and limit). Use for any file content inspection."
     }
     fn parameters(&self) -> Value { serde_json::json!({
         "type": "object",
@@ -46,7 +46,7 @@ impl Tool for ReadTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn ctx() -> ToolContext { ToolContext { cwd: std::env::current_dir().unwrap(), interactive: false, undo_store: None } }
+    fn ctx() -> ToolContext { ToolContext::new(std::env::current_dir().unwrap()) }
 
     #[tokio::test]
     async fn reads_self() {

@@ -46,7 +46,7 @@ impl Tool for GlobTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn ctx() -> ToolContext { ToolContext { cwd: std::env::current_dir().unwrap(), interactive: false, undo_store: None } }
+    fn ctx() -> ToolContext { ToolContext::new(std::env::current_dir().unwrap()) }
 
     #[tokio::test]
     async fn finds_rs_files() {

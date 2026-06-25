@@ -100,7 +100,7 @@ mod tests {
 
     #[tokio::test]
     async fn bad_url_graceful() {
-        let c = ToolContext { cwd: std::env::current_dir().unwrap(), interactive: false, undo_store: None };
+        let c = ToolContext::new(std::env::current_dir().unwrap());
         let r = WebFetchTool.execute(ToolParams::new(serde_json::json!({
             "url": "not-a-url-!!!", "timeout": 3
         })), &c).await;

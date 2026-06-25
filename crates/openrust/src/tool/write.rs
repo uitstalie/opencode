@@ -50,7 +50,12 @@ mod tests {
     use crate::tool::UndoStore;
 
     fn ctx(undo: Option<Arc<UndoStore>>) -> ToolContext {
-        ToolContext { cwd: std::env::current_dir().unwrap(), interactive: false, undo_store: undo }
+        ToolContext {
+            cwd: std::env::current_dir().unwrap(),
+            interactive: false,
+            project_dir: None,
+            undo_store: undo,
+        }
     }
 
     #[tokio::test]

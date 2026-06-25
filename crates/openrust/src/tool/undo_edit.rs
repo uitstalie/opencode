@@ -51,7 +51,12 @@ impl Tool for UndoEditTool {
 mod tests {
     use super::*;
     fn ctx(store: Arc<UndoStore>) -> ToolContext {
-        ToolContext { cwd: std::env::current_dir().unwrap(), interactive: false, undo_store: Some(store) }
+        ToolContext {
+            cwd: std::env::current_dir().unwrap(),
+            interactive: false,
+            project_dir: None,
+            undo_store: Some(store),
+        }
     }
 
     #[tokio::test]
