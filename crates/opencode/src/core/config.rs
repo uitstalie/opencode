@@ -75,7 +75,7 @@ impl Config {
     pub fn load(project_dir: &PathBuf) -> anyhow::Result<Self> {
         let mut config = Config::default();
 
-        // Load global config
+        // Load global config (~/.config/opencode-rust/config.json)
         let global_path = Self::global_config_path();
         if global_path.exists() {
             if let Ok(c) = Self::load_file(&global_path) {
@@ -83,7 +83,7 @@ impl Config {
             }
         }
 
-        // Load project config
+        // Load project config (./opencode.json)
         let project_path = project_dir.join("opencode.json");
         if project_path.exists() {
             if let Ok(c) = Self::load_file(&project_path) {
@@ -94,13 +94,13 @@ impl Config {
         Ok(config)
     }
 
-    /// Path to the global opencode config
+    /// Path to the global config (separate from TS opencode)
     pub fn global_config_path() -> PathBuf {
         let home = dirs_fallback().unwrap_or_else(|| "~".to_string());
         PathBuf::from(&home)
             .join(".config")
-            .join("opencode")
-            .join("opencode.json")
+            .join("opencode-rust")
+            .join("config.json")
     }
 
     /// Load config from a single file

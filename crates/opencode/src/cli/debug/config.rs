@@ -18,13 +18,17 @@ pub struct SetArgs {
     /// Provider name
     provider: String,
 
-    /// Set API key (writes to global config)
+    /// Set API key
     #[arg(long)]
     api_key: Option<String>,
 
-    /// Set base URL (writes to global config)
+    /// Set base URL
     #[arg(long)]
     base_url: Option<String>,
+
+    /// Add a model with variants (comma-separated), e.g. "gpt-5.5:low,medium,high,xhigh"
+    #[arg(long)]
+    add_model: Option<String>,
 }
 
 pub fn run(cmd: Cmd) -> anyhow::Result<()> {
@@ -70,7 +74,22 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
                 p["base_url"] = serde_json::json!(url);
                 println!("Set base_url for provider '{}' → {}", args.provider, url);
             }
-            if args.api_key.is_none() && args.base_url.is_none() {
+            if let Some(model_spec) = &args.add_model {
+                let parts: Vec<&str> = model_spec.splitn(2, ':').collect();
+                let model_id = parts[0];
+                let variants: Vec<&str> = parts.get(1).map(|v| v.split(',').collect()).unwrap_or_default();
+                let mut model = serde_json::json!({ "name": model_id });
+                if !variants.is_empty() {
+                    let vmap: serde_json::Map<String, serde_json::Value> = variants
+                        .iter()
+                        .map(|v| (v.to_string(), serde_json::json!({})))
+                        .collect();
+                    model["variants"] = serde_json::json!(vmap);
+                }
+                p["models"][model_id] = model;
+                println!("Added model '{}' to provider '{}'.", model_id, args.provider);
+            }
+            if args.api_key.is_none() && args.base_url.is_none() && args.add_model.is_none() {
                 // Show current state
                 let config = Config::load(&cwd)?;
                 println!("Usage: opencode debug config set <provider> --api-key <key> --base-url <url>");
