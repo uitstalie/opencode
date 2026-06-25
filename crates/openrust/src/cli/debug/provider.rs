@@ -36,7 +36,7 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
         Cmd::List => {
             if config.provider.is_empty() {
                 println!("No providers configured.");
-                println!("Add provider config to opencode.json:");
+                println!("Add provider config to openrust.json:");
                 println!(r#"  {{"provider": {{"deepseek": {{"baseURL": "https://api.deepseek.com/v1"}}}}}}"#);
             } else {
                 println!("Configured providers:");

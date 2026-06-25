@@ -94,7 +94,7 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
                 // Show current state
                 let config = Config::load(&cwd)?;
                 let vault = crate::core::vault::Vault::load();
-                println!("Usage: opencode debug config set <provider> --api-key <key> --base-url <url>");
+                println!("Usage: openrust debug config set <provider> --api-key <key> --base-url <url>");
                 if let Some(resolved) = config.get_provider(&args.provider) {
                     let key_status = match vault.get(&args.provider) {
                         Some(k) if k.len() > 8 => format!("🔐 (vault) ****{}", &k[k.len()-4..]),
@@ -163,7 +163,7 @@ fn show_paths() {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let global = Config::global_config_path();
     let vault = Config::global_config_dir().join("credentials.enc");
-    println!("Project config:  {}/opencode.json", cwd.display());
+    println!("Project config:  {}/openrust.json", cwd.display());
     println!("Global config:   {}", global.display());
     println!("Vault (enc):     {}", vault.display());
 }

@@ -3,7 +3,7 @@
 //! Stores file snapshots before write/edit operations.
 //! GC runs every 10 saves, purging blobs older than 24 hours.
 //!
-//! Store location: `~/.config/opencode-rust/undo/`
+//! Store location: `~/.config/openrust/undo/`
 //! Blob naming: `{sha256_hex}` — content is the original file content.
 
 use sha2::{Digest, Sha256};

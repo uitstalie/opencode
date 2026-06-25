@@ -1,6 +1,6 @@
-//! Configuration loading from opencode.json.
+//! Configuration loading from openrust.json.
 //!
-//! Supports the existing opencode.json format:
+//! Supports the openrust.json format:
 //! ```json
 //! {
 //!   "model": "deepseek/deepseek-v4-pro",
@@ -10,13 +10,13 @@
 //! }
 //! ```
 //!
-//! API keys: config `api_key` field takes priority, then env `{NAME}_API_KEY`.
+//! API keys: stored in encrypted vault (credentials.enc), not in config.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// Full opencode configuration
+/// Full openrust configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
@@ -77,7 +77,7 @@ impl Config {
     pub fn load(project_dir: &PathBuf) -> anyhow::Result<Self> {
         let mut config = Config::default();
 
-        // Load global config (~/.config/opencode-rust/config.json)
+        // Load global config (~/.config/openrust/config.json)
         let global_path = Self::global_config_path();
         if global_path.exists() {
             if let Ok(c) = Self::load_file(&global_path) {
@@ -87,8 +87,8 @@ impl Config {
             }
         }
 
-        // Load project config (./opencode.json)
-        let project_path = project_dir.join("opencode.json");
+        // Load project config (./openrust.json)
+        let project_path = project_dir.join("openrust.json");
         if project_path.exists() {
             if let Ok(c) = Self::load_file(&project_path) {
                 config.merge(c);
@@ -183,7 +183,7 @@ impl Config {
     /// Get the config directory (shared by config.json and credentials.enc)
     pub fn global_config_dir() -> PathBuf {
         let home = dirs_fallback().unwrap_or_else(|| "~".to_string());
-        PathBuf::from(&home).join(".config").join("opencode-rust")
+        PathBuf::from(&home).join(".config").join("openrust")
     }
 }
 

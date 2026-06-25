@@ -1,12 +1,12 @@
 [package]
-name = "opencode"
+name = "openrust"
 version = "0.0.0-dev"
 edition = "2024"
-description = "OpenCode AI coding agent — Rust rewrite"
+description = "OpenRust AI coding agent — Rust rewrite"
 license = "MIT"
 
 [[bin]]
-name = "opencode"
+name = "openrust"
 path = "src/main.rs"
 
 [dependencies]

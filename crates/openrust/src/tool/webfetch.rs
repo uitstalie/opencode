@@ -27,7 +27,7 @@ impl Tool for WebFetchTool {
         let client = try_tool!(
             reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(timeout))
-                .user_agent("opencode-rust/0.0")
+                .user_agent("openrust/0.0")
                 .build(),
             |e| format!("Client error: {}", e)
         );

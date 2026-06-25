@@ -28,7 +28,7 @@ impl Tool for WebSearchTool {
         let client = try_tool!(
             reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(15))
-                .user_agent("Mozilla/5.0 (compatible; opencode-rust/0.0)")
+                .user_agent("Mozilla/5.0 (compatible; openrust/0.0)")
                 .build(),
             |e| format!("Client: {}", e)
         );

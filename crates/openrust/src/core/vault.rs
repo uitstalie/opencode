@@ -1,6 +1,6 @@
 //! Encrypted credentials store.
 //!
-//! Stores provider API keys in `~/.config/opencode-rust/credentials.enc`.
+//! Stores provider API keys in `~/.config/openrust/credentials.enc`.
 //! Keys are encrypted with AES-256-GCM bound to the machine-id.
 //! File permissions are set to 0600 (owner read/write only).
 //!
@@ -44,7 +44,7 @@ impl Vault {
                         keys.insert(provider.clone(), plaintext);
                     } else {
                         tracing::warn!(
-                            "Could not decrypt API key for '{}' — wrong machine? Re-set with: opencode debug config set {} --api-key <key>",
+                            "Could not decrypt API key for '{}' — wrong machine? Re-set with: openrust debug config set {} --api-key <key>",
                             provider, provider
                         );
                     }

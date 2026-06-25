@@ -60,7 +60,7 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
                 }
             }
             if !found && config.provider.is_empty() {
-                println!("No providers configured. Set one first: opencode debug config set <name> --base-url <url>");
+                println!("No providers configured. Set one first: openrust debug config set <name> --base-url <url>");
             }
             Ok(())
         }

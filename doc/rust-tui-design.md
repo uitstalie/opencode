@@ -19,7 +19,7 @@
 
 ```
 ┌──────────────────────────────────────────────┐
-│            crates/opencode/  (Rust)           │
+│            crates/openrust/  (Rust)           │
 │                                              │
 │  ┌────────────┐  ┌──────────────────────┐   │
 │  │   TUI      │  │        CLI            │   │
@@ -611,7 +611,7 @@ opencode debug e2e "创建 hello.txt 写入 Hello World"
 
 **目标**: `opencode debug provider test openai` 能调用 LLM 并流式输出
 
-- [ ] `cargo init crates/opencode`
+- [ ] `cargo init crates/openrust`
 - [ ] Cargo.toml：clap (derive), tokio, reqwest, serde, tracing
 - [ ] `main.rs`：clap CLI 入口，tracing 初始化
 - [ ] `core/provider.rs`：LlmProvider trait
