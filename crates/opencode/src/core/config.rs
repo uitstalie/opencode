@@ -71,7 +71,9 @@ pub struct ModelLimit {
 }
 
 impl Config {
-    /// Load config from project and global paths
+    /// Load config from project and global paths.
+    /// Also runs migration: any plaintext api_key in config.json is moved
+    /// to the encrypted vault (credentials.enc) and removed from config.
     pub fn load(project_dir: &PathBuf) -> anyhow::Result<Self> {
         let mut config = Config::default();
 
@@ -79,6 +81,8 @@ impl Config {
         let global_path = Self::global_config_path();
         if global_path.exists() {
             if let Ok(c) = Self::load_file(&global_path) {
+                // Migrate any plaintext api_keys to encrypted vault
+                Self::migrate_api_keys(&c);
                 config.merge(c);
             }
         }
@@ -96,11 +100,26 @@ impl Config {
 
     /// Path to the global config (separate from TS opencode)
     pub fn global_config_path() -> PathBuf {
-        let home = dirs_fallback().unwrap_or_else(|| "~".to_string());
-        PathBuf::from(&home)
-            .join(".config")
-            .join("opencode-rust")
-            .join("config.json")
+        Self::global_config_dir().join("config.json")
+    }
+
+    /// Migrate plaintext api_keys from ProviderConfig to the encrypted vault.
+    fn migrate_api_keys(config: &Config) {
+        let mut to_migrate = HashMap::new();
+        for (name, cfg) in &config.provider {
+            if let Some(ref key) = cfg.api_key {
+                if !key.is_empty() {
+                    to_migrate.insert(name.clone(), key.clone());
+                }
+            }
+        }
+        if to_migrate.is_empty() {
+            return;
+        }
+        let migrated = crate::core::vault::Vault::migrate_from_config(&to_migrate);
+        for provider in &migrated {
+            println!("🔐 Migrated API key for '{}' to encrypted vault.", provider);
+        }
     }
 
     /// Load config from a single file
@@ -128,16 +147,23 @@ impl Config {
         self.model.clone()
     }
 
-    /// Get provider config by name, resolving API key from env
+    /// Get provider config by name, resolving API key from:
+    ///   1. Encrypted vault (credentials.enc)
+    ///   2. {NAME}_API_KEY environment variable
+    ///   3. OPENAI_API_KEY environment variable (fallback)
     pub fn get_provider(&self, name: &str) -> Option<ResolvedProvider> {
         let cfg = self.provider.get(name)?;
 
-        // API key: config value > provider-specific env > generic OPENAI_API_KEY
-        let env_key = format!("{}_API_KEY", name.to_uppercase().replace('-', "_"));
-        let api_key = cfg
-            .api_key
-            .clone()
-            .or_else(|| std::env::var(&env_key).ok())
+        // Try vault first (encrypted store)
+        let vault = crate::core::vault::Vault::load();
+        let api_key = vault
+            .get(name)
+            .map(|s| s.to_string())
+            // Fallback to env vars
+            .or_else(|| {
+                let env_key = format!("{}_API_KEY", name.to_uppercase().replace('-', "_"));
+                std::env::var(&env_key).ok()
+            })
             .or_else(|| std::env::var("OPENAI_API_KEY").ok());
 
         // base_url: config value > options.baseURL
@@ -152,6 +178,12 @@ impl Config {
             models: cfg.models.clone(),
             options: cfg.options.clone(),
         })
+    }
+
+    /// Get the config directory (shared by config.json and credentials.enc)
+    pub fn global_config_dir() -> PathBuf {
+        let home = dirs_fallback().unwrap_or_else(|| "~".to_string());
+        PathBuf::from(&home).join(".config").join("opencode-rust")
     }
 }
 

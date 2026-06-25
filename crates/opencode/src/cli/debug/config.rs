@@ -67,8 +67,9 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
             let p = &mut raw["provider"][&args.provider];
 
             if let Some(key) = &args.api_key {
-                p["api_key"] = serde_json::json!(key);
-                println!("Set api_key for provider '{}'.", args.provider);
+                // Save to encrypted vault instead of config.json
+                crate::core::vault::Vault::save(&args.provider, key)?;
+                println!("🔐 Saved encrypted API key for '{}' to vault.", args.provider);
             }
             if let Some(url) = &args.base_url {
                 p["base_url"] = serde_json::json!(url);
@@ -92,9 +93,14 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
             if args.api_key.is_none() && args.base_url.is_none() && args.add_model.is_none() {
                 // Show current state
                 let config = Config::load(&cwd)?;
+                let vault = crate::core::vault::Vault::load();
                 println!("Usage: opencode debug config set <provider> --api-key <key> --base-url <url>");
                 if let Some(resolved) = config.get_provider(&args.provider) {
-                    let key_status = resolved.api_key.as_deref().map(|_| "****").unwrap_or("(not set)");
+                    let key_status = match vault.get(&args.provider) {
+                        Some(k) if k.len() > 8 => format!("🔐 (vault) ****{}", &k[k.len()-4..]),
+                        Some(_) => "🔐 (vault) ****".to_string(),
+                        None => "(not set)".to_string(),
+                    };
                     println!("  api_key:  {}", key_status);
                     println!("  base_url: {}", resolved.base_url.as_deref().unwrap_or("(not set)"));
                 }
@@ -114,14 +120,17 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
 }
 
 fn show_config(config: &Config) {
+    let vault = crate::core::vault::Vault::load();
+
     println!("Model: {}", config.model.as_deref().unwrap_or("(not set)"));
     println!();
-    for (name, cfg) in &config.provider {
+    for (name, _cfg) in &config.provider {
         let resolved = config.get_provider(name);
         let base_url = resolved.as_ref().and_then(|r| r.base_url.as_deref()).unwrap_or("(default)");
-        let key_status = match &cfg.api_key {
-            Some(k) if k.len() > 8 => format!("****{}", &k[k.len() - 4..]),
-            Some(_) => "****".to_string(),
+
+        let key_status = match vault.get(name) {
+            Some(k) if k.len() > 8 => format!("🔐 (vault) ****{}", &k[k.len() - 4..]),
+            Some(_) => "🔐 (vault) ****".to_string(),
             None => {
                 let env_key = format!("{}_API_KEY", name.to_uppercase().replace('-', "_"));
                 match std::env::var(&env_key).or_else(|_| std::env::var("OPENAI_API_KEY")) {
@@ -134,9 +143,9 @@ fn show_config(config: &Config) {
         println!("[{}]", name);
         println!("  base_url: {}", base_url);
         println!("  api_key:  {}", key_status);
-        if !cfg.models.is_empty() {
+        if !_cfg.models.is_empty() {
             println!("  models:");
-            for (id, m) in &cfg.models {
+            for (id, m) in &_cfg.models {
                 let display = m.name.as_deref().unwrap_or(id);
                 if let Some(variants) = &m.variants {
                     let vnames: Vec<&str> = variants.keys().map(|s| s.as_str()).collect();
@@ -153,6 +162,8 @@ fn show_config(config: &Config) {
 fn show_paths() {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let global = Config::global_config_path();
+    let vault = Config::global_config_dir().join("credentials.enc");
     println!("Project config:  {}/opencode.json", cwd.display());
     println!("Global config:   {}", global.display());
+    println!("Vault (enc):     {}", vault.display());
 }
