@@ -1,6 +1,6 @@
 # Project Progress
 
-> 最后更新：2026-06-24
+> 最后更新：2026-06-26
 
 ## 已完成
 
@@ -48,14 +48,48 @@
 - undo-blobs GC（每 10 次保存扫描清理 >24h 的 blob）
 - 测试：4 个 undo 用例（参数开关、还原、链式撤回），edit 33 用例全通过
 
-### Rust TUI 重写 — 前期策划
+### Rust TUI 重写 — 设计 & Phase 0
 - TUI 架构分析：147 文件、~27K 行、@opentui/solid (闭源)、REST+SSE 通信
 - 分支 `opencode-rust-tui` 已创建
-- 设计文档 `doc/rust-tui-design.md` 定稿：ratatui + gRPC + 全量重写 + 5 阶段实施
-- 核心决策：ratatui/crossterm 渲染、tonic/prost gRPC 协议、独立 sidecar、~7K Rust 预估
+- 设计文档 `doc/rust-tui-design.md` v3 定稿（13 章节、~800 行、12 个关键决策）
+- Rust 工具链 1.96.0 已安装
+- `crates/openrust/` cargo init，Cargo.toml 含所有依赖
+- clap CLI，Config loader (JSONC)，LlmProvider trait + OpenAI-compat SSE streaming
+- Provider 实测：gpt-5.5 / gpt-5.4 均通过（one_route proxy）
+
+### Rust TUI 重写 — Phase 0.9
+- API key 加密：AES-256-GCM + machine-id 绑定密钥
+- Vault store：`~/.config/openrust/credentials.enc` (chmod 600)
+- 自动迁移：config.json 明文 key → vault，原文删除
+- 分辨率链：vault → `{NAME}_API_KEY` env → `OPENAI_API_KEY` env
+
+### Rust TUI 重写 — Phase 1A
+- 10 个工具：read, write, edit, rm, bash, glob, grep, webfetch, websearch, undo_edit
+- Tool trait + ToolParams helper + 宏（try_tool!/require_str!/try_opt!）
+- Tool::to_llm_def() → OpenAI function calling 格式
+- Tool::execute_checked()：统一 permission 门控
+- UndoStore：blob 存储 + 24h GC + 链式撤回
+- 测试：48/48 passing，0 compiler warnings
+
+### Rust TUI 重写 — Phase 1A.1
+- 二进制改名：opencode → openrust
+- 配置域：`~/.config/openrust/`（与 TS opencode 完全隔离）
+- User-agent：openrust/0.0
+
+### Rust TUI 重写 — Phase 1A.2
+- rm 工具：安全删除（recursive/force），refuses system paths
+- `core/paths.rs`：Linux 统一路径保护（SYSTEM_PROTECTED / USER_PROTECTED / PROJECT_PROTECTED）
+- Project scope 管控：is_within_project → 所有破坏性工具默认限于 cwd
+- Permission::Ask 变体（debug 模式自动放行+标记，TUI 模式弹出确认框）
+- read 工具 description 明确替代 cat
 
 ## 进行中
-- Rust TUI 重写：Phase 0 环境搭建待启动
+- (无)
+
+## 下一步
+- Phase 1B：session 管理 + system prompt 渲染
+- Phase 1C：最小 TUI（ratatui session view、input box、工具循环）
+- Phase 1D：工具-TUI 集成（question/todowrite/skill/task + permission 对话框）
 
 ## 待修复（预存问题）
 - core: DatabaseMigration 超时、LocationServiceMap 隔离、Npm.add 超时

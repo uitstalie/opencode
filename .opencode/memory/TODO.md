@@ -1,14 +1,14 @@
 # TODO
 
-## Edit Undo Phase 2
-- [x] inline `undo` 参数回归：edit/write 工具加回 `undo` 参数，用 `Effect.fn` + 单 return 路径解决 TS 双分支推断
-- [x] 连续多步撤回链：undo_edit 执行后再记录 undoHash，支持 undo → undo → undo
-- [x] undo-blobs GC：过期 blob 清理策略（`~/.local/share/opencode/undo-blobs/`）
-- [x] 测试：edit undo 参数、undo 还原、undo 链式撤回 4 个用例
-
 ## 高优先级
-- [ ] **Rust TUI Phase 0**：`cargo init`、ratatui/crossterm/tonic 依赖、hello world 验证
-- [ ] **Rust TUI Phase 1**：`.proto` 定义 + gRPC client + 后端 sidecar
+- [x] **Rust TUI Phase 0**：cargo init、clap CLI、Config 加载、Provider trait、LLM 实测
+- [x] **Rust TUI Phase 0.9**：api_key AES-256-GCM 加密 + machine-id 绑定
+- [x] **Rust TUI Phase 1A**：10 个工具 + permission 系统 + Tool trait 抽象
+- [x] **Rust TUI Phase 1A.1**：二进制改名 → openrust
+- [x] **Rust TUI Phase 1A.2**：rm 工具 + project scope 管控 + shared paths 模块
+- [ ] **Rust TUI Phase 1B**：会话管理 + system prompt 渲染
+- [ ] **Rust TUI Phase 1C**：最小 TUI（ratatui session view, input box, tool loop）
+- [ ] **Rust TUI Phase 1D**：工具-TUI 集成（question/todowrite/skill/task + permission 对话框）
 - [ ] nudge 内容动态化：从 constraint 规则自动生成 nudge，替代 `request.ts` 硬编码
 
 ## 中优先级
