@@ -37,13 +37,27 @@ done
 cat > "$OUTDIR/opencode/install.sh" << 'INSTALL_EOF'
 #!/usr/bin/env bash
 set -e
-echo "Installing opencode..."
-cp -rn .opencode/bin/* ~/.opencode/bin/ 2>/dev/null || true
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+echo "Installing opencode from $ROOT ..."
+
+# Binary
+mkdir -p ~/.opencode/bin
+cp "$ROOT/.opencode/bin/opencode" ~/.opencode/bin/opencode
 chmod 755 ~/.opencode/bin/opencode
-[ -d ~/.config/opencode ] || mkdir -p ~/.config/opencode
-cp -rn .config/opencode/* ~/.config/opencode/ 2>/dev/null || true
+
+# Config — don't overwrite existing
+mkdir -p ~/.config/opencode
+for item in opencode.json rules skills shared-rules; do
+    if [ -e "$ROOT/.config/opencode/$item" ]; then
+        cp -rn "$ROOT/.config/opencode/$item" ~/.config/opencode/ 2>/dev/null || true
+    fi
+done
+
+echo ""
 echo "Done. Run: ~/.opencode/bin/opencode --version"
 echo "Add to PATH: export PATH=\"\$HOME/.opencode/bin:\$PATH\""
+echo ""
+echo "IMPORTANT: Set your API key in ~/.config/opencode/opencode.json"
 INSTALL_EOF
 chmod +x "$OUTDIR/opencode/install.sh"
 
