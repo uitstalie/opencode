@@ -33,6 +33,19 @@ for dir in rules skills shared-rules; do
     [ -d "$CONFIG_DIR/$dir" ] && cp -a "$CONFIG_DIR/$dir" "$OUTDIR/opencode/.config/opencode/$dir"
 done
 
+# Bundle @opencode-ai/* workspace packages (Bun compile may not embed them)
+echo "Bundling @opencode-ai workspace packages..."
+mkdir -p "$OUTDIR/opencode/.config/opencode/node_modules/@opencode-ai"
+for pkg in plugin sdk core llm server script; do
+    SRC="${REPO_ROOT}/packages/${pkg}"
+    # sdk lives at packages/sdk/js
+    [ "$pkg" = "sdk" ] && SRC="${REPO_ROOT}/packages/sdk/js"
+    if [ -d "$SRC/src" ]; then
+        cp -aL "$SRC" "$OUTDIR/opencode/.config/opencode/node_modules/@opencode-ai/$pkg"
+    fi
+done
+echo "Done."
+
 # Install script
 cat > "$OUTDIR/opencode/install.sh" << 'INSTALL_EOF'
 #!/usr/bin/env bash
@@ -43,7 +56,14 @@ echo "Installing opencode from $ROOT ..."
 # Binary
 mkdir -p ~/.opencode/bin
 cp "$ROOT/.opencode/bin/opencode" ~/.opencode/bin/opencode
-chmod 755 ~/.opencode/bin/opencode
+chmod 755 ~/.opencode/bin/opencode 2>/dev/null || {
+    echo "Warning: chmod failed (WSL on Windows drive?). Trying without..."
+}
+# Verify it's runnable
+if [ ! -x ~/.opencode/bin/opencode ]; then
+    echo "Note: binary may need manual chmod if on Windows filesystem."
+    echo "  Run: chmod +x ~/.opencode/bin/opencode  (inside WSL native path, not /mnt/)"
+fi
 
 # Config — don't overwrite existing
 mkdir -p ~/.config/opencode
