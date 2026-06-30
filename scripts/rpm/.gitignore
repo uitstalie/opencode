@@ -1,5 +1,0 @@
-dist/
-scripts/rpm/BUILD/
-scripts/rpm/RPMS/
-scripts/rpm/SRPMS/
-scripts/rpm/SOURCES/*.tar.gz
