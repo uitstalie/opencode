@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer"
-import { Effect, JsonSchema, Schema, Stream } from "effect"
+import { Effect, Schema, Stream } from "effect"
 import * as Sse from "effect/unstable/encoding/Sse"
 import { Headers, HttpClientRequest } from "effect/unstable/http"
 import {
@@ -19,42 +19,10 @@ export { isRecord }
 export const Json = Schema.fromJsonString(Schema.Unknown)
 export const decodeJson = Schema.decodeUnknownSync(Json)
 export const encodeJson = Schema.encodeSync(Json)
+const isJson = Schema.is(Schema.Json)
 export const JsonObject = Schema.Record(Schema.String, Schema.Unknown)
 export const optionalArray = <const S extends Schema.Top>(schema: S) => Schema.optional(Schema.Array(schema))
 export const optionalNull = <const S extends Schema.Top>(schema: S) => Schema.optional(Schema.NullOr(schema))
-
-/** OpenAI function schemas require one flat object at the top level. */
-export const openAiToolInputSchema = (schema: JsonSchema.JsonSchema): JsonSchema.JsonSchema => {
-  const variants = Array.isArray(schema.anyOf) ? schema.anyOf.filter(isRecord) : []
-  const flattened =
-    variants.length === 0
-      ? { ...schema, type: "object" }
-      : {
-          ...Object.fromEntries(Object.entries(schema).filter(([key]) => key !== "anyOf")),
-          type: "object",
-          properties: variants.reduce(
-            (properties, variant) => ({ ...(isRecord(variant.properties) ? variant.properties : {}), ...properties }),
-            {},
-          ),
-          additionalProperties: false,
-        }
-  const normalized = removeNullSchemas(flattened)
-  return isRecord(normalized) ? normalized : { type: "object" }
-}
-
-const removeNullSchemas = (value: unknown): unknown => {
-  if (Array.isArray(value)) return value.map(removeNullSchemas)
-  if (!isRecord(value)) return value
-  const fields = Object.fromEntries(
-    Object.entries(value)
-      .filter(([key]) => key !== "anyOf")
-      .map(([key, field]) => [key, removeNullSchemas(field)]),
-  )
-  if (!Array.isArray(value.anyOf)) return fields
-  const variants = value.anyOf.filter((variant) => !isRecord(variant) || variant.type !== "null").map(removeNullSchemas)
-  if (variants.length === 1 && isRecord(variants[0])) return { ...fields, ...variants[0] }
-  return { ...fields, anyOf: variants }
-}
 
 /**
  * Streaming tool-call accumulator. Adapters that build a tool call across
@@ -243,8 +211,14 @@ export const validateToolFile = (route: string, part: ToolFileContent, supported
 export const trimBaseUrl = (value: string) => value.replace(/\/+$/, "")
 
 export const toolResultText = (part: ToolResultPart) => {
-  if (part.result.type === "text" || part.result.type === "error") return String(part.result.value)
-  if (part.result.type === "content") return encodeJson(part.result.value)
+  if (part.result.type === "text") return String(part.result.value)
+  if (part.result.type === "error") {
+    const value = part.result.value
+    const prototype =
+      typeof value === "object" && value !== null && !Array.isArray(value) && Object.getPrototypeOf(value)
+    const structured = Array.isArray(value) || prototype === Object.prototype || prototype === null
+    return structured && isJson(value) ? encodeJson(value) : String(value)
+  }
   return encodeJson(part.result.value)
 }
 
