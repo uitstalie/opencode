@@ -32,6 +32,7 @@
 | `provider` | `src/provider/mod.rs` | provider 实现入口 | 部分实现 |
 | `provider::openai_compat` | `src/provider/openai_compat.rs` | OpenAI-compatible provider | 已实现 |
 | `tool` | `src/tool/mod.rs` | tool trait、权限检查、工具注册 | 已实现 |
+| `tool::catalog` | `src/tool/catalog.rs` | 工具静态元数据、分类、prompt hint | 已实现 |
 | `tool::bash` | `src/tool/bash.rs` | shell 执行 | 已实现 |
 | `tool::read` | `src/tool/read.rs` | 文件读取 | 已实现 |
 | `tool::edit` | `src/tool/edit.rs` | 文件修改 | 已实现 |
@@ -52,4 +53,5 @@
 3. `core::platform` 负责平台判定和跨平台目录布局，Windows 与 Fedora 的路径差异只在这里收口，且细分为 `config / data / cache` 三层。
 4. `core::session` 负责会话数据持久化，`SessionTranscript` 显式分出固定前缀和动态历史。
 5. `core::system_prompt` 负责 system prompt 的分段渲染，固定 section 会保持稳定，动态内容从会话和配置中注入。
-6. `cli::debug::*` 是当前开发验证入口，后续新增能力优先补这里的命令。
+6. `tool::catalog` 负责工具静态元数据与分类索引，`cli::debug::tool` 和 `core::system_prompt` 共享同一目录表。
+7. `cli::debug::*` 是当前开发验证入口，后续新增能力优先补这里的命令。

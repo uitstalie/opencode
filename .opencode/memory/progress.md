@@ -92,6 +92,14 @@
 - config、vault、session、undo、prompt 的路径来源统一收口到平台模块
 - `cargo test` 已验证通过，当前 58 passed
 
+### Rust TUI 重写 — Phase 1B.4 / 1B.5
+- Shell 工具支持按环境选择 `pwsh` / `powershell` / `cmd` / `bash`，prompt 文案和执行器共用同一 shell 判定
+- 工具抽象轻量化：新增 `tool::catalog`，统一静态元数据、分类和 prompt hint
+- `cli::debug::tool` 改为从 catalog 输出工具现状与分组索引
+- `core::system_prompt` 的 capabilities 段改为共享 catalog prompt hints
+- 工具 catalog 文档 `TOOL_CATALOG.md` 已补充
+- `cargo test` 已验证通过，当前 64 passed
+
 ## 进行中
 - (无)
 
