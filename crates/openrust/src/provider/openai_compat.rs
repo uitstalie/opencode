@@ -11,7 +11,9 @@ use reqwest::Client;
 use serde_json::Value;
 
 use crate::core::config::ResolvedProvider;
-use crate::core::provider::{ChunkStream, LlmProvider, Message, RequestOptions, StreamChunk, Usage};
+use crate::core::provider::{
+    ChunkStream, LlmProvider, Message, RequestOptions, StreamChunk, Usage,
+};
 
 pub struct OpenAICompatProvider {
     name: String,
@@ -22,12 +24,7 @@ pub struct OpenAICompatProvider {
 }
 
 impl OpenAICompatProvider {
-    pub fn new(
-        name: String,
-        api_key: String,
-        base_url: String,
-        models: Vec<String>,
-    ) -> Self {
+    pub fn new(name: String, api_key: String, base_url: String, models: Vec<String>) -> Self {
         Self {
             name,
             api_key,
@@ -43,7 +40,7 @@ impl LlmProvider for OpenAICompatProvider {
     async fn chat(
         &self,
         messages: Vec<Message>,
-        _tools: Vec<crate::core::provider::ToolDef>,
+        tools: Vec<crate::core::provider::ToolDef>,
         options: RequestOptions,
     ) -> anyhow::Result<ChunkStream> {
         let url = format!("{}/chat/completions", self.base_url);
@@ -51,13 +48,27 @@ impl LlmProvider for OpenAICompatProvider {
         let mut body = serde_json::json!({
             "model": options.model,
             "messages": messages.iter().map(|m| {
-                serde_json::json!({
+                let mut message = serde_json::json!({
                     "role": m.role,
                     "content": m.content,
-                })
+                });
+                if let Some(name) = &m.name {
+                    message["name"] = serde_json::json!(name);
+                }
+                if let Some(tool_call_id) = &m.tool_call_id {
+                    message["tool_call_id"] = serde_json::json!(tool_call_id);
+                }
+                if let Some(tool_calls) = &m.tool_calls {
+                    message["tool_calls"] = serde_json::json!(tool_calls);
+                }
+                message
             }).collect::<Vec<_>>(),
             "stream": true,
         });
+
+        if !tools.is_empty() {
+            body["tools"] = serde_json::json!(tools);
+        }
 
         if let Some(temp) = options.temperature {
             body["temperature"] = serde_json::json!(temp);
@@ -65,13 +76,19 @@ impl LlmProvider for OpenAICompatProvider {
         if let Some(max_tok) = options.max_tokens {
             body["max_tokens"] = serde_json::json!(max_tok);
         }
+        if let Some(effort) = options.reasoning_effort {
+            body["reasoning_effort"] = serde_json::json!(effort);
+        }
         if let Some(ref system) = options.system {
             // Insert system message at the beginning
             if let Some(arr) = body["messages"].as_array_mut() {
-                arr.insert(0, serde_json::json!({
-                    "role": "system",
-                    "content": system,
-                }));
+                arr.insert(
+                    0,
+                    serde_json::json!({
+                        "role": "system",
+                        "content": system,
+                    }),
+                );
             }
         }
 
@@ -91,7 +108,9 @@ impl LlmProvider for OpenAICompatProvider {
             let text = response.text().await.unwrap_or_default();
             return Err(anyhow::anyhow!(
                 "Provider {} returned HTTP {}: {}",
-                self.name, status, text
+                self.name,
+                status,
+                text
             ));
         }
 

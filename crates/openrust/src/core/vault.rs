@@ -23,17 +23,27 @@ impl Vault {
     pub fn load() -> Self {
         let path = Self::path();
         if !path.exists() {
-            return Self { keys: HashMap::new() };
+            return Self {
+                keys: HashMap::new(),
+            };
         }
 
         let data = match std::fs::read_to_string(&path) {
             Ok(d) => d,
-            Err(_) => return Self { keys: HashMap::new() },
+            Err(_) => {
+                return Self {
+                    keys: HashMap::new(),
+                };
+            }
         };
 
         let parsed: serde_json::Value = match serde_json::from_str(&data) {
             Ok(v) => v,
-            Err(_) => return Self { keys: HashMap::new() },
+            Err(_) => {
+                return Self {
+                    keys: HashMap::new(),
+                };
+            }
         };
 
         let mut keys = HashMap::new();
@@ -45,7 +55,8 @@ impl Vault {
                     } else {
                         tracing::warn!(
                             "Could not decrypt API key for '{}' — wrong machine? Re-set with: openrust debug config set {} --api-key <key>",
-                            provider, provider
+                            provider,
+                            provider
                         );
                     }
                 }
@@ -151,15 +162,22 @@ impl Vault {
         if !path.exists() {
             return;
         }
-        let Ok(content) = std::fs::read_to_string(&path) else { return };
-        let Ok(mut raw) = serde_json::from_str::<serde_json::Value>(&content) else { return };
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        let Ok(mut raw) = serde_json::from_str::<serde_json::Value>(&content) else {
+            return;
+        };
 
         if let Some(p) = raw.get_mut("provider").and_then(|pv| pv.get_mut(provider)) {
             if let Some(obj) = p.as_object_mut() {
                 if obj.remove("api_key").is_some() {
                     if let Ok(json) = serde_json::to_string_pretty(&raw) {
                         let _ = std::fs::write(&path, json);
-                        tracing::info!("Removed plaintext api_key from config.json for '{}'", provider);
+                        tracing::info!(
+                            "Removed plaintext api_key from config.json for '{}'",
+                            provider
+                        );
                     }
                 }
             }

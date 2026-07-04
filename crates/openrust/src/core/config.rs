@@ -153,7 +153,12 @@ impl Config {
         let (provider_name, model_name, variant) = parse_model_spec(model_spec);
         let provider = self.provider.get(provider_name)?;
         let wire_model = variant
-            .or_else(|| provider.models.get(model_name).and_then(|m| m.name.as_deref()))
+            .or_else(|| {
+                provider
+                    .models
+                    .get(model_name)
+                    .and_then(|m| m.name.as_deref())
+            })
             .unwrap_or(model_name);
         Some((provider_name.to_string(), wire_model.to_string()))
     }
@@ -172,7 +177,11 @@ impl Config {
 
         // base_url: config value > options.baseURL
         let base_url = cfg.base_url.clone().or_else(|| {
-            cfg.options.as_ref()?.get("baseURL")?.as_str().map(|s| s.to_string())
+            cfg.options
+                .as_ref()?
+                .get("baseURL")?
+                .as_str()
+                .map(|s| s.to_string())
         });
 
         Some(ResolvedProvider {
@@ -186,7 +195,9 @@ impl Config {
 
     /// Get the config directory (shared by config.json and credentials.enc)
     pub fn global_config_dir() -> PathBuf {
-        crate::core::platform::PlatformPaths::detect().config_dir().clone()
+        crate::core::platform::PlatformPaths::detect()
+            .config_dir()
+            .clone()
     }
 }
 
@@ -237,7 +248,9 @@ pub fn strip_jsonc_comments(input: &str) -> String {
                         } else if c == '*' && chars.peek() == Some(&'/') {
                             chars.next();
                             depth -= 1;
-                            if depth == 0 { break; }
+                            if depth == 0 {
+                                break;
+                            }
                         }
                     }
                 }
@@ -249,7 +262,9 @@ pub fn strip_jsonc_comments(input: &str) -> String {
             let iter = chars.by_ref();
             while let Some(c) = iter.next() {
                 result.push(c);
-                if c == '"' { break; }
+                if c == '"' {
+                    break;
+                }
                 if c == '\\' {
                     if let Some(esc) = iter.next() {
                         result.push(esc);
@@ -301,8 +316,14 @@ mod tests {
 
     #[test]
     fn test_parse_model_spec() {
-        assert_eq!(parse_model_spec("deepseek/deepseek-chat"), ("deepseek", "deepseek-chat", None));
-        assert_eq!(parse_model_spec("openai/gpt-5.5/high"), ("openai", "gpt-5.5", Some("high")));
+        assert_eq!(
+            parse_model_spec("deepseek/deepseek-chat"),
+            ("deepseek", "deepseek-chat", None)
+        );
+        assert_eq!(
+            parse_model_spec("openai/gpt-5.5/high"),
+            ("openai", "gpt-5.5", Some("high"))
+        );
         assert_eq!(parse_model_spec("gpt-4"), ("gpt-4", "gpt-4", None));
     }
 
@@ -327,7 +348,9 @@ mod tests {
         let project_path = dir.path().join("openrust.json");
 
         fs::create_dir_all(&global_dir).unwrap();
-        fs::write(&global_path, r#"{
+        fs::write(
+            &global_path,
+            r#"{
   "model": "deepseek/global-model",
   "provider": {
     "deepseek": {
@@ -335,8 +358,12 @@ mod tests {
       "models": {"global-model": {"name": "global-model"}}
     }
   }
-}"#).unwrap();
-        fs::write(&project_path, r#"{
+}"#,
+        )
+        .unwrap();
+        fs::write(
+            &project_path,
+            r#"{
   "model": "deepseek/project-model",
   "provider": {
     "deepseek": {
@@ -345,13 +372,18 @@ mod tests {
       "models": {"project-model": {"name": "project-model"}}
     }
   }
-}"#).unwrap();
+}"#,
+        )
+        .unwrap();
 
         let config = Config::load(&dir.path().to_path_buf()).unwrap();
         let provider = config.get_provider("deepseek").unwrap();
 
         assert_eq!(config.model.as_deref(), Some("deepseek/project-model"));
-        assert_eq!(provider.base_url.as_deref(), Some("https://project.example/v1"));
+        assert_eq!(
+            provider.base_url.as_deref(),
+            Some("https://project.example/v1")
+        );
         assert_eq!(provider.api_key.as_deref(), Some("project-key"));
         assert!(provider.models.contains_key("project-model"));
     }

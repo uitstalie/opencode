@@ -34,7 +34,10 @@ mod tests {
         let script = dir.path().join("scenario.txt");
         std::fs::write(&script, "hello").unwrap();
 
-        let cmd = Cmd::Replay { script, prompt: Some("seed".to_string()) };
+        let cmd = Cmd::Replay {
+            script,
+            prompt: Some("seed".to_string()),
+        };
         match cmd {
             Cmd::Replay { script, prompt } => {
                 assert!(script.ends_with("scenario.txt"));

@@ -19,21 +19,7 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
     match cmd {
         Cmd::List => {
             let sessions = store.list_sessions()?;
-            if sessions.is_empty() {
-                println!("No saved sessions.");
-                return Ok(());
-            }
-
-            for session in sessions {
-                println!(
-                    "{}  messages={}  mode={}  title={}  updated={}",
-                    session.id,
-                    session.message_count,
-                    session.mode.as_deref().unwrap_or("(unset)"),
-                    session.title.as_deref().unwrap_or("(untitled)"),
-                    session.updated_at,
-                );
-            }
+            print_list(&sessions);
             Ok(())
         }
         Cmd::Show { id } => {
@@ -42,13 +28,16 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
             };
 
             println!("Session: {}", session.id);
-            println!("Title:   {}", session.title.as_deref().unwrap_or("(untitled)"));
+            println!(
+                "Title:   {}",
+                session.title.as_deref().unwrap_or("(untitled)")
+            );
             println!("Mode:    {}", session.mode.as_deref().unwrap_or("(unset)"));
             println!("Created: {}", session.created_at);
             println!("Updated: {}", session.updated_at);
             println!();
 
-            let messages = store.get_messages(&id)?;
+            let messages = store.effective_messages(&id)?;
             if messages.is_empty() {
                 println!("No messages stored.");
                 return Ok(());
@@ -59,5 +48,44 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
             }
             Ok(())
         }
+    }
+}
+
+fn print_list(sessions: &[crate::core::session::SessionSummary]) {
+    if sessions.is_empty() {
+        println!("No saved sessions.");
+        return;
+    }
+
+    for session in sessions {
+        println!(
+            "{}  messages={}  mode={}  agent={}  title={}  updated={}",
+            session.id,
+            session.message_count,
+            session.mode.as_deref().unwrap_or("(unset)"),
+            session.agent.as_deref().unwrap_or("(default)"),
+            session.title.as_deref().unwrap_or("(untitled)"),
+            session.updated_at,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn list_format_handles_empty_and_entries() {
+        print_list(&[]);
+        let sessions = [crate::core::session::SessionSummary {
+            id: "session-1".to_string(),
+            title: Some("Build".to_string()),
+            mode: Some("build".to_string()),
+            agent: Some("review".to_string()),
+            message_count: 2,
+            created_at: "1".to_string(),
+            updated_at: "2".to_string(),
+        }];
+        print_list(&sessions);
     }
 }

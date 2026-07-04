@@ -2,7 +2,11 @@
 
 use std::sync::Arc;
 
-use super::{bash::BashTool, edit::EditTool, glob::GlobTool, grep::GrepTool, read::ReadTool, rm::RmTool, undo::UndoStore, undo_edit::UndoEditTool, webfetch::WebFetchTool, websearch::WebSearchTool, write::WriteTool};
+use super::{
+    bash::BashTool, edit::EditTool, glob::GlobTool, grep::GrepTool, read::ReadTool, rm::RmTool,
+    undo::UndoStore, undo_edit::UndoEditTool, webfetch::WebFetchTool, websearch::WebSearchTool,
+    write::WriteTool,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolCategory {
@@ -21,16 +25,66 @@ pub struct ToolMeta {
 }
 
 pub const TOOL_CATALOG: &[ToolMeta] = &[
-    ToolMeta { name: "read", category: ToolCategory::Filesystem, description: "Read a file from the filesystem.", prompt_hint: "Use for inspection and line-accurate reads." },
-    ToolMeta { name: "write", category: ToolCategory::Filesystem, description: "Write a file to the filesystem.", prompt_hint: "Use for creating new content or replacing file contents." },
-    ToolMeta { name: "edit", category: ToolCategory::Filesystem, description: "Edit a file by replacing exact text.", prompt_hint: "Use for surgical replacements." },
-    ToolMeta { name: "rm", category: ToolCategory::Filesystem, description: "Delete a file or directory.", prompt_hint: "Use for safe deletion only." },
-    ToolMeta { name: "bash", category: ToolCategory::Shell, description: "Execute shell commands.", prompt_hint: "Use for git, build, and system operations." },
-    ToolMeta { name: "glob", category: ToolCategory::Filesystem, description: "Find files by glob pattern.", prompt_hint: "Use for path discovery." },
-    ToolMeta { name: "grep", category: ToolCategory::Filesystem, description: "Search file contents by regex.", prompt_hint: "Use for code and text search." },
-    ToolMeta { name: "webfetch", category: ToolCategory::Network, description: "Fetch content from a URL.", prompt_hint: "Use for reading remote pages directly." },
-    ToolMeta { name: "websearch", category: ToolCategory::Network, description: "Search the web.", prompt_hint: "Use for discovery and quick lookup." },
-    ToolMeta { name: "undo_edit", category: ToolCategory::Undo, description: "Restore a file from an undo blob.", prompt_hint: "Use after write/edit when rollback is needed." },
+    ToolMeta {
+        name: "read",
+        category: ToolCategory::Filesystem,
+        description: "Read a file from the filesystem.",
+        prompt_hint: "Use for inspection and line-accurate reads.",
+    },
+    ToolMeta {
+        name: "write",
+        category: ToolCategory::Filesystem,
+        description: "Write a file to the filesystem.",
+        prompt_hint: "Use for creating new content or replacing file contents.",
+    },
+    ToolMeta {
+        name: "edit",
+        category: ToolCategory::Filesystem,
+        description: "Edit a file by replacing exact text.",
+        prompt_hint: "Use for surgical replacements.",
+    },
+    ToolMeta {
+        name: "rm",
+        category: ToolCategory::Filesystem,
+        description: "Delete a file or directory.",
+        prompt_hint: "Use for safe deletion only.",
+    },
+    ToolMeta {
+        name: "bash",
+        category: ToolCategory::Shell,
+        description: "Execute shell commands.",
+        prompt_hint: "Use for git, build, and system operations.",
+    },
+    ToolMeta {
+        name: "glob",
+        category: ToolCategory::Filesystem,
+        description: "Find files by glob pattern.",
+        prompt_hint: "Use for path discovery.",
+    },
+    ToolMeta {
+        name: "grep",
+        category: ToolCategory::Filesystem,
+        description: "Search file contents by regex.",
+        prompt_hint: "Use for code and text search.",
+    },
+    ToolMeta {
+        name: "webfetch",
+        category: ToolCategory::Network,
+        description: "Fetch content from a URL.",
+        prompt_hint: "Use for reading remote pages directly.",
+    },
+    ToolMeta {
+        name: "websearch",
+        category: ToolCategory::Network,
+        description: "Search the web.",
+        prompt_hint: "Use for discovery and quick lookup.",
+    },
+    ToolMeta {
+        name: "undo_edit",
+        category: ToolCategory::Undo,
+        description: "Restore a file from an undo blob.",
+        prompt_hint: "Use after write/edit when rollback is needed.",
+    },
 ];
 
 pub fn tool_meta(name: &str) -> Option<&'static ToolMeta> {
@@ -46,10 +100,24 @@ pub fn prompt_hints() -> Vec<&'static str> {
 }
 
 pub fn registry_category_names() -> Vec<(ToolCategory, Vec<&'static str>)> {
-    [ToolCategory::Filesystem, ToolCategory::Shell, ToolCategory::Network, ToolCategory::Undo]
-        .into_iter()
-        .map(|category| (category, TOOL_CATALOG.iter().filter(|meta| meta.category == category).map(|meta| meta.name).collect()))
-        .collect()
+    [
+        ToolCategory::Filesystem,
+        ToolCategory::Shell,
+        ToolCategory::Network,
+        ToolCategory::Undo,
+    ]
+    .into_iter()
+    .map(|category| {
+        (
+            category,
+            TOOL_CATALOG
+                .iter()
+                .filter(|meta| meta.category == category)
+                .map(|meta| meta.name)
+                .collect(),
+        )
+    })
+    .collect()
 }
 
 pub fn create_tool(name: &str, undo_store: Option<Arc<UndoStore>>) -> Option<Box<dyn super::Tool>> {
@@ -90,7 +158,16 @@ mod tests {
     #[test]
     fn catalog_groups_tools_by_category() {
         let groups = registry_category_names();
-        assert!(groups.iter().any(|(category, names)| *category == ToolCategory::Filesystem && names.contains(&"read")));
-        assert!(groups.iter().any(|(category, names)| *category == ToolCategory::Shell && names.contains(&"bash")));
+        assert!(
+            groups
+                .iter()
+                .any(|(category, names)| *category == ToolCategory::Filesystem
+                    && names.contains(&"read"))
+        );
+        assert!(
+            groups.iter().any(
+                |(category, names)| *category == ToolCategory::Shell && names.contains(&"bash")
+            )
+        );
     }
 }

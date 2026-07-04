@@ -20,7 +20,10 @@ impl UndoStore {
     pub fn new() -> Self {
         let dir = crate::core::platform::PlatformPaths::detect().undo_dir();
         let _ = std::fs::create_dir_all(&dir);
-        Self { dir, save_count: Mutex::new(0) }
+        Self {
+            dir,
+            save_count: Mutex::new(0),
+        }
     }
 
     /// Save a file snapshot and return the undo hash.
@@ -102,7 +105,9 @@ mod tests {
     #[test]
     fn test_save_and_read_blob() {
         let store = UndoStore::new();
-        let hash = store.save_snapshot(Path::new("test.txt"), "hello world").unwrap();
+        let hash = store
+            .save_snapshot(Path::new("test.txt"), "hello world")
+            .unwrap();
         let content = store.read_blob(&hash).unwrap();
         assert_eq!(content, "hello world");
         store.delete_blob(&hash);

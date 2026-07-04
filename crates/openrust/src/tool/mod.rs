@@ -118,15 +118,26 @@ impl ToolParams {
 #[derive(Debug, Clone)]
 pub enum ToolResult {
     Text(String),
-    Structured { content: String, metadata: HashMap<String, serde_json::Value> },
+    Structured {
+        content: String,
+        metadata: HashMap<String, serde_json::Value>,
+    },
     Error(String),
 }
 
 impl ToolResult {
-    pub fn text(s: impl Into<String>) -> Self { Self::Text(s.into()) }
-    pub fn error(s: impl Into<String>) -> Self { Self::Error(s.into()) }
+    pub fn text(s: impl Into<String>) -> Self {
+        Self::Text(s.into())
+    }
+    pub fn error(s: impl Into<String>) -> Self {
+        Self::Error(s.into())
+    }
     pub fn into_text(self) -> String {
-        match self { Self::Text(t) => t, Self::Structured { content, .. } => content, Self::Error(e) => e }
+        match self {
+            Self::Text(t) => t,
+            Self::Structured { content, .. } => content,
+            Self::Error(e) => e,
+        }
     }
 }
 
@@ -142,7 +153,12 @@ pub struct ToolContext {
 impl ToolContext {
     /// Convenience: create context with cwd as project root, non-interactive, no undo.
     pub fn new(cwd: PathBuf) -> Self {
-        Self { cwd, interactive: false, project_dir: None, undo_store: None }
+        Self {
+            cwd,
+            interactive: false,
+            project_dir: None,
+            undo_store: None,
+        }
     }
 
     /// The effective project root (project_dir or cwd).
@@ -158,16 +174,33 @@ pub fn is_within_project(path: &str, ctx: &ToolContext) -> bool {
     crate::core::paths::is_within_project(path, ctx.project_root())
 }
 
+pub fn resolve_path(ctx: &ToolContext, path: &str) -> PathBuf {
+    let candidate = std::path::Path::new(path);
+    if candidate.is_absolute() {
+        return candidate.to_path_buf();
+    }
+    ctx.cwd.join(candidate)
+}
+
 #[derive(Debug, Clone)]
-pub enum Permission { Allow, Deny(String), Ask(String) }
+pub enum Permission {
+    Allow,
+    Deny(String),
+    Ask(String),
+}
 
 /// Check if a tool is allowed. Scope-restricted tools check is_within_project.
-pub fn check_permission(tool_name: &str, params: &serde_json::Value, ctx: &ToolContext) -> Permission {
+pub fn check_permission(
+    tool_name: &str,
+    params: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Permission {
     // Tools that can write/delete outside project need scope check
     let scope_restricted = matches!(tool_name, "rm" | "write" | "edit" | "bash");
 
     if scope_restricted {
-        let target = params["target"].as_str()
+        let target = params["target"]
+            .as_str()
             .or_else(|| params["filePath"].as_str())
             .or_else(|| params["workdir"].as_str())
             .unwrap_or("");
@@ -178,7 +211,9 @@ pub fn check_permission(tool_name: &str, params: &serde_json::Value, ctx: &ToolC
             } else {
                 Permission::Deny(format!(
                     "{}: '{}' is outside the project scope ({}).",
-                    tool_name, target, ctx.project_root().display()
+                    tool_name,
+                    target,
+                    ctx.project_root().display()
                 ))
             };
         }
@@ -206,7 +241,9 @@ pub trait Tool: Send + Sync {
                 // Debug mode: allow with warning note
                 let result = self.execute(params, ctx).await;
                 match result {
-                    ToolResult::Text(t) => ToolResult::text(format!("[auto-allowed in debug mode] {}", t)),
+                    ToolResult::Text(t) => {
+                        ToolResult::text(format!("[auto-allowed in debug mode] {}", t))
+                    }
                     other => other,
                 }
             }
@@ -245,7 +282,11 @@ pub struct ToolRegistry {
 }
 
 impl ToolRegistry {
-    pub fn new() -> Self { Self { tools: HashMap::new() } }
+    pub fn new() -> Self {
+        Self {
+            tools: HashMap::new(),
+        }
+    }
 
     pub fn register(&mut self, tool: impl Tool + 'static) {
         self.tools.insert(tool.name().to_string(), Box::new(tool));

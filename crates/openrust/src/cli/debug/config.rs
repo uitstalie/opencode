@@ -69,7 +69,10 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
             if let Some(key) = &args.api_key {
                 // Save to encrypted vault instead of config.json
                 crate::core::vault::Vault::save(&args.provider, key)?;
-                println!("🔐 Saved encrypted API key for '{}' to vault.", args.provider);
+                println!(
+                    "🔐 Saved encrypted API key for '{}' to vault.",
+                    args.provider
+                );
             }
             if let Some(url) = &args.base_url {
                 p["base_url"] = serde_json::json!(url);
@@ -78,7 +81,10 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
             if let Some(model_spec) = &args.add_model {
                 let parts: Vec<&str> = model_spec.splitn(2, ':').collect();
                 let model_id = parts[0];
-                let variants: Vec<&str> = parts.get(1).map(|v| v.split(',').collect()).unwrap_or_default();
+                let variants: Vec<&str> = parts
+                    .get(1)
+                    .map(|v| v.split(',').collect())
+                    .unwrap_or_default();
                 let mut model = serde_json::json!({ "name": model_id });
                 if !variants.is_empty() {
                     let vmap: serde_json::Map<String, serde_json::Value> = variants
@@ -88,21 +94,29 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
                     model["variants"] = serde_json::json!(vmap);
                 }
                 p["models"][model_id] = model;
-                println!("Added model '{}' to provider '{}'.", model_id, args.provider);
+                println!(
+                    "Added model '{}' to provider '{}'.",
+                    model_id, args.provider
+                );
             }
             if args.api_key.is_none() && args.base_url.is_none() && args.add_model.is_none() {
                 // Show current state
                 let config = Config::load(&cwd)?;
                 let vault = crate::core::vault::Vault::load();
-                println!("Usage: openrust debug config set <provider> --api-key <key> --base-url <url>");
+                println!(
+                    "Usage: openrust debug config set <provider> --api-key <key> --base-url <url>"
+                );
                 if let Some(resolved) = config.get_provider(&args.provider) {
                     let key_status = match vault.get(&args.provider) {
-                        Some(k) if k.len() > 8 => format!("🔐 (vault) ****{}", &k[k.len()-4..]),
+                        Some(k) if k.len() > 8 => format!("🔐 (vault) ****{}", &k[k.len() - 4..]),
                         Some(_) => "🔐 (vault) ****".to_string(),
                         None => "(not set)".to_string(),
                     };
                     println!("  api_key:  {}", key_status);
-                    println!("  base_url: {}", resolved.base_url.as_deref().unwrap_or("(not set)"));
+                    println!(
+                        "  base_url: {}",
+                        resolved.base_url.as_deref().unwrap_or("(not set)")
+                    );
                 }
                 return Ok(());
             }
@@ -126,7 +140,11 @@ fn show_config(config: &Config) {
     println!();
     for (name, _cfg) in &config.provider {
         let resolved = config.get_provider(name);
-        let base_url = resolved.as_ref().and_then(|r| r.base_url.as_deref()).unwrap_or("(default)").to_string();
+        let base_url = resolved
+            .as_ref()
+            .and_then(|r| r.base_url.as_deref())
+            .unwrap_or("(default)")
+            .to_string();
         let config_api_key = resolved.as_ref().and_then(|r| r.api_key.clone());
         let key_status = match vault.get(name) {
             Some(k) if k.len() > 8 => format!("🔐 (vault) ****{}", &k[k.len() - 4..]),

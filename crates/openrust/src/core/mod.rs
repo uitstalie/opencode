@@ -1,7 +1,8 @@
+pub mod agent;
 pub mod config;
 pub mod crypto;
-pub mod platform;
 pub mod paths;
+pub mod platform;
 pub mod provider;
 pub mod session;
 pub mod system_prompt;

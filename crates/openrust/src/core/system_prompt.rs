@@ -17,18 +17,37 @@ impl SystemPrompt {
         let shell_kind = crate::tool::shell::detect_shell_kind();
         let mut sections = Vec::new();
         sections.push(render_section("constraint", &render_constraint()));
-        sections.push(render_section("identity", &render_identity(&self.provider, &self.model, &self.mode)));
+        sections.push(render_section(
+            "identity",
+            &render_identity(&self.provider, &self.model, &self.mode),
+        ));
         sections.push(render_section("environment", &render_environment(self)));
-        sections.push(render_section("instructions", &render_instructions(&self.config_path)));
-        sections.push(render_section("capabilities", &render_capabilities(shell_kind)));
+        sections.push(render_section(
+            "instructions",
+            &render_instructions(&self.config_path),
+        ));
+        sections.push(render_section(
+            "capabilities",
+            &render_capabilities(shell_kind),
+        ));
         sections.push(render_section("style", &render_style()));
         sections.push(render_section("memory", &render_memory()));
-        sections.push(render_section("nudge", "[CONSTRAINT NUDGE] memory_read(决策前) → compact_check"));
+        sections.push(render_section(
+            "nudge",
+            "[CONSTRAINT NUDGE] memory_read(决策前) → compact_check",
+        ));
         sections.join("\n\n")
     }
 
-    pub fn from_config(config: &Config, provider: &ResolvedProvider, mode: Option<String>) -> anyhow::Result<Self> {
-        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")).display().to_string();
+    pub fn from_config(
+        config: &Config,
+        provider: &ResolvedProvider,
+        mode: Option<String>,
+    ) -> anyhow::Result<Self> {
+        let cwd = std::env::current_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("."))
+            .display()
+            .to_string();
         let home = crate::core::platform::PlatformPaths::detect()
             .home
             .display()
@@ -36,7 +55,9 @@ impl SystemPrompt {
         let platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
 
         Ok(Self {
-            mode: mode.or_else(|| config.mode.clone()).unwrap_or_else(|| "build".to_string()),
+            mode: mode
+                .or_else(|| config.mode.clone())
+                .unwrap_or_else(|| "build".to_string()),
             provider: provider.name.clone(),
             model: config
                 .resolve_provider_model()
@@ -104,13 +125,27 @@ fn render_capabilities(shell_kind: crate::tool::shell::ShellKind) -> String {
         "- customize-opencode: opencode 自身配置参考".to_string(),
         "- write-skills: SKILL.md 格式与陷阱".to_string(),
         String::new(),
+        "## Agents".to_string(),
+        "- agents are loaded from local markdown directories such as agents/, agent/, and modes/".to_string(),
+        String::new(),
+        "## Tasks".to_string(),
+        "- task and todo state are session-scoped and persisted in the session database".to_string(),
+        String::new(),
         "## Tools".to_string(),
         "- debug: provider / tool / config / vault / session / prompt".to_string(),
-        format!("- shell: {}", crate::tool::shell::shell_environment_hint(shell_kind)),
+        format!(
+            "- shell: {}",
+            crate::tool::shell::shell_environment_hint(shell_kind)
+        ),
     ];
 
     lines.extend(crate::tool::catalog::TOOL_CATALOG.iter().map(|tool| {
-        format!("- {} [{}]: {}", tool.name, tool_category_label(tool.category), tool.prompt_hint)
+        format!(
+            "- {} [{}]: {}",
+            tool.name,
+            tool_category_label(tool.category),
+            tool.prompt_hint
+        )
     }));
 
     lines.join("\n")
@@ -203,7 +238,8 @@ mod tests {
             options: None,
         };
 
-        let prompt = SystemPrompt::from_config(&config, &provider, Some("plan".to_string())).unwrap();
+        let prompt =
+            SystemPrompt::from_config(&config, &provider, Some("plan".to_string())).unwrap();
 
         assert_eq!(prompt.mode, "plan");
         assert_eq!(prompt.provider, "deepseek");

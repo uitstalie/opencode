@@ -14,6 +14,16 @@ pub enum DebugCmd {
         #[command(subcommand)]
         cmd: debug::tool::Cmd,
     },
+    /// Agent browsing and selection
+    Agent {
+        #[command(subcommand)]
+        cmd: debug::agent::Cmd,
+    },
+    /// Session task tracking
+    Task {
+        #[command(subcommand)]
+        cmd: debug::task::Cmd,
+    },
     /// Configuration
     Config {
         #[command(subcommand)]
@@ -45,6 +55,8 @@ pub fn run_debug(cmd: DebugCmd) -> anyhow::Result<()> {
     match cmd {
         DebugCmd::Provider { cmd } => debug::provider::run(cmd),
         DebugCmd::Tool { cmd } => debug::tool::run(cmd),
+        DebugCmd::Agent { cmd } => debug::agent::run(cmd),
+        DebugCmd::Task { cmd } => debug::task::run(cmd),
         DebugCmd::Config { cmd } => debug::config::run(cmd),
         DebugCmd::Session { cmd } => debug::session::run(cmd),
         DebugCmd::Prompt { cmd } => debug::prompt::run(cmd),

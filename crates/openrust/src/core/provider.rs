@@ -17,6 +17,26 @@ use crate::core::config::ResolvedProvider;
 pub struct Message {
     pub role: String,
     pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub function: ToolCallFunction,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallFunction {
+    pub name: String,
+    pub arguments: String,
 }
 
 /// Tool definition passed to the LLM
@@ -57,6 +77,7 @@ pub struct RequestOptions {
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
     pub system: Option<String>,
+    pub reasoning_effort: Option<String>,
 }
 
 // ── Trait ──────────────────────────────────────────
@@ -85,6 +106,5 @@ pub trait LlmProvider: Send + Sync {
 
 /// Create a provider from config
 pub fn create_provider(cfg: &ResolvedProvider) -> Option<Box<dyn LlmProvider>> {
-    crate::provider::openai_compat::create(cfg)
-        .map(|p| Box::new(p) as Box<dyn LlmProvider>)
+    crate::provider::openai_compat::create(cfg).map(|p| Box::new(p) as Box<dyn LlmProvider>)
 }

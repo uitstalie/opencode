@@ -29,9 +29,17 @@ impl PlatformPaths {
         let kind = detect_kind();
         let (config_dir, data_dir, cache_dir) = match kind {
             PlatformKind::Windows => {
-                let appdata = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(|| home.join("AppData").join("Roaming"));
-                let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(|| home.join("AppData").join("Local"));
-                (appdata.join("openrust"), local.join("openrust"), local.join("openrust-cache"))
+                let appdata = std::env::var_os("APPDATA")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| home.join("AppData").join("Roaming"));
+                let local = std::env::var_os("LOCALAPPDATA")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| home.join("AppData").join("Local"));
+                (
+                    appdata.join("openrust"),
+                    local.join("openrust"),
+                    local.join("openrust-cache"),
+                )
             }
             PlatformKind::Fedora | PlatformKind::Unknown => (
                 home.join(".config").join("openrust"),
@@ -90,7 +98,9 @@ pub fn detect_kind() -> PlatformKind {
         return PlatformKind::Windows;
     }
 
-    let os_release = std::fs::read_to_string("/etc/os-release").unwrap_or_default().to_lowercase();
+    let os_release = std::fs::read_to_string("/etc/os-release")
+        .unwrap_or_default()
+        .to_lowercase();
     if os_release.contains("fedora") {
         return PlatformKind::Fedora;
     }
@@ -109,7 +119,10 @@ mod tests {
         assert!(paths.credentials_path().ends_with("credentials.enc"));
         assert!(paths.config_dir().ends_with("openrust"));
         assert!(paths.data_dir().ends_with("openrust"));
-        assert!(paths.cache_dir().ends_with("openrust") || paths.cache_dir().ends_with("openrust-cache"));
+        assert!(
+            paths.cache_dir().ends_with("openrust")
+                || paths.cache_dir().ends_with("openrust-cache")
+        );
         assert!(paths.undo_dir().ends_with("undo"));
         assert!(paths.sessions_db_path().ends_with("sessions.db"));
     }

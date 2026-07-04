@@ -1,5 +1,5 @@
+use crate::tool::{ToolContext, ToolParams, catalog, create_tool};
 use clap::Subcommand;
-use crate::tool::{catalog, ToolContext, ToolParams, create_tool};
 
 #[derive(Subcommand)]
 pub enum Cmd {
@@ -12,9 +12,7 @@ pub enum Cmd {
         params: String,
     },
     /// Show OpenAI-compatible tool definition for a tool
-    Schema {
-        name: String,
-    },
+    Schema { name: String },
 }
 
 pub fn run(cmd: Cmd) -> anyhow::Result<()> {
@@ -27,7 +25,12 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
             println!("Available tools ({}):", tool_names.len());
             for name in tool_names {
                 if let Some(meta) = catalog::tool_meta(name) {
-                    println!("  {:12} [{}] {}", name, format_category(meta.category), meta.description);
+                    println!(
+                        "  {:12} [{}] {}",
+                        name,
+                        format_category(meta.category),
+                        meta.description
+                    );
                 }
             }
             println!();

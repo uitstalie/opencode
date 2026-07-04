@@ -26,7 +26,11 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
             println!("Plaintext:  {}", text);
             let encrypted = crypto::encrypt_api_key(&text)
                 .ok_or_else(|| anyhow::anyhow!("Encryption failed — no machine-id?"))?;
-            println!("Encrypted:  {}... ({} bytes)", &encrypted[..32.min(encrypted.len())], encrypted.len());
+            println!(
+                "Encrypted:  {}... ({} bytes)",
+                &encrypted[..32.min(encrypted.len())],
+                encrypted.len()
+            );
             let decrypted = crypto::decrypt_api_key(&encrypted)
                 .ok_or_else(|| anyhow::anyhow!("Decryption failed!"))?;
             println!("Decrypted:  {}", decrypted);
@@ -47,7 +51,7 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
                 match vault.get(name) {
                     Some(k) => {
                         let masked = if k.len() > 8 {
-                            format!("****{}", &k[k.len()-4..])
+                            format!("****{}", &k[k.len() - 4..])
                         } else {
                             "****".to_string()
                         };
@@ -60,7 +64,9 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
                 }
             }
             if !found && config.provider.is_empty() {
-                println!("No providers configured. Set one first: openrust debug config set <name> --base-url <url>");
+                println!(
+                    "No providers configured. Set one first: openrust debug config set <name> --base-url <url>"
+                );
             }
             Ok(())
         }

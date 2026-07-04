@@ -37,13 +37,15 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
             if config.provider.is_empty() {
                 println!("No providers configured.");
                 println!("Add provider config to openrust.json:");
-                println!(r#"  {{"provider": {{"deepseek": {{"baseURL": "https://api.deepseek.com/v1"}}}}}}"#);
+                println!(
+                    r#"  {{"provider": {{"deepseek": {{"baseURL": "https://api.deepseek.com/v1"}}}}}}"#
+                );
             } else {
                 println!("Configured providers:");
                 for name in config.provider.keys() {
                     let resolved = config.get_provider(name);
                     let key_status = match resolved.and_then(|r| r.api_key) {
-                        Some(k) if k.len() > 8 => format!("****{}", &k[k.len()-4..]),
+                        Some(k) if k.len() > 8 => format!("****{}", &k[k.len() - 4..]),
                         Some(_) => "****".to_string(),
                         None => "(no API key)".to_string(),
                     };
@@ -54,7 +56,12 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
             println!("Model: {}", config.model.as_deref().unwrap_or("(not set)"));
             Ok(())
         }
-        Cmd::Test { name, prompt, model, api_key } => {
+        Cmd::Test {
+            name,
+            prompt,
+            model,
+            api_key,
+        } => {
             let mut resolved = config
                 .get_provider(&name)
                 .ok_or_else(|| anyhow::anyhow!("Provider '{}' not found in config", name))?;
@@ -64,10 +71,12 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
                 resolved.api_key = Some(key);
             }
 
-            resolved
-                .api_key
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("No API key for provider '{}'. Add api_key to config or use --api-key.", name))?;
+            resolved.api_key.as_ref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No API key for provider '{}'. Add api_key to config or use --api-key.",
+                    name
+                )
+            })?;
 
             let provider = crate::core::provider::create_provider(&resolved)
                 .ok_or_else(|| anyhow::anyhow!("Failed to create provider '{}'", name))?;
@@ -83,23 +92,27 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
 
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(async {
-                let messages = vec![
-                    crate::core::provider::Message {
-                        role: "user".to_string(),
-                        content: prompt.clone(),
-                    },
-                ];
+                let messages = vec![crate::core::provider::Message {
+                    role: "user".to_string(),
+                    content: prompt.clone(),
+                    name: None,
+                    tool_call_id: None,
+                    tool_calls: None,
+                }];
 
-                let mut stream = provider.chat(
-                    messages,
-                    vec![],
-                    crate::core::provider::RequestOptions {
-                        model: model_id,
-                        temperature: None,
-                        max_tokens: None,
-                        system: None,
-                    },
-                ).await?;
+                let mut stream = provider
+                    .chat(
+                        messages,
+                        vec![],
+                        crate::core::provider::RequestOptions {
+                            model: model_id,
+                            temperature: None,
+                            max_tokens: None,
+                            system: None,
+                            reasoning_effort: None,
+                        },
+                    )
+                    .await?;
 
                 while let Some(chunk) = stream.next().await {
                     match chunk? {
@@ -109,7 +122,10 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
                         crate::core::provider::StreamChunk::ReasoningDelta(text) => {
                             print!("\n[reasoning] {}", text);
                         }
-                        crate::core::provider::StreamChunk::ToolCallStart { name: tool_name, .. } => {
+                        crate::core::provider::StreamChunk::ToolCallStart {
+                            name: tool_name,
+                            ..
+                        } => {
                             print!("\n[🔧 {}] ", tool_name);
                         }
                         crate::core::provider::StreamChunk::ToolCallDelta { args, .. } => {
@@ -119,8 +135,10 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
                         crate::core::provider::StreamChunk::Finish { usage } => {
                             if let Some(u) = usage {
                                 println!("\n──────────────────────────────────────────");
-                                println!("Tokens: {} prompt + {} completion = {} total",
-                                    u.prompt_tokens, u.completion_tokens, u.total_tokens);
+                                println!(
+                                    "Tokens: {} prompt + {} completion = {} total",
+                                    u.prompt_tokens, u.completion_tokens, u.total_tokens
+                                );
                             }
                         }
                     }

@@ -6,19 +6,15 @@ use std::path::{Path, PathBuf};
 
 /// Protected prefixes that should never be deleted.
 pub const SYSTEM_PROTECTED: &[&str] = &[
-    "/", "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib64",
-    "/opt", "/proc", "/root", "/run", "/sbin", "/srv", "/sys", "/usr", "/var",
+    "/", "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib64", "/opt", "/proc", "/root",
+    "/run", "/sbin", "/srv", "/sys", "/usr", "/var",
 ];
 
 /// Protected user-level directories (~/.config, etc.)
-pub const USER_PROTECTED: &[&str] = &[
-    ".config", ".local", ".ssh", ".gnupg", ".cache",
-];
+pub const USER_PROTECTED: &[&str] = &[".config", ".local", ".ssh", ".gnupg", ".cache"];
 
 /// Protected project-level dotdirs (use git/other tools to manage)
-pub const PROJECT_PROTECTED: &[&str] = &[
-    ".git", ".svn", ".hg",
-];
+pub const PROJECT_PROTECTED: &[&str] = &[".git", ".svn", ".hg"];
 
 // ── Home directory ──────────────────────────────────
 
@@ -64,8 +60,12 @@ pub fn is_protected_path(canonical: &Path) -> Option<&'static str> {
 
 /// Check whether a path is within the project root.
 pub fn is_within_project(target: &str, project_root: &Path) -> bool {
-    let Ok(target_canon) = Path::new(target).canonicalize() else { return false };
-    let Ok(proot_canon) = project_root.canonicalize() else { return false };
+    let Ok(target_canon) = Path::new(target).canonicalize() else {
+        return false;
+    };
+    let Ok(proot_canon) = project_root.canonicalize() else {
+        return false;
+    };
 
     target_canon.starts_with(&proot_canon) && target_canon != proot_canon
 }
