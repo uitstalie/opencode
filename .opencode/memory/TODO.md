@@ -8,7 +8,9 @@
 - [x] **Rust TUI Phase 1A.2**：rm 工具 + project scope 管控 + shared paths 模块
 - [x] **Rust TUI Phase 1B**：会话管理 + system prompt 渲染
 - [x] **Rust TUI Phase 1C**：最小 TUI（ratatui session view, input box, tool loop）
-- [ ] **Rust TUI Phase 1D**：工具-TUI 集成（question/todowrite/skill/task + permission 对话框）
+- [x] **Rust TUI Phase 1D**：agent/task flow + 真实 tool loop + provider 消息对齐 + apply_patch + `question`/`todowrite`/`skill`（扩展 `ToolContext` 承载 session/交互上下文）全部完成
+- [x] **Rust TUI Phase 1 收尾**：`task` 子 agent（可复用 `run_agent`）+ 真实权限弹窗 `[A]/[D]` + `core/permission.rs`（scope + `$PROJECT`）+ `debug permission check` / `debug e2e` 命令；14 工具齐全，113 测试全绿
+- [ ] **Rust TUI Phase 2**：Markdown 渲染 + 语法高亮（tree-sitter）+ Diff 查看器 + 文件树侧边栏
 - [ ] nudge 内容动态化：从 constraint 规则自动生成 nudge，替代 `request.ts` 硬编码
 
 ## 中优先级

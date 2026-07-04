@@ -1,6 +1,6 @@
 # Project Progress
 
-> 最后更新：2026-06-26
+> 最后更新：2026-07-04
 
 ## 已完成
 
@@ -115,11 +115,33 @@
 - 模型配置取消隐式兜底；缺少 provider/model 时显式失败，wire model 从 `deepseek/deepseek-v4-pro` 解析为 `deepseek-v4-pro`
 - 已提交 `b6932af6a feat(rust): add tui replay flow` 与 `1eb9692de docs(openrust): document tui replay setup`；本地 `crates/openrust/openrust.json` 已忽略，避免提交明文 key
 
+### Rust TUI 重写 — Phase 1D + 工具对齐
+- TUI：`Tab` 循环切换 agent（`cycle_agent()`）、`/compact` 触发压缩、鼠标滚轮 + PageUp/PageDown 历史滚动
+- Compaction：append-only checkpoint 语义（`summary`/`recent` 字段），`replace_messages`/`append_compaction`/`effective_messages` 处理边界
+- 真实 tool calling loop 落在 `worker.rs`：模型发 tool call → worker 本地执行 → `role=tool` 结果回灌 → 模型续写（多轮由 worker 内部管理，UI 只收事件）
+- Provider `Message` 扩展 `tool_calls`/`name`/`tool_call_id`（OpenAI 兼容），`openai_compat` 序列化进请求体；工具结果带完整元数据持久化到 session 便于 replay
+- 工具对齐 opencode：`resolve_path()` 统一相对路径解析、read/write/edit 支持 `path`/`filePath` 别名、webfetch `format` 参数、websearch 描述更新
+- 新增 `apply_patch` 工具：opencode 补丁格式（Add/Update/Delete，move 显式拒绝），顺序应用 + 部分失败报告，exact/rstrip/trim 回退匹配；已接入 catalog/registry/scope
+- 新增 `todowrite`：全量替换语义持久化 session todo 列表（`SessionStore::replace_tasks`，`Task` 加 `priority`）
+- 新增 `skill`：按名扫描 `.opencode/skills`/`skills`/配置目录的 `<name>/SKILL.md`，剥离 frontmatter 返回正文
+- 新增 `question`：原生 TUI 选择弹窗，worker↔UI 双向 `AskRequest` 通道，单选/多选/自定义输入，headless 下降级报错不阻塞
+- 扩展 `ToolContext`（`session_id`/`store`/`ask_tx`），新增 Interaction 工具类别
+- worker 发给模型的 tool 定义改用各工具真实 `parameters()` schema，替换空占位
+- `cargo test` 107 passed（从 64 → 100 → 107）
+- 已推送到 `origin/opencode-rust-tui`：feat(agent/task flow + tool loop + alignment)、docs、feat(apply_patch)、feat(todowrite/skill/question)、fix(real tool schemas)
+
+### Rust TUI 重写 — Phase 1 收尾（缺口补完）
+- `task` 子 agent：抽出可复用 `run_agent()` headless 循环（无 UI 依赖），用指定 agent 的 system prompt 跑完整工具循环返回结果；`ToolContext` 注入 `llm`/`model`/`reasoning_effort`；子 agent 上下文清空 llm/交互通道防递归；`run_agent` 排除 task/question 工具
+- 真实权限弹窗：worker 执行 scope 受限工具前发 `PermissionRequest`，TUI 弹 `[A]llow/[D]eny`（A/Y·D/N/Esc·←→·Enter）确认后才执行；`ToolContext` 加 `permission_tx`；无通道时默认拒绝（更安全，移除旧的 auto-allow）
+- `core/permission.rs`：正规化 scope 判定 + `$PROJECT`/`${PROJECT}` 展开，`tool/mod.rs` 委派；共享 `crate::tool::run_tool`（worker 与 run_agent 复用）
+- 新增 debug 命令：`permission check <tool> <path>`（allow/deny/ask）、`e2e run "<prompt>"`（复用 run_agent 跑完整循环）
+- 14 工具齐全（补 task）；`cargo test` 113 passed；零 warning
+
 ## 进行中
 - 继续核对 standalone TUI 的真实运行日志，确认问题来源不再混淆捕获输出与实际 app log
 
 ## 下一步
-- Phase 1D：工具-TUI 集成（question/todowrite/skill/task + permission 对话框）
+- Phase 2：Markdown 渲染 + 语法高亮（tree-sitter）+ Diff 查看器 + 文件树侧边栏
 
 ## 待修复（预存问题）
 - core: DatabaseMigration 超时、LocationServiceMap 隔离、Npm.add 超时
