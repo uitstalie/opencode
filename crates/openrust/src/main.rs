@@ -41,9 +41,9 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Some(Command::Debug { cmd }) => cli::run_debug(cmd)?,
         None => {
-            tracing::info!("No subcommand provided. TUI not yet implemented.");
-            println!("Usage: openrust debug <subcommand>");
-            println!("Run 'openrust debug --help' for available debug commands.");
+            tracing::info!("No subcommand provided. Launching placeholder session shell.");
+            println!("OpenRust session shell is not implemented yet.");
+            println!("Use 'openrust debug --help' for session and prompt inspection.");
         }
     }
 
