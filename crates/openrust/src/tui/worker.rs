@@ -93,12 +93,13 @@ pub(super) fn spawn_prompt_worker(
         let result = rt.block_on(async {
             let tool_defs: Vec<provider::ToolDef> = catalog::TOOL_CATALOG
                 .iter()
-                .map(|meta| ToolDef {
+                .filter_map(|meta| catalog::create_tool(meta.name, None))
+                .map(|tool| ToolDef {
                     r#type: "function".to_string(),
                     function: ToolFunction {
-                        name: meta.name.to_string(),
-                        description: meta.description.to_string(),
-                        parameters: serde_json::json!({"type": "object", "properties": {}, "required": []}),
+                        name: tool.name().to_string(),
+                        description: tool.description().to_string(),
+                        parameters: tool.parameters(),
                     },
                 })
                 .collect();
