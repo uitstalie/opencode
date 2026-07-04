@@ -6,6 +6,7 @@
 
 use clap::Parser;
 use openrust::cli;
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "openrust", version, about = "AI coding agent")]
@@ -16,6 +17,16 @@ struct Cli {
 
 #[derive(clap::Subcommand)]
 enum Command {
+    /// Launch the interactive TUI
+    Tui {
+        /// Preloaded prompt script (one prompt per non-empty line)
+        #[arg(long)]
+        script: Option<PathBuf>,
+
+        /// Seed prompt to send immediately after launch
+        #[arg(long)]
+        prompt: Option<String>,
+    },
     /// Debug and test commands
     Debug {
         #[command(subcommand)]
@@ -34,11 +45,10 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Some(Command::Tui { script, prompt }) => openrust::tui::run(script, prompt)?,
         Some(Command::Debug { cmd }) => cli::run_debug(cmd)?,
         None => {
-            tracing::info!("No subcommand provided. Launching placeholder session shell.");
-            println!("OpenRust session shell is not implemented yet.");
-            println!("Use 'openrust debug --help' for session and prompt inspection.");
+            openrust::tui::run(None, None)?;
         }
     }
 

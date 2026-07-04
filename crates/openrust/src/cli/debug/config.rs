@@ -126,19 +126,20 @@ fn show_config(config: &Config) {
     println!();
     for (name, _cfg) in &config.provider {
         let resolved = config.get_provider(name);
-        let base_url = resolved.as_ref().and_then(|r| r.base_url.as_deref()).unwrap_or("(default)");
-
+        let base_url = resolved.as_ref().and_then(|r| r.base_url.as_deref()).unwrap_or("(default)").to_string();
+        let config_api_key = resolved.as_ref().and_then(|r| r.api_key.clone());
         let key_status = match vault.get(name) {
             Some(k) if k.len() > 8 => format!("🔐 (vault) ****{}", &k[k.len() - 4..]),
             Some(_) => "🔐 (vault) ****".to_string(),
-            None => {
-                let env_key = format!("{}_API_KEY", name.to_uppercase().replace('-', "_"));
-                match std::env::var(&env_key).or_else(|_| std::env::var("OPENAI_API_KEY")) {
-                    Ok(v) if v.len() > 8 => format!("(env) ****{}", &v[v.len() - 4..]),
-                    Ok(_) => "(env) ****".to_string(),
-                    Err(_) => "(not set)".to_string(),
-                }
-            }
+            None => config_api_key
+                .map(|v| {
+                    if v.len() > 8 {
+                        format!("(config) ****{}", &v[v.len() - 4..])
+                    } else {
+                        "(config) ****".to_string()
+                    }
+                })
+                .unwrap_or_else(|| "(not set)".to_string()),
         };
         println!("[{}]", name);
         println!("  base_url: {}", base_url);

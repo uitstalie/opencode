@@ -27,7 +27,7 @@ impl SystemPrompt {
         sections.join("\n\n")
     }
 
-    pub fn from_config(config: &Config, provider: &ResolvedProvider, mode: Option<String>) -> Self {
+    pub fn from_config(config: &Config, provider: &ResolvedProvider, mode: Option<String>) -> anyhow::Result<Self> {
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")).display().to_string();
         let home = crate::core::platform::PlatformPaths::detect()
             .home
@@ -35,15 +35,18 @@ impl SystemPrompt {
             .to_string();
         let platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
 
-        Self {
+        Ok(Self {
             mode: mode.or_else(|| config.mode.clone()).unwrap_or_else(|| "build".to_string()),
             provider: provider.name.clone(),
-            model: config.resolve_model().unwrap_or_else(|| "gpt-5.5".to_string()),
+            model: config
+                .resolve_provider_model()
+                .map(|(_, model)| model)
+                .ok_or_else(|| anyhow::anyhow!("No model configured"))?,
             cwd,
             home,
             platform,
             config_path: Config::global_config_path().display().to_string(),
-        }
+        })
     }
 }
 
@@ -170,7 +173,45 @@ mod tests {
     }
 
     #[test]
-    fn from_config_uses_config_mode_and_default_model() {
+    fn from_config_uses_explicit_config_model() {
+        let config = Config {
+            model: Some("deepseek/deepseek-v4-pro".to_string()),
+            mode: None,
+            provider: std::collections::HashMap::from([(
+                "deepseek".to_string(),
+                crate::core::config::ProviderConfig {
+                    api_key: None,
+                    base_url: None,
+                    models: std::collections::HashMap::from([(
+                        "deepseek-v4-pro".to_string(),
+                        crate::core::config::ModelConfig {
+                            name: Some("deepseek-v4-pro".to_string()),
+                            variants: None,
+                            limit: None,
+                            options: None,
+                        },
+                    )]),
+                    options: None,
+                },
+            )]),
+        };
+        let provider = ResolvedProvider {
+            name: "deepseek".to_string(),
+            api_key: None,
+            base_url: None,
+            models: Default::default(),
+            options: None,
+        };
+
+        let prompt = SystemPrompt::from_config(&config, &provider, Some("plan".to_string())).unwrap();
+
+        assert_eq!(prompt.mode, "plan");
+        assert_eq!(prompt.provider, "deepseek");
+        assert_eq!(prompt.model, "deepseek-v4-pro");
+    }
+
+    #[test]
+    fn from_config_fails_without_model() {
         let config = Config::default();
         let provider = ResolvedProvider {
             name: "deepseek".to_string(),
@@ -180,10 +221,6 @@ mod tests {
             options: None,
         };
 
-        let prompt = SystemPrompt::from_config(&config, &provider, Some("plan".to_string()));
-
-        assert_eq!(prompt.mode, "plan");
-        assert_eq!(prompt.provider, "deepseek");
-        assert_eq!(prompt.model, "gpt-5.5");
+        assert!(SystemPrompt::from_config(&config, &provider, Some("plan".to_string())).is_err());
     }
 }

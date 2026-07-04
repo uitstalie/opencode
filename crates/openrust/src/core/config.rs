@@ -138,33 +138,37 @@ impl Config {
             self.mode = other.mode;
         }
         for (k, v) in other.provider {
-            self.provider.entry(k).or_insert(v);
+            self.provider.insert(k, v);
         }
     }
 
-    /// Resolve the effective model string (provider/model_id format)
+    /// Resolve the effective model string (provider/model_id format).
     pub fn resolve_model(&self) -> Option<String> {
         self.model.clone()
     }
 
+    /// Resolve the configured provider and wire model name for API calls.
+    pub fn resolve_provider_model(&self) -> Option<(String, String)> {
+        let model_spec = self.model.as_deref()?;
+        let (provider_name, model_name, variant) = parse_model_spec(model_spec);
+        let provider = self.provider.get(provider_name)?;
+        let wire_model = variant
+            .or_else(|| provider.models.get(model_name).and_then(|m| m.name.as_deref()))
+            .unwrap_or(model_name);
+        Some((provider_name.to_string(), wire_model.to_string()))
+    }
+
     /// Get provider config by name, resolving API key from:
     ///   1. Encrypted vault (credentials.enc)
-    ///   2. {NAME}_API_KEY environment variable
-    ///   3. OPENAI_API_KEY environment variable (fallback)
+    ///   2. Config file `api_key` field
     pub fn get_provider(&self, name: &str) -> Option<ResolvedProvider> {
         let cfg = self.provider.get(name)?;
 
-        // Try vault first (encrypted store)
         let vault = crate::core::vault::Vault::load();
         let api_key = vault
             .get(name)
             .map(|s| s.to_string())
-            // Fallback to env vars
-            .or_else(|| {
-                let env_key = format!("{}_API_KEY", name.to_uppercase().replace('-', "_"));
-                std::env::var(&env_key).ok()
-            })
-            .or_else(|| std::env::var("OPENAI_API_KEY").ok());
+            .or_else(|| cfg.api_key.clone());
 
         // base_url: config value > options.baseURL
         let base_url = cfg.base_url.clone().or_else(|| {
@@ -262,6 +266,8 @@ pub fn strip_jsonc_comments(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn test_strip_line_comment() {
@@ -310,5 +316,69 @@ mod tests {
     fn global_config_path_points_to_config_json() {
         let path = Config::global_config_path();
         assert!(path.ends_with("config.json"));
+    }
+
+    #[test]
+    fn project_config_overlays_global_config() {
+        let dir = tempdir().unwrap();
+        let home_dir = dir.path().join("home");
+        let global_dir = home_dir.join(".config").join("openrust");
+        let global_path = global_dir.join("config.json");
+        let project_path = dir.path().join("openrust.json");
+
+        fs::create_dir_all(&global_dir).unwrap();
+        fs::write(&global_path, r#"{
+  "model": "deepseek/global-model",
+  "provider": {
+    "deepseek": {
+      "baseURL": "https://global.example/v1",
+      "models": {"global-model": {"name": "global-model"}}
+    }
+  }
+}"#).unwrap();
+        fs::write(&project_path, r#"{
+  "model": "deepseek/project-model",
+  "provider": {
+    "deepseek": {
+      "baseURL": "https://project.example/v1",
+      "api_key": "project-key",
+      "models": {"project-model": {"name": "project-model"}}
+    }
+  }
+}"#).unwrap();
+
+        let config = Config::load(&dir.path().to_path_buf()).unwrap();
+        let provider = config.get_provider("deepseek").unwrap();
+
+        assert_eq!(config.model.as_deref(), Some("deepseek/project-model"));
+        assert_eq!(provider.base_url.as_deref(), Some("https://project.example/v1"));
+        assert_eq!(provider.api_key.as_deref(), Some("project-key"));
+        assert!(provider.models.contains_key("project-model"));
+    }
+
+    #[test]
+    fn provider_api_key_falls_back_to_config_value() {
+        let config = Config {
+            model: Some("deepseek/deepseek-v4-pro".to_string()),
+            mode: None,
+            provider: HashMap::from([(
+                "deepseek".to_string(),
+                ProviderConfig {
+                    api_key: Some("config-key".to_string()),
+                    base_url: Some("https://example/v1".to_string()),
+                    models: HashMap::new(),
+                    options: None,
+                },
+            )]),
+        };
+
+        let provider = config.get_provider("deepseek").unwrap();
+        assert_eq!(provider.api_key.as_deref(), Some("config-key"));
+    }
+
+    #[test]
+    fn resolve_provider_model_returns_none_when_config_missing() {
+        let config = Config::default();
+        assert!(config.resolve_provider_model().is_none());
     }
 }

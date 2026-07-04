@@ -17,7 +17,7 @@ pub enum Cmd {
         /// Model to use (default: from config)
         #[arg(short, long)]
         model: Option<String>,
-        /// API key override (or set {NAME}_API_KEY env var)
+        /// API key override
         #[arg(long)]
         api_key: Option<String>,
     },
@@ -59,7 +59,7 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
                 .get_provider(&name)
                 .ok_or_else(|| anyhow::anyhow!("Provider '{}' not found in config", name))?;
 
-            // CLI --api-key overrides config/env
+            // CLI --api-key overrides config and vault
             if let Some(key) = api_key {
                 resolved.api_key = Some(key);
             }
@@ -67,12 +67,14 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
             resolved
                 .api_key
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("No API key for provider '{}'. Set {}_API_KEY env var, add api_key to config, or use --api-key.", name, name.to_uppercase()))?;
+                .ok_or_else(|| anyhow::anyhow!("No API key for provider '{}'. Add api_key to config or use --api-key.", name))?;
 
             let provider = crate::core::provider::create_provider(&resolved)
                 .ok_or_else(|| anyhow::anyhow!("Failed to create provider '{}'", name))?;
 
-            let model_id = model.or_else(|| config.resolve_model()).unwrap_or_else(|| "gpt-5.5".to_string());
+            let model_id = model
+                .or_else(|| config.resolve_provider_model().map(|(_, model)| model))
+                .ok_or_else(|| anyhow::anyhow!("No model configured"))?;
 
             println!("Provider: {}", name);
             println!("Model:    {}", model_id);

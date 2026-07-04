@@ -26,7 +26,7 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
                 .get_provider(provider_name)
                 .ok_or_else(|| anyhow::anyhow!("Provider '{}' not found", provider_name))?;
 
-            let prompt = SystemPrompt::from_config(&config, &provider, Some(mode)).render();
+            let prompt = SystemPrompt::from_config(&config, &provider, Some(mode))?.render();
             println!("{}", prompt);
             Ok(())
         }

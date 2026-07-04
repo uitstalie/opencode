@@ -29,6 +29,11 @@ pub enum DebugCmd {
         #[command(subcommand)]
         cmd: debug::prompt::Cmd,
     },
+    /// TUI automation and replay
+    Tui {
+        #[command(subcommand)]
+        cmd: debug::tui::Cmd,
+    },
     /// Encrypted credentials vault
     Vault {
         #[command(subcommand)]
@@ -43,6 +48,7 @@ pub fn run_debug(cmd: DebugCmd) -> anyhow::Result<()> {
         DebugCmd::Config { cmd } => debug::config::run(cmd),
         DebugCmd::Session { cmd } => debug::session::run(cmd),
         DebugCmd::Prompt { cmd } => debug::prompt::run(cmd),
+        DebugCmd::Tui { cmd } => debug::tui::run(cmd),
         DebugCmd::Vault { cmd } => debug::vault::run(cmd),
     }
 }
