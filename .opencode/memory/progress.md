@@ -100,6 +100,16 @@
 - 工具 catalog 文档 `TOOL_CATALOG.md` 已补充
 - `cargo test` 已验证通过，当前 64 passed
 
+### Rust TUI 重写 — Phase 1C
+- `openrust` 默认进入 TUI；支持 `--prompt` 与 `--script` 预动作
+- 新增 `cli::debug::tui replay`，用于 bash 观察脚本回放过程
+- TUI 最小闭环已能连接模型、显示流式输出、顺序执行脚本输入
+
+### Rust TUI 重写 — 配置语义收口
+- 项目 `openrust.json` 覆盖全局 `config.json`；同名 provider 直接整块覆盖
+- API key 只走 vault + 配置文件，不再依赖环境变量
+- `debug config show` / `debug provider test` 已同步新语义
+
 ## 进行中
 - (无)
 

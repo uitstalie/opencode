@@ -21,6 +21,7 @@
 | `cli::debug::vault` | `src/cli/debug/vault.rs` | vault test / status / set | 已实现 |
 | `cli::debug::session` | `src/cli/debug/session.rs` | session list / show | 已实现 |
 | `cli::debug::prompt` | `src/cli/debug/prompt.rs` | system prompt show | 已实现 |
+| `cli::debug::tui` | `src/cli/debug/tui.rs` | TUI replay / automation | 已实现 |
 | `core::config` | `src/core/config.rs` | JSONC 配置加载、provider 解析 | 已实现 |
 | `core::crypto` | `src/core/crypto.rs` | API key 加密 / 解密 | 已实现 |
 | `core::platform` | `src/core/platform.rs` | 平台判定与 config/data/cache 路径布局 | 已实现 |
@@ -54,4 +55,7 @@
 4. `core::session` 负责会话数据持久化，`SessionTranscript` 显式分出固定前缀和动态历史。
 5. `core::system_prompt` 负责 system prompt 的分段渲染，固定 section 会保持稳定，动态内容从会话和配置中注入。
 6. `tool::catalog` 负责工具静态元数据与分类索引，`cli::debug::tool` 和 `core::system_prompt` 共享同一目录表。
-7. `cli::debug::*` 是当前开发验证入口，后续新增能力优先补这里的命令。
+7. `core::config` 的 overlay 语义为项目 `openrust.json` 覆盖全局 `config.json`；同名 `provider` 整块覆盖，不做深合并。
+8. `core::config` / `cli::debug::config` 只按 vault + 配置文件解析 `api_key`，不依赖环境变量。
+9. `tui` 支持 `--prompt` / `--script` 预动作；`cli::debug::tui replay` 是脚本回放入口。
+10. `cli::debug::*` 是当前开发验证入口，后续新增能力优先补这里的命令。
