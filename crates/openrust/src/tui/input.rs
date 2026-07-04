@@ -58,6 +58,8 @@ pub(super) fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "/task" => Some(SlashCommand::Task(parts.map(str::to_string).collect())),
         "/connect" => Some(SlashCommand::Connect(parts.map(str::to_string).collect())),
         "/models" | "/model" => Some(SlashCommand::Models(parts.map(str::to_string).collect())),
+        "/files" | "/tree" => Some(SlashCommand::Files),
+        "/diff" => Some(SlashCommand::Diff),
         _ => None,
     }
 }

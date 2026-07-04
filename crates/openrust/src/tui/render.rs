@@ -133,6 +133,22 @@ impl Theme {
     pub fn running_style(&self, ai_running: bool) -> Style {
         Style::default().fg(if ai_running { self.warning } else { self.success })
     }
+
+    pub fn diff_insert_style(&self) -> Style {
+        Style::default().fg(self.success)
+    }
+
+    pub fn diff_delete_style(&self) -> Style {
+        Style::default().fg(Color::Rgb(248, 113, 113))
+    }
+
+    pub fn sidebar_dir_style(&self) -> Style {
+        Style::default().fg(self.active_border).add_modifier(Modifier::BOLD)
+    }
+
+    pub fn sidebar_file_style(&self) -> Style {
+        Style::default().fg(self.text)
+    }
 }
 
 pub(super) fn display_message_lines(message: &DisplayMessage, theme: &Theme) -> Vec<Line<'static>> {
@@ -148,7 +164,11 @@ pub(super) fn display_message_lines(message: &DisplayMessage, theme: &Theme) -> 
         role.to_string(),
         role_style.add_modifier(Modifier::BOLD),
     )])];
-    lines.extend(message.content().lines().map(|line| Line::from(line.to_string())));
+    if role == "assistant" {
+        lines.extend(super::markdown::render_markdown(message.content(), theme));
+    } else {
+        lines.extend(message.content().lines().map(|line| Line::from(line.to_string())));
+    }
     lines.push(Line::from(""));
     lines
 }
@@ -233,6 +253,15 @@ pub(super) fn main_layout() -> LayoutSpec {
             },
         ],
     }
+}
+
+/// Split a region horizontally into (sidebar, main).
+pub(super) fn split_sidebar(area: Rect) -> (Rect, Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(32), Constraint::Min(20)])
+        .split(area);
+    (chunks[0], chunks[1])
 }
 
 pub(super) fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {

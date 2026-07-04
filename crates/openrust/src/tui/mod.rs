@@ -34,8 +34,12 @@ use crate::core::{
 use crate::tool::AskRequest;
 
 mod dialog;
+mod diff;
+mod highlight;
 mod input;
+mod markdown;
 mod render;
+mod sidebar;
 mod worker;
 
 use dialog::{slash_hint_dialog, slash_options, Dialog, DialogKind, DialogOption};
@@ -270,6 +274,10 @@ struct SessionView {
     dialog: Option<Dialog>,
     pending_question: Option<PendingQuestion>,
     pending_permission: Option<PendingPermission>,
+    sidebar: Option<sidebar::FileTree>,
+    sidebar_visible: bool,
+    diff_visible: bool,
+    last_diff: Option<(String, String, String)>,
     prompt_job: Option<PromptJob>,
     shutdown: Arc<AtomicBool>,
     assistant_preview: String,
@@ -318,6 +326,10 @@ impl SessionView {
             dialog: None,
             pending_question: None,
             pending_permission: None,
+            sidebar: None,
+            sidebar_visible: false,
+            diff_visible: false,
+            last_diff: None,
             prompt_job: None,
             shutdown: Arc::new(AtomicBool::new(false)),
             assistant_preview: String::new(),
@@ -380,6 +392,11 @@ impl SessionView {
             self.pump_prompt_job(terminal)?;
             self.poll_ask_request();
             self.poll_permission_request();
+            if self.sidebar_visible {
+                if let Some(tree) = &mut self.sidebar {
+                    tree.poll_refresh();
+                }
+            }
             self.maybe_start_next_prompt(terminal)?;
             self.status = "Enter 发送 · /exit /q /quit 退出".to_string();
             self.render_terminal(terminal)?;
@@ -748,6 +765,14 @@ impl SessionView {
             }
             SlashCommand::Models(args) => {
                 self.open_models_dialog(args);
+                true
+            }
+            SlashCommand::Files => {
+                self.toggle_sidebar();
+                true
+            }
+            SlashCommand::Diff => {
+                self.toggle_diff();
                 true
             }
         }
@@ -1222,6 +1247,51 @@ impl SessionView {
             )
             .style(theme.dialog_style())
             .wrap(Wrap { trim: false })
+    }
+
+    fn toggle_sidebar(&mut self) {
+        self.sidebar_visible = !self.sidebar_visible;
+        if self.sidebar_visible && self.sidebar.is_none() {
+            self.sidebar = Some(sidebar::FileTree::new(self.cwd.clone()));
+        }
+        self.note(if self.sidebar_visible {
+            "sidebar: on".to_string()
+        } else {
+            "sidebar: off".to_string()
+        });
+    }
+
+    fn toggle_diff(&mut self) {
+        if self.last_diff.is_none() {
+            self.note("no recent edit to diff".to_string());
+            return;
+        }
+        self.diff_visible = !self.diff_visible;
+    }
+
+    /// Capture the last edit/write as a diff for the `/diff` viewer.
+    fn capture_diff(&mut self, name: &str, args: &str) {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(args) else {
+            return;
+        };
+        let path = value
+            .get("filePath")
+            .or_else(|| value.get("path"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        match name {
+            "edit" => {
+                let before = value.get("oldString").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let after = value.get("newString").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                self.last_diff = Some((format!("edit {}", path), before, after));
+            }
+            "write" => {
+                let after = value.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                self.last_diff = Some((format!("write {}", path), String::new(), after));
+            }
+            _ => {}
+        }
     }
 
     fn poll_ask_request(&mut self) {
@@ -1908,7 +1978,27 @@ impl SessionView {
     fn render_frame(&self, frame: &mut Frame) {
         let regions = main_layout().split(frame.area());
 
-        let session = Paragraph::new(self.session_lines(regions.session.height as usize))
+        let session_area = if self.sidebar_visible && self.sidebar.is_some() {
+            let (side, main) = render::split_sidebar(regions.session);
+            if let Some(tree) = &self.sidebar {
+                let sidebar = Paragraph::new(tree.lines(&self.theme))
+                    .style(self.theme.panel_style())
+                    .block(
+                        Block::default()
+                            .title(" Files ")
+                            .title_style(self.theme.title_style())
+                            .borders(Borders::ALL)
+                            .border_style(self.theme.border_style()),
+                    )
+                    .wrap(Wrap { trim: false });
+                frame.render_widget(sidebar, side);
+            }
+            main
+        } else {
+            regions.session
+        };
+
+        let session = Paragraph::new(self.session_lines(session_area.height as usize))
             .style(self.theme.panel_style())
             .block(
                 Block::default()
@@ -1918,7 +2008,7 @@ impl SessionView {
                     .border_style(self.theme.border_style()),
             )
             .wrap(Wrap { trim: false });
-        frame.render_widget(session, regions.session);
+        frame.render_widget(session, session_area);
 
         let input = Paragraph::new(self.input.as_str())
             .style(self.theme.input_style())
@@ -1964,6 +2054,25 @@ impl SessionView {
             let area = centered_rect(60, 32, frame.area());
             frame.render_widget(Clear, area);
             frame.render_widget(self.permission_widget(permission), area);
+        }
+
+        if self.diff_visible {
+            if let Some((title, before, after)) = &self.last_diff {
+                let area = centered_rect(80, 70, frame.area());
+                frame.render_widget(Clear, area);
+                let widget = Paragraph::new(diff::render_diff(before, after, &self.theme))
+                    .style(self.theme.dialog_style())
+                    .block(
+                        Block::default()
+                            .title(format!(" diff: {} ", title))
+                            .title_alignment(ratatui::layout::Alignment::Center)
+                            .title_style(self.theme.title_style())
+                            .borders(Borders::ALL)
+                            .border_style(self.theme.dialog_border_style()),
+                    )
+                    .wrap(Wrap { trim: false });
+                frame.render_widget(widget, area);
+            }
         }
     }
 
@@ -2017,11 +2126,15 @@ impl SessionView {
                             }])),
                         );
                     }
+                    self.capture_diff(&name, &args);
                     self.persist_message_detail("tool", &result, Some(name.clone()), Some(id.clone()), None);
-                    self.display.push(render::DisplayMessage::new(
-                        "tool",
-                        &format!("tool result: {}\n{}", name, result),
-                    ));
+                    let display_text = match (name.as_str(), &self.last_diff) {
+                        ("edit" | "write", Some((_, before, after))) => {
+                            format!("tool result: {}\n{}", name, diff::unified_diff(before, after))
+                        }
+                        _ => format!("tool result: {}\n{}", name, result),
+                    };
+                    self.display.push(render::DisplayMessage::new("tool", &display_text));
                     self.status = format!("tool result: {}", name);
                     self.render_terminal(terminal)?;
                 }
@@ -2194,6 +2307,8 @@ enum SlashCommand {
     Task(Vec<String>),
     Connect(Vec<String>),
     Models(Vec<String>),
+    Files,
+    Diff,
 }
 
 fn now_micros() -> u128 {

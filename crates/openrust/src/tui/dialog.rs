@@ -136,6 +136,8 @@ pub(super) fn slash_options(input: &str) -> Vec<DialogOption> {
         ("/task", "task", "List or update tasks"),
         ("/connect", "connect", "Configure providers and verify credentials"),
         ("/models", "models", "Switch registered models and reasoning effort"),
+        ("/files", "files", "Toggle the file-tree sidebar"),
+        ("/diff", "diff", "Show the last edit as a diff"),
         ("/exit", "exit", "Exit the TUI"),
     ];
 
