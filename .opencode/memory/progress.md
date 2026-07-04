@@ -83,6 +83,15 @@
 - Permission::Ask 变体（debug 模式自动放行+标记，TUI 模式弹出确认框）
 - read 工具 description 明确替代 cat
 
+### Rust TUI 重写 — Phase 1B / 1B.1 / 1B.2 / 1B.3
+- Session / Message / Transcript 持久化完成，固定前缀区与动态历史区分离
+- system prompt 分段渲染完成：constraint / identity / environment / instructions / capabilities / style / memory / nudge
+- 包级结构重组：`src/lib.rs` 作为库入口，`src/main.rs` 保留薄二进制入口
+- `STRUCTURE.md` 记录当前实现索引表
+- 平台路径模块 `core::platform` 完成：Windows 10 / Windows 11 / Fedora 44 支持，且细分为 `config / data / cache`
+- config、vault、session、undo、prompt 的路径来源统一收口到平台模块
+- `cargo test` 已验证通过，当前 58 passed
+
 ## 进行中
 - (无)
 
