@@ -151,6 +151,9 @@ mod tests {
             interactive: false,
             project_dir: None,
             undo_store: None,
+            session_id: None,
+            store: None,
+            ask_tx: None,
         };
         let r = EditTool
             .execute(

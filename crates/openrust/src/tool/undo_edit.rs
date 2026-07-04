@@ -68,6 +68,9 @@ mod tests {
             interactive: false,
             project_dir: None,
             undo_store: Some(store),
+            session_id: None,
+            store: None,
+            ask_tx: None,
         }
     }
 

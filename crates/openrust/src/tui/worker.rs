@@ -7,11 +7,13 @@ use futures::StreamExt;
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 use crate::core::{provider, provider::RequestOptions, provider::StreamChunk, provider::ToolDef, provider::ToolFunction};
-use crate::tool::{ToolContext, ToolParams};
+use crate::core::session::SessionStore;
+use crate::tool::{AskRequest, ToolContext, ToolParams};
 use crate::tool::catalog;
 
 pub(super) struct PromptJob {
     pub(super) receiver: mpsc::Receiver<PromptEvent>,
+    pub(super) ask_receiver: mpsc::Receiver<AskRequest>,
 }
 
 pub(super) enum PromptEvent {
@@ -73,8 +75,12 @@ pub(super) fn spawn_prompt_worker(
     reasoning_effort: Option<String>,
     cwd: std::path::PathBuf,
     shutdown: Arc<AtomicBool>,
+    session_id: Option<String>,
+    store: Option<SessionStore>,
+    interactive: bool,
 ) -> PromptJob {
     let (tx, rx) = mpsc::channel();
+    let (ask_tx, ask_rx) = mpsc::channel::<AskRequest>();
     std::thread::spawn(move || {
         let rt = match tokio::runtime::Runtime::new() {
             Ok(rt) => rt,
@@ -99,9 +105,12 @@ pub(super) fn spawn_prompt_worker(
             let mut history = messages;
             let tool_ctx = ToolContext {
                 cwd,
-                interactive: false,
+                interactive,
                 project_dir: None,
                 undo_store: None,
+                session_id,
+                store,
+                ask_tx: if interactive { Some(ask_tx) } else { None },
             };
 
             loop {
@@ -220,7 +229,10 @@ pub(super) fn spawn_prompt_worker(
         }
     });
 
-    PromptJob { receiver: rx }
+    PromptJob {
+        receiver: rx,
+        ask_receiver: ask_rx,
+    }
 }
 
 async fn run_tool(name: &str, args: &str, ctx: &ToolContext) -> String {

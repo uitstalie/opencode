@@ -22,9 +22,12 @@ pub mod bash;
 pub mod edit;
 pub mod glob;
 pub mod grep;
+pub mod question;
 pub mod read;
 pub mod rm;
 pub mod shell;
+pub mod skill;
+pub mod todowrite;
 pub mod undo;
 pub mod undo_edit;
 pub mod webfetch;
@@ -142,13 +145,27 @@ impl ToolResult {
     }
 }
 
-#[derive(Debug, Clone)]
+/// A request from a tool (e.g. `question`) for interactive user input.
+/// The tool sends this over `ToolContext.ask_tx`, then blocks on `responder`
+/// until the UI collects answers (one string per sub-question).
+pub struct AskRequest {
+    pub questions: serde_json::Value,
+    pub responder: std::sync::mpsc::Sender<Vec<String>>,
+}
+
+#[derive(Clone)]
 pub struct ToolContext {
     pub cwd: PathBuf,
     pub interactive: bool,
     /// Project root for scope-based permission. Defaults to cwd if None.
     pub project_dir: Option<PathBuf>,
     pub undo_store: Option<Arc<UndoStore>>,
+    /// Session identity for tools that persist state (todowrite).
+    pub session_id: Option<String>,
+    pub store: Option<crate::core::session::SessionStore>,
+    /// Channel for tools that need to ask the user a question (question).
+    /// `None` in non-interactive contexts.
+    pub ask_tx: Option<std::sync::mpsc::Sender<AskRequest>>,
 }
 
 impl ToolContext {
@@ -159,6 +176,9 @@ impl ToolContext {
             interactive: false,
             project_dir: None,
             undo_store: None,
+            session_id: None,
+            store: None,
+            ask_tx: None,
         }
     }
 
@@ -320,6 +340,9 @@ pub fn standard_registry(undo_store: Option<Arc<UndoStore>>) -> ToolRegistry {
     reg.register(grep::GrepTool);
     reg.register(webfetch::WebFetchTool);
     reg.register(websearch::WebSearchTool);
+    reg.register(todowrite::TodoWriteTool);
+    reg.register(skill::SkillTool);
+    reg.register(question::QuestionTool);
     reg.register(undo_edit::UndoEditTool { undo_store });
     reg
 }

@@ -4,8 +4,9 @@ use std::sync::Arc;
 
 use super::{
     apply_patch::ApplyPatchTool, bash::BashTool, edit::EditTool, glob::GlobTool, grep::GrepTool,
-    read::ReadTool, rm::RmTool, undo::UndoStore, undo_edit::UndoEditTool, webfetch::WebFetchTool,
-    websearch::WebSearchTool, write::WriteTool,
+    question::QuestionTool, read::ReadTool, rm::RmTool, skill::SkillTool, todowrite::TodoWriteTool,
+    undo::UndoStore, undo_edit::UndoEditTool, webfetch::WebFetchTool, websearch::WebSearchTool,
+    write::WriteTool,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,6 +14,7 @@ pub enum ToolCategory {
     Filesystem,
     Shell,
     Network,
+    Interaction,
     Undo,
 }
 
@@ -86,6 +88,24 @@ pub const TOOL_CATALOG: &[ToolMeta] = &[
         prompt_hint: "Use for discovery and quick lookup.",
     },
     ToolMeta {
+        name: "todowrite",
+        category: ToolCategory::Interaction,
+        description: "Maintain the session todo list.",
+        prompt_hint: "Use to plan and track multi-step work.",
+    },
+    ToolMeta {
+        name: "skill",
+        category: ToolCategory::Interaction,
+        description: "Load a specialized skill by name.",
+        prompt_hint: "Use when a task matches an available skill.",
+    },
+    ToolMeta {
+        name: "question",
+        category: ToolCategory::Interaction,
+        description: "Ask the user structured questions.",
+        prompt_hint: "Use to gather preferences or resolve ambiguity.",
+    },
+    ToolMeta {
         name: "undo_edit",
         category: ToolCategory::Undo,
         description: "Restore a file from an undo blob.",
@@ -110,6 +130,7 @@ pub fn registry_category_names() -> Vec<(ToolCategory, Vec<&'static str>)> {
         ToolCategory::Filesystem,
         ToolCategory::Shell,
         ToolCategory::Network,
+        ToolCategory::Interaction,
         ToolCategory::Undo,
     ]
     .into_iter()
@@ -138,6 +159,9 @@ pub fn create_tool(name: &str, undo_store: Option<Arc<UndoStore>>) -> Option<Box
         "grep" => Some(Box::new(GrepTool)),
         "webfetch" => Some(Box::new(WebFetchTool)),
         "websearch" => Some(Box::new(WebSearchTool)),
+        "todowrite" => Some(Box::new(TodoWriteTool)),
+        "skill" => Some(Box::new(SkillTool)),
+        "question" => Some(Box::new(QuestionTool)),
         "undo_edit" => Some(Box::new(UndoEditTool { undo_store })),
         _ => None,
     }

@@ -40,6 +40,8 @@ pub struct Task {
     pub agent: Option<String>,
     pub title: String,
     pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -314,11 +316,25 @@ impl SessionStore {
             agent,
             title,
             status,
+            priority: None,
             created_at: now.clone(),
             updated_at: now,
         };
         self.save_task(session_id, &task)?;
         Ok(task)
+    }
+
+    /// Replace all tasks for a session with the given set (full-list semantics for todowrite).
+    pub fn replace_tasks(&self, session_id: &str, tasks: &[Task]) -> anyhow::Result<()> {
+        let tree = self.db.open_tree("tasks")?;
+        for key in tree.scan_prefix(format!("{session_id}:").as_bytes()).keys().flatten() {
+            tree.remove(key)?;
+        }
+        for task in tasks {
+            tree.insert(self.task_key(session_id, &task.id), serde_json::to_vec(task)?)?;
+        }
+        self.touch_session(session_id)?;
+        Ok(())
     }
 
     pub fn update_task_status(&self, session_id: &str, id: &str, status: &str) -> anyhow::Result<Option<Task>> {

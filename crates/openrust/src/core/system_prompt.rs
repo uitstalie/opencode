@@ -156,6 +156,7 @@ fn tool_category_label(category: crate::tool::catalog::ToolCategory) -> &'static
         crate::tool::catalog::ToolCategory::Filesystem => "fs",
         crate::tool::catalog::ToolCategory::Shell => "shell",
         crate::tool::catalog::ToolCategory::Network => "net",
+        crate::tool::catalog::ToolCategory::Interaction => "interaction",
         crate::tool::catalog::ToolCategory::Undo => "undo",
     }
 }

@@ -31,6 +31,7 @@ use crate::core::{
     session::SessionStore,
     vault::Vault,
 };
+use crate::tool::AskRequest;
 
 mod dialog;
 mod input;
@@ -78,6 +79,161 @@ pub fn run(script: Option<PathBuf>, prompt: Option<String>) -> anyhow::Result<()
     session.run()
 }
 
+/// A single sub-question awaiting an answer in the interactive prompt.
+struct QuestionItem {
+    header: String,
+    question: String,
+    options: Vec<(String, String)>,
+    multiple: bool,
+}
+
+/// Interactive state for a pending `question` tool call. The worker thread is
+/// blocked on `responder` until every sub-question is answered (or cancelled).
+struct PendingQuestion {
+    responder: std::sync::mpsc::Sender<Vec<String>>,
+    items: Vec<QuestionItem>,
+    current: usize,
+    selected: usize,
+    picked: Vec<usize>,
+    answers: Vec<String>,
+    typing: Option<String>,
+}
+
+impl PendingQuestion {
+    /// Build from an `AskRequest`. Returns `None` if the payload has no valid questions.
+    fn from_request(request: AskRequest) -> Option<Self> {
+        let items: Vec<QuestionItem> = request
+            .questions
+            .as_array()?
+            .iter()
+            .filter_map(|value| {
+                let question = value.get("question").and_then(|v| v.as_str())?.to_string();
+                let header = value
+                    .get("header")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let options = value
+                    .get("options")
+                    .and_then(|v| v.as_array())
+                    .map(|options| {
+                        options
+                            .iter()
+                            .filter_map(|option| {
+                                let label = option.get("label").and_then(|v| v.as_str())?.to_string();
+                                let description = option
+                                    .get("description")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                Some((label, description))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let multiple = value.get("multiple").and_then(|v| v.as_bool()).unwrap_or(false);
+                Some(QuestionItem { header, question, options, multiple })
+            })
+            .collect();
+        if items.is_empty() {
+            let _ = request.responder.send(Vec::new());
+            return None;
+        }
+        Some(Self {
+            responder: request.responder,
+            items,
+            current: 0,
+            selected: 0,
+            picked: Vec::new(),
+            answers: Vec::new(),
+            typing: None,
+        })
+    }
+
+    fn item(&self) -> &QuestionItem {
+        &self.items[self.current]
+    }
+
+    /// Total selectable rows: options plus the trailing "type your own" entry.
+    fn row_count(&self) -> usize {
+        self.item().options.len() + 1
+    }
+
+    fn custom_index(&self) -> usize {
+        self.item().options.len()
+    }
+
+    fn next(&mut self) {
+        let count = self.row_count();
+        self.selected = (self.selected + 1) % count;
+    }
+
+    fn previous(&mut self) {
+        let count = self.row_count();
+        self.selected = if self.selected == 0 { count - 1 } else { self.selected - 1 };
+    }
+
+    fn toggle_pick(&mut self) {
+        if !self.item().multiple || self.selected >= self.item().options.len() {
+            return;
+        }
+        match self.picked.iter().position(|&index| index == self.selected) {
+            Some(existing) => {
+                self.picked.remove(existing);
+            }
+            None => self.picked.push(self.selected),
+        }
+    }
+
+    /// Advance to the next sub-question, recording `answer`. Returns `true` when
+    /// all questions are answered (caller should send `answers` and clear state).
+    fn record(&mut self, answer: String) -> bool {
+        self.answers.push(answer);
+        self.current += 1;
+        self.selected = 0;
+        self.picked.clear();
+        self.typing = None;
+        self.current >= self.items.len()
+    }
+
+    /// Handle Enter on the current selection. Returns finalized answers when done.
+    fn confirm(&mut self) -> Option<Vec<String>> {
+        if self.selected == self.custom_index() {
+            self.typing = Some(String::new());
+            return None;
+        }
+        let item = self.item();
+        let answer = if item.multiple {
+            if self.picked.is_empty() {
+                item.options[self.selected].0.clone()
+            } else {
+                let mut picks = self.picked.clone();
+                picks.sort_unstable();
+                picks
+                    .iter()
+                    .map(|&index| item.options[index].0.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+        } else {
+            item.options[self.selected].0.clone()
+        };
+        if self.record(answer) {
+            return Some(std::mem::take(&mut self.answers));
+        }
+        None
+    }
+
+    /// Commit a typed custom answer. Returns finalized answers when done.
+    fn commit_custom(&mut self) -> Option<Vec<String>> {
+        let text = self.typing.take().unwrap_or_default();
+        if self.record(text) {
+            return Some(std::mem::take(&mut self.answers));
+        }
+        None
+    }
+}
+
 struct SessionView {
     provider_name: String,
     model: String,
@@ -103,6 +259,7 @@ struct SessionView {
     thinking_mode: ThinkingMode,
     reasoning_effort: Option<String>,
     dialog: Option<Dialog>,
+    pending_question: Option<PendingQuestion>,
     prompt_job: Option<PromptJob>,
     shutdown: Arc<AtomicBool>,
     assistant_preview: String,
@@ -149,6 +306,7 @@ impl SessionView {
             thinking_mode: ThinkingMode::Hide,
             reasoning_effort: None,
             dialog: None,
+            pending_question: None,
             prompt_job: None,
             shutdown: Arc::new(AtomicBool::new(false)),
             assistant_preview: String::new(),
@@ -209,6 +367,7 @@ impl SessionView {
 
         loop {
             self.pump_prompt_job(terminal)?;
+            self.poll_ask_request();
             self.maybe_start_next_prompt(terminal)?;
             self.status = "Enter 发送 · /exit /q /quit 退出".to_string();
             self.render_terminal(terminal)?;
@@ -219,6 +378,13 @@ impl SessionView {
             match event::read()? {
                 Event::Key(key) => {
                     if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
+                    if self.pending_question.is_some() {
+                        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                            break;
+                        }
+                        self.handle_question_key(key);
                         continue;
                     }
                     if should_exit(&key) {
@@ -339,6 +505,9 @@ impl SessionView {
             self.reasoning_effort.clone(),
             self.cwd.clone(),
             Arc::clone(&self.shutdown),
+            Some(self.session_id.clone()),
+            self.store.clone(),
+            false,
         ));
         while self.prompt_job.is_some() {
             self.pump_prompt_job_for_stdout(stdout)?;
@@ -518,6 +687,9 @@ impl SessionView {
             self.reasoning_effort.clone(),
             self.cwd.clone(),
             Arc::clone(&self.shutdown),
+            Some(self.session_id.clone()),
+            self.store.clone(),
+            true,
         ));
         Ok(())
     }
@@ -950,6 +1122,169 @@ impl SessionView {
                 }
             }
         }
+    }
+
+    fn poll_ask_request(&mut self) {
+        if self.pending_question.is_some() {
+            return;
+        }
+        let request = {
+            let Some(job) = &self.prompt_job else {
+                return;
+            };
+            match job.ask_receiver.try_recv() {
+                Ok(request) => request,
+                Err(_) => return,
+            }
+        };
+        self.pending_question = PendingQuestion::from_request(request);
+        if self.pending_question.is_some() {
+            self.status = "question: awaiting your answer".to_string();
+        }
+    }
+
+    fn handle_question_key(&mut self, key: event::KeyEvent) {
+        enum Outcome {
+            None,
+            Cancel,
+            Done(Vec<String>),
+        }
+        let outcome = {
+            let Some(q) = self.pending_question.as_mut() else {
+                return;
+            };
+            if q.typing.is_some() {
+                match key.code {
+                    KeyCode::Esc => {
+                        q.typing = None;
+                        Outcome::None
+                    }
+                    KeyCode::Enter => match q.commit_custom() {
+                        Some(answers) => Outcome::Done(answers),
+                        None => Outcome::None,
+                    },
+                    KeyCode::Backspace => {
+                        if let Some(buffer) = q.typing.as_mut() {
+                            buffer.pop();
+                        }
+                        Outcome::None
+                    }
+                    KeyCode::Char(ch) => {
+                        if let Some(buffer) = q.typing.as_mut() {
+                            buffer.push(ch);
+                        }
+                        Outcome::None
+                    }
+                    _ => Outcome::None,
+                }
+            } else {
+                match key.code {
+                    KeyCode::Esc => Outcome::Cancel,
+                    KeyCode::Up => {
+                        q.previous();
+                        Outcome::None
+                    }
+                    KeyCode::Down => {
+                        q.next();
+                        Outcome::None
+                    }
+                    KeyCode::Char(' ') => {
+                        q.toggle_pick();
+                        Outcome::None
+                    }
+                    KeyCode::Enter => match q.confirm() {
+                        Some(answers) => Outcome::Done(answers),
+                        None => Outcome::None,
+                    },
+                    _ => Outcome::None,
+                }
+            }
+        };
+        match outcome {
+            Outcome::None => {}
+            Outcome::Cancel => {
+                if let Some(q) = self.pending_question.take() {
+                    let _ = q.responder.send(vec!["(cancelled)".to_string()]);
+                }
+                self.note("question cancelled".to_string());
+            }
+            Outcome::Done(answers) => {
+                if let Some(q) = self.pending_question.take() {
+                    let _ = q.responder.send(answers);
+                }
+                self.status = "answer sent".to_string();
+            }
+        }
+    }
+
+    fn question_widget(&self, q: &PendingQuestion) -> Paragraph<'static> {
+        let theme = &self.theme;
+        let item = q.item();
+        let mut lines = vec![
+            Line::from(Span::styled(item.question.clone(), theme.muted_style())),
+            Line::from(""),
+        ];
+        for (index, (label, description)) in item.options.iter().enumerate() {
+            let selected = index == q.selected && q.typing.is_none();
+            let marker = if selected { "› " } else { "  " };
+            let check = if item.multiple {
+                if q.picked.contains(&index) {
+                    "[x] "
+                } else {
+                    "[ ] "
+                }
+            } else {
+                ""
+            };
+            let style = if selected {
+                theme.dialog_selected_style().add_modifier(Modifier::BOLD)
+            } else {
+                theme.dialog_style()
+            };
+            lines.push(Line::from(Span::styled(format!("{}{}{}", marker, check, label), style)));
+            if !description.is_empty() {
+                lines.push(Line::from(Span::styled(format!("      {}", description), theme.muted_style())));
+            }
+        }
+        let custom_selected = q.selected == q.custom_index() && q.typing.is_none();
+        let custom_marker = if custom_selected { "› " } else { "  " };
+        let custom_style = if custom_selected {
+            theme.dialog_selected_style().add_modifier(Modifier::BOLD)
+        } else {
+            theme.dialog_style()
+        };
+        lines.push(Line::from(Span::styled(
+            format!("{}✎ Type your own answer", custom_marker),
+            custom_style,
+        )));
+        if let Some(buffer) = &q.typing {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(format!("  > {}", buffer), theme.dialog_selected_style())));
+        }
+        lines.push(Line::from(""));
+        let hint = if item.multiple {
+            "↑/↓ 选择 · Space 多选 · Enter 确认 · Esc 取消"
+        } else {
+            "↑/↓ 选择 · Enter 确认 · Esc 取消"
+        };
+        lines.push(Line::from(Span::styled(hint, theme.muted_style())));
+
+        let title = if item.header.is_empty() {
+            format!(" Question {}/{} ", q.current + 1, q.items.len())
+        } else {
+            format!(" {} ({}/{}) ", item.header, q.current + 1, q.items.len())
+        };
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .title(title)
+                    .title_alignment(ratatui::layout::Alignment::Center)
+                    .title_style(theme.title_style())
+                    .borders(Borders::ALL)
+                    .border_style(theme.dialog_border_style()),
+            )
+            .style(theme.dialog_style())
+            .wrap(Wrap { trim: false })
     }
 
     fn create_session(&mut self) {
@@ -1517,6 +1852,12 @@ impl SessionView {
             let area = centered_rect(70, 50, frame.area());
             frame.render_widget(Clear, area);
             frame.render_widget(dialog.widget(&self.theme), area);
+        }
+
+        if let Some(question) = &self.pending_question {
+            let area = centered_rect(72, 60, frame.area());
+            frame.render_widget(Clear, area);
+            frame.render_widget(self.question_widget(question), area);
         }
     }
 
