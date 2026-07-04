@@ -2,6 +2,11 @@
 
 > 最后更新：2026-07-04
 
+## Rust 重写里程碑（openrust）
+- Phase 0 / 0.9 / 1A–1D / 1 收尾 / 2 全部完成：CLI + Provider + 14 工具 + 会话/权限/system prompt + 最小 TUI + 真实 tool loop + task 子 agent + 权限弹窗 + 富渲染（markdown/syntect/diff/sidebar）
+- `cargo test` 126 passed，零 warning；分支 `opencode-rust-tui` 已推送
+- 待启动：Phase 3（which-key/通知/主题/keymap/偏好）、Phase 4（清理 TS 代码）
+
 ## 已完成
 
 ### 基础设施
@@ -147,7 +152,7 @@
 - `cargo test` 126 passed（113 → 126）；零 warning
 
 ## 进行中
-- 继续核对 standalone TUI 的真实运行日志，确认问题来源不再混淆捕获输出与实际 app log
+- 无（Phase 2 已收尾，等待 Phase 3 启动）
 
 ## 下一步
 - Phase 3：which-key/通知/主题切换/keymap 模式/用户偏好持久化；Phase 4：清理 TS 代码
