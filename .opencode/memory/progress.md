@@ -104,18 +104,21 @@
 - `openrust` 默认进入 TUI；支持 `--prompt` 与 `--script` 预动作
 - 新增 `cli::debug::tui replay`，用于 bash 观察脚本回放过程
 - TUI 最小闭环已能连接模型、显示流式输出、顺序执行脚本输入
+- KMP 脚本回放已验证通过：非 TTY 自动降级 headless，DeepSeek `deepseek-v4-pro` 返回符合脚本要求的 KMP 实现输出
+- 运行日志已切到 `stderr +` 文件双写，文件落在 `~/.local/share/openrust/log/openrust.log`
+- TUI 结构继续拆分为 `input / dialog / render / worker` 四层，`cargo test` 已恢复通过（75 passed, 0 failed），模块边界进入稳定收尾阶段
 
 ### Rust TUI 重写 — 配置语义收口
 - 项目 `openrust.json` 覆盖全局 `config.json`；同名 provider 直接整块覆盖
 - API key 只走 vault + 配置文件，不再依赖环境变量
 - `debug config show` / `debug provider test` 已同步新语义
+- 模型配置取消隐式兜底；缺少 provider/model 时显式失败，wire model 从 `deepseek/deepseek-v4-pro` 解析为 `deepseek-v4-pro`
+- 已提交 `b6932af6a feat(rust): add tui replay flow` 与 `1eb9692de docs(openrust): document tui replay setup`；本地 `crates/openrust/openrust.json` 已忽略，避免提交明文 key
 
 ## 进行中
-- (无)
+- 继续核对 standalone TUI 的真实运行日志，确认问题来源不再混淆捕获输出与实际 app log
 
 ## 下一步
-- Phase 1B：session 管理 + system prompt 渲染
-- Phase 1C：最小 TUI（ratatui session view、input box、工具循环）
 - Phase 1D：工具-TUI 集成（question/todowrite/skill/task + permission 对话框）
 
 ## 待修复（预存问题）
