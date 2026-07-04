@@ -100,7 +100,7 @@ impl Config {
 
     /// Path to the global config (separate from TS opencode)
     pub fn global_config_path() -> PathBuf {
-        Self::global_config_dir().join("config.json")
+        crate::core::platform::PlatformPaths::detect().global_config_path()
     }
 
     /// Migrate plaintext api_keys from ProviderConfig to the encrypted vault.
@@ -182,8 +182,7 @@ impl Config {
 
     /// Get the config directory (shared by config.json and credentials.enc)
     pub fn global_config_dir() -> PathBuf {
-        let home = dirs_fallback().unwrap_or_else(|| "~".to_string());
-        PathBuf::from(&home).join(".config").join("openrust")
+        crate::core::platform::PlatformPaths::detect().config_dir().clone()
     }
 }
 
@@ -204,12 +203,6 @@ pub fn parse_model_spec(spec: &str) -> (&str, &str, Option<&str>) {
         2 => (parts[0], parts[1], None),
         _ => (parts[0], parts[1], Some(parts[2])),
     }
-}
-
-fn dirs_fallback() -> Option<String> {
-    std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .ok()
 }
 
 /// Strip // line comments and /* */ block comments from JSONC
@@ -305,5 +298,17 @@ mod tests {
         assert_eq!(parse_model_spec("deepseek/deepseek-chat"), ("deepseek", "deepseek-chat", None));
         assert_eq!(parse_model_spec("openai/gpt-5.5/high"), ("openai", "gpt-5.5", Some("high")));
         assert_eq!(parse_model_spec("gpt-4"), ("gpt-4", "gpt-4", None));
+    }
+
+    #[test]
+    fn global_config_dir_is_stable_path() {
+        let dir = Config::global_config_dir();
+        assert!(dir.ends_with("openrust"));
+    }
+
+    #[test]
+    fn global_config_path_points_to_config_json() {
+        let path = Config::global_config_path();
+        assert!(path.ends_with("config.json"));
     }
 }

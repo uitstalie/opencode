@@ -1,5 +1,6 @@
 pub mod config;
 pub mod crypto;
+pub mod platform;
 pub mod paths;
 pub mod provider;
 pub mod session;

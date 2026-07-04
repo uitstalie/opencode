@@ -28,8 +28,8 @@ impl SystemPrompt {
 
     pub fn from_config(config: &Config, provider: &ResolvedProvider, mode: Option<String>) -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")).display().to_string();
-        let home = crate::core::paths::home_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
+        let home = crate::core::platform::PlatformPaths::detect()
+            .home
             .display()
             .to_string();
         let platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);

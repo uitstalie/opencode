@@ -1,6 +1,4 @@
-//! System path utilities — protected paths, home directory, scope checks.
-//!
-//! Linux-focused for now; Windows support can be added later via cfg.
+//! System path utilities — protected paths and scope checks.
 
 use std::path::{Path, PathBuf};
 
@@ -25,10 +23,7 @@ pub const PROJECT_PROTECTED: &[&str] = &[
 // ── Home directory ──────────────────────────────────
 
 pub fn home_dir() -> Option<PathBuf> {
-    std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .ok()
-        .map(PathBuf::from)
+    crate::core::platform::home_dir()
 }
 
 // ── Protection check ────────────────────────────────
@@ -95,6 +90,14 @@ mod tests {
             let ssh = home.join(".ssh");
             assert!(is_protected_path(&ssh).is_some());
         }
+    }
+
+    #[test]
+    fn detect_platform_paths_have_required_dirs() {
+        let paths = crate::core::platform::PlatformPaths::detect();
+        assert!(paths.global_config_path().ends_with("config.json"));
+        assert!(paths.credentials_path().ends_with("credentials.enc"));
+        assert!(paths.sessions_db_path().ends_with("sessions.db"));
     }
 
     #[test]

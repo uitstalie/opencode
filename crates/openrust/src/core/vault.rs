@@ -1,6 +1,6 @@
 //! Encrypted credentials store.
 //!
-//! Stores provider API keys in `~/.config/openrust/credentials.enc`.
+//! Stores provider API keys in the platform-specific OpenRust config directory.
 //! Keys are encrypted with AES-256-GCM bound to the machine-id.
 //! File permissions are set to 0600 (owner read/write only).
 //!
@@ -116,9 +116,7 @@ impl Vault {
     // ── Internal ──────────────────────────────────────
 
     fn path() -> std::path::PathBuf {
-        use crate::core::config::Config;
-        let dir = Config::global_config_dir();
-        dir.join("credentials.enc")
+        crate::core::platform::PlatformPaths::detect().credentials_path()
     }
 
     fn load_from_file() -> anyhow::Result<HashMap<String, String>> {

@@ -4,13 +4,8 @@
 
 #![allow(dead_code)] // Phase 0: many types defined but used in later phases
 
-mod cli;
-mod core;
-mod provider;
-mod tool;
-mod tui;
-
 use clap::Parser;
+use openrust::cli;
 
 #[derive(Parser)]
 #[command(name = "openrust", version, about = "AI coding agent")]

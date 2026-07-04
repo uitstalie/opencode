@@ -170,11 +170,7 @@ impl SessionStore {
     }
 
     fn db_path() -> std::path::PathBuf {
-        crate::core::paths::home_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join(".config")
-            .join("openrust")
-            .join("sessions.db")
+        crate::core::platform::PlatformPaths::detect().sessions_db_path()
     }
 }
 

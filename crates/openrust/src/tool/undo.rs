@@ -3,7 +3,7 @@
 //! Stores file snapshots before write/edit operations.
 //! GC runs every 10 saves, purging blobs older than 24 hours.
 //!
-//! Store location: `~/.config/openrust/undo/`
+//! Store location: platform-specific OpenRust config directory.
 //! Blob naming: `{sha256_hex}` — content is the original file content.
 
 use sha2::{Digest, Sha256};
@@ -18,7 +18,7 @@ pub struct UndoStore {
 
 impl UndoStore {
     pub fn new() -> Self {
-        let dir = crate::core::config::Config::global_config_dir().join("undo");
+        let dir = crate::core::platform::PlatformPaths::detect().undo_dir();
         let _ = std::fs::create_dir_all(&dir);
         Self { dir, save_count: Mutex::new(0) }
     }

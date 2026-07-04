@@ -161,9 +161,10 @@ fn show_config(config: &Config) {
 
 fn show_paths() {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let global = Config::global_config_path();
-    let vault = Config::global_config_dir().join("credentials.enc");
+    let paths = crate::core::platform::PlatformPaths::detect();
     println!("Project config:  {}/openrust.json", cwd.display());
-    println!("Global config:   {}", global.display());
-    println!("Vault (enc):     {}", vault.display());
+    println!("Global config:   {}", paths.global_config_path().display());
+    println!("Vault (enc):     {}", paths.credentials_path().display());
+    println!("Undo store:      {}", paths.undo_dir().display());
+    println!("Sessions DB:     {}", paths.sessions_db_path().display());
 }
