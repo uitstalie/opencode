@@ -2,6 +2,7 @@ pub mod agent;
 pub mod config;
 pub mod crypto;
 pub mod paths;
+pub mod permission;
 pub mod platform;
 pub mod provider;
 pub mod session;

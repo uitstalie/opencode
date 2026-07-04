@@ -146,15 +146,7 @@ mod tests {
     async fn path_alias_resolves_relative_to_cwd() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("f.txt"), "alpha\n").unwrap();
-        let ctx = ToolContext {
-            cwd: dir.path().to_path_buf(),
-            interactive: false,
-            project_dir: None,
-            undo_store: None,
-            session_id: None,
-            store: None,
-            ask_tx: None,
-        };
+        let ctx = ToolContext::new(dir.path().to_path_buf());
         let r = EditTool
             .execute(
                 ToolParams::new(serde_json::json!({

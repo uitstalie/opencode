@@ -1,5 +1,7 @@
 pub mod config;
 pub mod agent;
+pub mod e2e;
+pub mod permission;
 pub mod prompt;
 pub mod provider;
 pub mod session;

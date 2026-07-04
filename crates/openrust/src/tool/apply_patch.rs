@@ -353,15 +353,7 @@ mod tests {
     use super::*;
 
     fn ctx(dir: &std::path::Path) -> ToolContext {
-        ToolContext {
-            cwd: dir.to_path_buf(),
-            interactive: false,
-            project_dir: None,
-            undo_store: None,
-            session_id: None,
-            store: None,
-            ask_tx: None,
-        }
+        ToolContext::new(dir.to_path_buf())
     }
 
     #[tokio::test]

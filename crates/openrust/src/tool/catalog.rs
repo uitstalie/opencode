@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use super::{
     apply_patch::ApplyPatchTool, bash::BashTool, edit::EditTool, glob::GlobTool, grep::GrepTool,
-    question::QuestionTool, read::ReadTool, rm::RmTool, skill::SkillTool, todowrite::TodoWriteTool,
-    undo::UndoStore, undo_edit::UndoEditTool, webfetch::WebFetchTool, websearch::WebSearchTool,
-    write::WriteTool,
+    question::QuestionTool, read::ReadTool, rm::RmTool, skill::SkillTool, task::TaskTool,
+    todowrite::TodoWriteTool, undo::UndoStore, undo_edit::UndoEditTool, webfetch::WebFetchTool,
+    websearch::WebSearchTool, write::WriteTool,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,6 +106,12 @@ pub const TOOL_CATALOG: &[ToolMeta] = &[
         prompt_hint: "Use to gather preferences or resolve ambiguity.",
     },
     ToolMeta {
+        name: "task",
+        category: ToolCategory::Interaction,
+        description: "Delegate a task to a sub-agent.",
+        prompt_hint: "Use for autonomous multi-step research or work.",
+    },
+    ToolMeta {
         name: "undo_edit",
         category: ToolCategory::Undo,
         description: "Restore a file from an undo blob.",
@@ -162,6 +168,7 @@ pub fn create_tool(name: &str, undo_store: Option<Arc<UndoStore>>) -> Option<Box
         "todowrite" => Some(Box::new(TodoWriteTool)),
         "skill" => Some(Box::new(SkillTool)),
         "question" => Some(Box::new(QuestionTool)),
+        "task" => Some(Box::new(TaskTool)),
         "undo_edit" => Some(Box::new(UndoEditTool { undo_store })),
         _ => None,
     }

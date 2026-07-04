@@ -87,9 +87,8 @@ mod tests {
     async fn delete_file() {
         let tmp = "/tmp/openrust_rm_file.txt";
         std::fs::write(tmp, "data").unwrap();
-        // Bypass scope check for logic test — /tmp is outside cwd
-        let mut ctx = ToolContext::new(std::env::current_dir().unwrap());
-        ctx.interactive = true;
+        // Scope the context to /tmp so the target is in-project (this tests rm logic, not permission).
+        let ctx = ToolContext::new(std::path::PathBuf::from("/tmp"));
         let r = RmTool
             .execute_checked(
                 ToolParams::new(serde_json::json!({

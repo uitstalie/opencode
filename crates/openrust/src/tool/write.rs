@@ -67,13 +67,8 @@ mod tests {
 
     fn ctx(undo: Option<Arc<UndoStore>>) -> ToolContext {
         ToolContext {
-            cwd: std::env::current_dir().unwrap(),
-            interactive: false,
-            project_dir: None,
             undo_store: undo,
-            session_id: None,
-            store: None,
-            ask_tx: None,
+            ..ToolContext::new(std::env::current_dir().unwrap())
         }
     }
 
@@ -115,15 +110,7 @@ mod tests {
     #[tokio::test]
     async fn path_alias_resolves_relative_to_cwd() {
         let dir = tempfile::tempdir().unwrap();
-        let ctx = ToolContext {
-            cwd: dir.path().to_path_buf(),
-            interactive: false,
-            project_dir: None,
-            undo_store: None,
-            session_id: None,
-            store: None,
-            ask_tx: None,
-        };
+        let ctx = ToolContext::new(dir.path().to_path_buf());
         let r = WriteTool
             .execute(
                 ToolParams::new(serde_json::json!({

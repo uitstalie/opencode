@@ -234,6 +234,15 @@ impl PendingQuestion {
     }
 }
 
+/// Interactive state for a pending permission confirmation. The worker thread is
+/// blocked on `responder` until the user chooses allow/deny.
+struct PendingPermission {
+    responder: std::sync::mpsc::Sender<bool>,
+    tool: String,
+    detail: String,
+    allow: bool,
+}
+
 struct SessionView {
     provider_name: String,
     model: String,
@@ -260,6 +269,7 @@ struct SessionView {
     reasoning_effort: Option<String>,
     dialog: Option<Dialog>,
     pending_question: Option<PendingQuestion>,
+    pending_permission: Option<PendingPermission>,
     prompt_job: Option<PromptJob>,
     shutdown: Arc<AtomicBool>,
     assistant_preview: String,
@@ -307,6 +317,7 @@ impl SessionView {
             reasoning_effort: None,
             dialog: None,
             pending_question: None,
+            pending_permission: None,
             prompt_job: None,
             shutdown: Arc::new(AtomicBool::new(false)),
             assistant_preview: String::new(),
@@ -368,6 +379,7 @@ impl SessionView {
         loop {
             self.pump_prompt_job(terminal)?;
             self.poll_ask_request();
+            self.poll_permission_request();
             self.maybe_start_next_prompt(terminal)?;
             self.status = "Enter 发送 · /exit /q /quit 退出".to_string();
             self.render_terminal(terminal)?;
@@ -378,6 +390,13 @@ impl SessionView {
             match event::read()? {
                 Event::Key(key) => {
                     if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
+                    if self.pending_permission.is_some() {
+                        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                            break;
+                        }
+                        self.handle_permission_key(key);
                         continue;
                     }
                     if self.pending_question.is_some() {
@@ -1124,6 +1143,87 @@ impl SessionView {
         }
     }
 
+    fn poll_permission_request(&mut self) {
+        if self.pending_permission.is_some() {
+            return;
+        }
+        let request = {
+            let Some(job) = &self.prompt_job else {
+                return;
+            };
+            match job.permission_receiver.try_recv() {
+                Ok(request) => request,
+                Err(_) => return,
+            }
+        };
+        self.pending_permission = Some(PendingPermission {
+            responder: request.responder,
+            tool: request.tool,
+            detail: request.detail,
+            allow: false,
+        });
+        self.status = "permission: awaiting your decision".to_string();
+    }
+
+    fn handle_permission_key(&mut self, key: event::KeyEvent) {
+        let decision = {
+            let Some(permission) = self.pending_permission.as_mut() else {
+                return;
+            };
+            match key.code {
+                KeyCode::Char('a') | KeyCode::Char('y') => Some(true),
+                KeyCode::Char('d') | KeyCode::Char('n') | KeyCode::Esc => Some(false),
+                KeyCode::Left | KeyCode::Right | KeyCode::Tab => {
+                    permission.allow = !permission.allow;
+                    None
+                }
+                KeyCode::Enter => Some(permission.allow),
+                _ => None,
+            }
+        };
+        if let Some(allow) = decision {
+            if let Some(permission) = self.pending_permission.take() {
+                let _ = permission.responder.send(allow);
+            }
+            self.status = if allow { "permission: allowed".to_string() } else { "permission: denied".to_string() };
+        }
+    }
+
+    fn permission_widget(&self, permission: &PendingPermission) -> Paragraph<'static> {
+        let theme = &self.theme;
+        let allow_style = if permission.allow {
+            theme.dialog_selected_style().add_modifier(Modifier::BOLD)
+        } else {
+            theme.dialog_style()
+        };
+        let deny_style = if permission.allow {
+            theme.dialog_style()
+        } else {
+            theme.dialog_selected_style().add_modifier(Modifier::BOLD)
+        };
+        let lines = vec![
+            Line::from(Span::styled(format!("{}: {}", permission.tool, permission.detail), theme.muted_style())),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  [A] Allow  ", allow_style),
+                Span::styled("  [D] Deny  ", deny_style),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled("A/Y 允许 · D/N/Esc 拒绝 · ←/→ 切换 · Enter 确认", theme.muted_style())),
+        ];
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .title(" Permission ")
+                    .title_alignment(ratatui::layout::Alignment::Center)
+                    .title_style(theme.title_style())
+                    .borders(Borders::ALL)
+                    .border_style(theme.dialog_border_style()),
+            )
+            .style(theme.dialog_style())
+            .wrap(Wrap { trim: false })
+    }
+
     fn poll_ask_request(&mut self) {
         if self.pending_question.is_some() {
             return;
@@ -1858,6 +1958,12 @@ impl SessionView {
             let area = centered_rect(72, 60, frame.area());
             frame.render_widget(Clear, area);
             frame.render_widget(self.question_widget(question), area);
+        }
+
+        if let Some(permission) = &self.pending_permission {
+            let area = centered_rect(60, 32, frame.area());
+            frame.render_widget(Clear, area);
+            frame.render_widget(self.permission_widget(permission), area);
         }
     }
 

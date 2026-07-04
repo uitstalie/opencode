@@ -8,12 +8,13 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 
 use crate::core::{provider, provider::RequestOptions, provider::StreamChunk, provider::ToolDef, provider::ToolFunction};
 use crate::core::session::SessionStore;
-use crate::tool::{AskRequest, ToolContext, ToolParams};
+use crate::tool::{AskRequest, PermissionRequest, ToolContext};
 use crate::tool::catalog;
 
 pub(super) struct PromptJob {
     pub(super) receiver: mpsc::Receiver<PromptEvent>,
     pub(super) ask_receiver: mpsc::Receiver<AskRequest>,
+    pub(super) permission_receiver: mpsc::Receiver<PermissionRequest>,
 }
 
 pub(super) enum PromptEvent {
@@ -81,6 +82,7 @@ pub(super) fn spawn_prompt_worker(
 ) -> PromptJob {
     let (tx, rx) = mpsc::channel();
     let (ask_tx, ask_rx) = mpsc::channel::<AskRequest>();
+    let (permission_tx, permission_rx) = mpsc::channel::<PermissionRequest>();
     std::thread::spawn(move || {
         let rt = match tokio::runtime::Runtime::new() {
             Ok(rt) => rt,
@@ -107,11 +109,14 @@ pub(super) fn spawn_prompt_worker(
             let tool_ctx = ToolContext {
                 cwd,
                 interactive,
-                project_dir: None,
-                undo_store: None,
                 session_id,
                 store,
                 ask_tx: if interactive { Some(ask_tx) } else { None },
+                permission_tx: if interactive { Some(permission_tx) } else { None },
+                llm: Some(Arc::clone(&llm)),
+                model: Some(model.clone()),
+                reasoning_effort: reasoning_effort.clone(),
+                ..ToolContext::new(std::path::PathBuf::new())
             };
 
             loop {
@@ -160,7 +165,7 @@ pub(super) fn spawn_prompt_worker(
                             let Some((_, name, args)) = pending_tools.iter().find(|(call_id, _, _)| call_id == &id).cloned() else {
                                 continue;
                             };
-                            let tool_output = run_tool(&name, &args, &tool_ctx).await;
+                            let tool_output = crate::tool::run_tool(&name, &args, &tool_ctx).await;
                             let _ = tx.send(PromptEvent::ToolComplete {
                                 id: id.clone(),
                                 name: name.clone(),
@@ -233,13 +238,6 @@ pub(super) fn spawn_prompt_worker(
     PromptJob {
         receiver: rx,
         ask_receiver: ask_rx,
+        permission_receiver: permission_rx,
     }
-}
-
-async fn run_tool(name: &str, args: &str, ctx: &ToolContext) -> String {
-    let Some(tool) = catalog::create_tool(name, None) else {
-        return format!("Unknown tool: {}", name);
-    };
-    let parsed = serde_json::from_str(args).unwrap_or_else(|_| serde_json::json!({"input": args}));
-    tool.execute_checked(ToolParams::new(parsed), ctx).await.into_text()
 }

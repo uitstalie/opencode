@@ -24,6 +24,16 @@ pub enum DebugCmd {
         #[command(subcommand)]
         cmd: debug::task::Cmd,
     },
+    /// Permission scope checks
+    Permission {
+        #[command(subcommand)]
+        cmd: debug::permission::Cmd,
+    },
+    /// End-to-end prompt → tool loop
+    E2e {
+        #[command(subcommand)]
+        cmd: debug::e2e::Cmd,
+    },
     /// Configuration
     Config {
         #[command(subcommand)]
@@ -57,6 +67,8 @@ pub fn run_debug(cmd: DebugCmd) -> anyhow::Result<()> {
         DebugCmd::Tool { cmd } => debug::tool::run(cmd),
         DebugCmd::Agent { cmd } => debug::agent::run(cmd),
         DebugCmd::Task { cmd } => debug::task::run(cmd),
+        DebugCmd::Permission { cmd } => debug::permission::run(cmd),
+        DebugCmd::E2e { cmd } => debug::e2e::run(cmd),
         DebugCmd::Config { cmd } => debug::config::run(cmd),
         DebugCmd::Session { cmd } => debug::session::run(cmd),
         DebugCmd::Prompt { cmd } => debug::prompt::run(cmd),

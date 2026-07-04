@@ -27,6 +27,7 @@ pub mod read;
 pub mod rm;
 pub mod shell;
 pub mod skill;
+pub mod task;
 pub mod todowrite;
 pub mod undo;
 pub mod undo_edit;
@@ -153,6 +154,14 @@ pub struct AskRequest {
     pub responder: std::sync::mpsc::Sender<Vec<String>>,
 }
 
+/// A request to confirm a permission-gated tool invocation. The tool sends this
+/// over `ToolContext.permission_tx` and blocks on `responder` (true = allow).
+pub struct PermissionRequest {
+    pub tool: String,
+    pub detail: String,
+    pub responder: std::sync::mpsc::Sender<bool>,
+}
+
 #[derive(Clone)]
 pub struct ToolContext {
     pub cwd: PathBuf,
@@ -166,6 +175,12 @@ pub struct ToolContext {
     /// Channel for tools that need to ask the user a question (question).
     /// `None` in non-interactive contexts.
     pub ask_tx: Option<std::sync::mpsc::Sender<AskRequest>>,
+    /// Channel for interactive permission confirmation. `None` disables prompts.
+    pub permission_tx: Option<std::sync::mpsc::Sender<PermissionRequest>>,
+    /// LLM access for tools that run a nested agent loop (task).
+    pub llm: Option<Arc<dyn crate::core::provider::LlmProvider>>,
+    pub model: Option<String>,
+    pub reasoning_effort: Option<String>,
 }
 
 impl ToolContext {
@@ -179,6 +194,10 @@ impl ToolContext {
             session_id: None,
             store: None,
             ask_tx: None,
+            permission_tx: None,
+            llm: None,
+            model: None,
+            reasoning_effort: None,
         }
     }
 
@@ -210,37 +229,32 @@ pub enum Permission {
     Ask(String),
 }
 
-/// Check if a tool is allowed. Scope-restricted tools check is_within_project.
+/// Check if a tool is allowed. Delegates to the core permission policy.
 pub fn check_permission(
     tool_name: &str,
     params: &serde_json::Value,
     ctx: &ToolContext,
 ) -> Permission {
-    // Tools that can write/delete outside project need scope check
-    let scope_restricted = matches!(tool_name, "rm" | "write" | "edit" | "bash" | "apply_patch");
-
-    if scope_restricted {
-        let target = params["target"]
-            .as_str()
-            .or_else(|| params["filePath"].as_str())
-            .or_else(|| params["workdir"].as_str())
-            .unwrap_or("");
-
-        if !target.is_empty() && !is_within_project(target, ctx) {
-            return if ctx.interactive {
-                Permission::Ask(format!("{} operates outside project scope", tool_name))
-            } else {
-                Permission::Deny(format!(
-                    "{}: '{}' is outside the project scope ({}).",
-                    tool_name,
-                    target,
-                    ctx.project_root().display()
-                ))
-            };
-        }
+    match crate::core::permission::evaluate(
+        tool_name,
+        crate::core::permission::target_path(params),
+        ctx.project_root(),
+        ctx.interactive,
+    ) {
+        crate::core::permission::Decision::Allow => Permission::Allow,
+        crate::core::permission::Decision::Deny(reason) => Permission::Deny(reason),
+        crate::core::permission::Decision::Ask(reason) => Permission::Ask(reason),
     }
+}
 
-    Permission::Allow
+/// Execute a tool by name against a context (parsing raw JSON args), returning
+/// its text output. Shared by the TUI worker and the nested-agent runner.
+pub(crate) async fn run_tool(name: &str, args: &str, ctx: &ToolContext) -> String {
+    let Some(tool) = catalog::create_tool(name, ctx.undo_store.clone()) else {
+        return format!("Unknown tool: {}", name);
+    };
+    let parsed = serde_json::from_str(args).unwrap_or_else(|_| serde_json::json!({ "input": args }));
+    tool.execute_checked(ToolParams::new(parsed), ctx).await.into_text()
 }
 
 // ── Tool Trait ─────────────────────────────────────
@@ -258,14 +272,24 @@ pub trait Tool: Send + Sync {
         match check_permission(self.name(), &raw, ctx) {
             Permission::Allow => self.execute(params, ctx).await,
             Permission::Deny(reason) => ToolResult::error(reason),
-            Permission::Ask(_reason) => {
-                // Debug mode: allow with warning note
-                let result = self.execute(params, ctx).await;
-                match result {
-                    ToolResult::Text(t) => {
-                        ToolResult::text(format!("[auto-allowed in debug mode] {}", t))
-                    }
-                    other => other,
+            Permission::Ask(reason) => {
+                let Some(permission_tx) = &ctx.permission_tx else {
+                    return ToolResult::error(format!("{}: {} (denied)", self.name(), reason));
+                };
+                let (responder, decision_rx) = std::sync::mpsc::channel();
+                if permission_tx
+                    .send(PermissionRequest {
+                        tool: self.name().to_string(),
+                        detail: reason.clone(),
+                        responder,
+                    })
+                    .is_err()
+                {
+                    return ToolResult::error(format!("{}: permission UI unavailable", self.name()));
+                }
+                match decision_rx.recv() {
+                    Ok(true) => self.execute(params, ctx).await,
+                    _ => ToolResult::error(format!("{}: denied by user", self.name())),
                 }
             }
         }
@@ -343,6 +367,7 @@ pub fn standard_registry(undo_store: Option<Arc<UndoStore>>) -> ToolRegistry {
     reg.register(todowrite::TodoWriteTool);
     reg.register(skill::SkillTool);
     reg.register(question::QuestionTool);
+    reg.register(task::TaskTool);
     reg.register(undo_edit::UndoEditTool { undo_store });
     reg
 }

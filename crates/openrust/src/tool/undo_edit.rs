@@ -64,13 +64,8 @@ mod tests {
     use super::*;
     fn ctx(store: Arc<UndoStore>) -> ToolContext {
         ToolContext {
-            cwd: std::env::current_dir().unwrap(),
-            interactive: false,
-            project_dir: None,
             undo_store: Some(store),
-            session_id: None,
-            store: None,
-            ask_tx: None,
+            ..ToolContext::new(std::env::current_dir().unwrap())
         }
     }
 
