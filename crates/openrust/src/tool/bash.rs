@@ -1,4 +1,4 @@
-//! Bash tool — shell command execution with timeout and cwd.
+//! Shell tool — command execution with timeout and cwd.
 
 use serde_json::Value;
 use std::process::Stdio;
@@ -12,7 +12,7 @@ pub struct BashTool;
 impl Tool for BashTool {
     fn name(&self) -> &'static str { "bash" }
     fn description(&self) -> &'static str {
-        "Execute a shell command. Use for git, build, and system operations. Respects timeout."
+        crate::tool::shell::shell_tool_prompt(crate::tool::shell::detect_shell_kind())
     }
     fn parameters(&self) -> Value { serde_json::json!({
         "type": "object",
@@ -30,10 +30,13 @@ impl Tool for BashTool {
         let timeout_ms = p.u64_or("timeout", 120_000);
         let cwd_str = ctx.cwd.to_string_lossy().to_string();
         let workdir = p.opt_str("workdir").unwrap_or(&cwd_str);
+        let shell_kind = crate::tool::shell::detect_shell_kind();
+        let (shell_bin, shell_args) = crate::tool::shell::shell_command(shell_kind);
 
         let mut child = try_tool!(
-            std::process::Command::new("bash")
-                .arg("-c").arg(cmd_str)
+            std::process::Command::new(shell_bin)
+                .args(shell_args)
+                .arg(cmd_str)
                 .current_dir(workdir)
                 .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
                 .env_remove("LD_PRELOAD").env_remove("LD_LIBRARY_PATH")

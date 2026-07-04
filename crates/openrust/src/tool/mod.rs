@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+pub mod catalog;
 pub use undo::UndoStore;
 
 pub mod bash;
@@ -22,6 +23,7 @@ pub mod glob;
 pub mod grep;
 pub mod read;
 pub mod rm;
+pub mod shell;
 pub mod undo;
 pub mod undo_edit;
 pub mod webfetch;
@@ -281,17 +283,5 @@ pub fn standard_registry(undo_store: Option<Arc<UndoStore>>) -> ToolRegistry {
 
 /// Factory: get a tool by name (for CLI debug usage).
 pub fn create_tool(name: &str, undo_store: Option<Arc<UndoStore>>) -> Option<Box<dyn Tool>> {
-    match name {
-        "read" => Some(Box::new(read::ReadTool)),
-        "write" => Some(Box::new(write::WriteTool)),
-        "edit" => Some(Box::new(edit::EditTool)),
-        "rm" => Some(Box::new(rm::RmTool)),
-        "bash" => Some(Box::new(bash::BashTool)),
-        "glob" => Some(Box::new(glob::GlobTool)),
-        "grep" => Some(Box::new(grep::GrepTool)),
-        "webfetch" => Some(Box::new(webfetch::WebFetchTool)),
-        "websearch" => Some(Box::new(websearch::WebSearchTool)),
-        "undo_edit" => Some(Box::new(undo_edit::UndoEditTool { undo_store })),
-        _ => None,
-    }
+    catalog::create_tool(name, undo_store)
 }

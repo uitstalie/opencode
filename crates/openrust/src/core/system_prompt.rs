@@ -14,12 +14,13 @@ pub struct SystemPrompt {
 
 impl SystemPrompt {
     pub fn render(&self) -> String {
+        let shell_kind = crate::tool::shell::detect_shell_kind();
         let mut sections = Vec::new();
         sections.push(render_section("constraint", &render_constraint()));
         sections.push(render_section("identity", &render_identity(&self.provider, &self.model, &self.mode)));
         sections.push(render_section("environment", &render_environment(self)));
         sections.push(render_section("instructions", &render_instructions(&self.config_path)));
-        sections.push(render_section("capabilities", &render_capabilities()));
+        sections.push(render_section("capabilities", &render_capabilities(shell_kind)));
         sections.push(render_section("style", &render_style()));
         sections.push(render_section("memory", &render_memory()));
         sections.push(render_section("nudge", "[CONSTRAINT NUDGE] memory_read(决策前) → compact_check"));
@@ -94,16 +95,31 @@ fn render_instructions(path: &str) -> String {
     .join("\n\n")
 }
 
-fn render_capabilities() -> String {
-    [
+fn render_capabilities(shell_kind: crate::tool::shell::ShellKind) -> String {
+    let mut lines = vec![
         "## Skills".to_string(),
         "- customize-opencode: opencode 自身配置参考".to_string(),
         "- write-skills: SKILL.md 格式与陷阱".to_string(),
         String::new(),
         "## Tools".to_string(),
         "- debug: provider / tool / config / vault / session / prompt".to_string(),
-    ]
-    .join("\n")
+        format!("- shell: {}", crate::tool::shell::shell_environment_hint(shell_kind)),
+    ];
+
+    lines.extend(crate::tool::catalog::TOOL_CATALOG.iter().map(|tool| {
+        format!("- {} [{}]: {}", tool.name, tool_category_label(tool.category), tool.prompt_hint)
+    }));
+
+    lines.join("\n")
+}
+
+fn tool_category_label(category: crate::tool::catalog::ToolCategory) -> &'static str {
+    match category {
+        crate::tool::catalog::ToolCategory::Filesystem => "fs",
+        crate::tool::catalog::ToolCategory::Shell => "shell",
+        crate::tool::catalog::ToolCategory::Network => "net",
+        crate::tool::catalog::ToolCategory::Undo => "undo",
+    }
 }
 
 fn render_style() -> String {

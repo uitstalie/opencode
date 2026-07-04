@@ -1,5 +1,5 @@
 use clap::Subcommand;
-use crate::tool::{ToolContext, ToolParams, create_tool};
+use crate::tool::{catalog, ToolContext, ToolParams, create_tool};
 
 #[derive(Subcommand)]
 pub enum Cmd {
@@ -23,15 +23,16 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
 
     match cmd {
         Cmd::List => {
-            let tool_names = [
-                "read", "write", "edit", "rm", "bash", "glob", "grep",
-                "webfetch", "websearch", "undo_edit",
-            ];
+            let tool_names = catalog::tool_names();
             println!("Available tools ({}):", tool_names.len());
             for name in tool_names {
-                if let Some(tool) = create_tool(name, None) {
-                    println!("  {:12} {}", name, tool.description());
+                if let Some(meta) = catalog::tool_meta(name) {
+                    println!("  {:12} [{}] {}", name, format_category(meta.category), meta.description);
                 }
+            }
+            println!();
+            for (category, names) in catalog::registry_category_names() {
+                println!("{:>8}: {}", format_category(category), names.join(", "));
             }
             Ok(())
         }
@@ -56,5 +57,14 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
             println!("{}", serde_json::to_string_pretty(&def)?);
             Ok(())
         }
+    }
+}
+
+fn format_category(category: catalog::ToolCategory) -> &'static str {
+    match category {
+        catalog::ToolCategory::Filesystem => "fs",
+        catalog::ToolCategory::Shell => "shell",
+        catalog::ToolCategory::Network => "net",
+        catalog::ToolCategory::Undo => "undo",
     }
 }
