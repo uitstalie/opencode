@@ -137,11 +137,20 @@
 - 新增 debug 命令：`permission check <tool> <path>`（allow/deny/ask）、`e2e run "<prompt>"`（复用 run_agent 跑完整循环）
 - 14 工具齐全（补 task）；`cargo test` 113 passed；零 warning
 
+### Rust TUI 重写 — Phase 2（富渲染）
+- 技术选型（用户确认）：语法高亮用 `syntect`（纯 Rust，fancy-regex，无 C 编译）而非 tree-sitter；Markdown 自研 `pulldown-cmark → ratatui`；Diff 用 `similar` last-turn（不接 git）
+- `tui/markdown.rs`：pulldown-cmark 解析 → 标题/粗斜体/行内代码/围栏代码块/有序无序列表/引用/分隔线 → ratatui Line/Span；assistant 消息经 markdown 渲染
+- `tui/highlight.rs`：syntect 代码块着色，语言 token/扩展名/名称三级匹配，未知回退纯文本；主题 base16-ocean.dark
+- `tui/diff.rs`：`render_diff`（着色）+ `unified_diff`（文本），edit/write 完成后 session 内联显示统一 diff，`/diff` 弹出彩色 diff overlay
+- `tui/sidebar.rs`：walkdir 深度受限文件树（跳过 .git/target/node_modules 等）+ notify 实时刷新（`poll_refresh`）；`/files` 切换左侧栏
+- 新增 slash 命令 `/files`(`/tree`)、`/diff`；Theme 加 diff/sidebar 样式
+- `cargo test` 126 passed（113 → 126）；零 warning
+
 ## 进行中
 - 继续核对 standalone TUI 的真实运行日志，确认问题来源不再混淆捕获输出与实际 app log
 
 ## 下一步
-- Phase 2：Markdown 渲染 + 语法高亮（tree-sitter）+ Diff 查看器 + 文件树侧边栏
+- Phase 3：which-key/通知/主题切换/keymap 模式/用户偏好持久化；Phase 4：清理 TS 代码
 
 ## 待修复（预存问题）
 - core: DatabaseMigration 超时、LocationServiceMap 隔离、Npm.add 超时
