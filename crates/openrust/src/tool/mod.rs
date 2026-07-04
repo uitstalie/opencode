@@ -17,6 +17,7 @@ use std::sync::Arc;
 pub mod catalog;
 pub use undo::UndoStore;
 
+pub mod apply_patch;
 pub mod bash;
 pub mod edit;
 pub mod glob;
@@ -196,7 +197,7 @@ pub fn check_permission(
     ctx: &ToolContext,
 ) -> Permission {
     // Tools that can write/delete outside project need scope check
-    let scope_restricted = matches!(tool_name, "rm" | "write" | "edit" | "bash");
+    let scope_restricted = matches!(tool_name, "rm" | "write" | "edit" | "bash" | "apply_patch");
 
     if scope_restricted {
         let target = params["target"]
@@ -312,6 +313,7 @@ pub fn standard_registry(undo_store: Option<Arc<UndoStore>>) -> ToolRegistry {
     reg.register(read::ReadTool);
     reg.register(write::WriteTool);
     reg.register(edit::EditTool);
+    reg.register(apply_patch::ApplyPatchTool);
     reg.register(rm::RmTool);
     reg.register(bash::BashTool);
     reg.register(glob::GlobTool);

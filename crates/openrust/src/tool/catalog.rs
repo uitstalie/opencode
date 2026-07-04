@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use super::{
-    bash::BashTool, edit::EditTool, glob::GlobTool, grep::GrepTool, read::ReadTool, rm::RmTool,
-    undo::UndoStore, undo_edit::UndoEditTool, webfetch::WebFetchTool, websearch::WebSearchTool,
-    write::WriteTool,
+    apply_patch::ApplyPatchTool, bash::BashTool, edit::EditTool, glob::GlobTool, grep::GrepTool,
+    read::ReadTool, rm::RmTool, undo::UndoStore, undo_edit::UndoEditTool, webfetch::WebFetchTool,
+    websearch::WebSearchTool, write::WriteTool,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +42,12 @@ pub const TOOL_CATALOG: &[ToolMeta] = &[
         category: ToolCategory::Filesystem,
         description: "Edit a file by replacing exact text.",
         prompt_hint: "Use for surgical replacements.",
+    },
+    ToolMeta {
+        name: "apply_patch",
+        category: ToolCategory::Filesystem,
+        description: "Apply an add/update/delete patch across files.",
+        prompt_hint: "Use for multi-file or multi-hunk edits in one call.",
     },
     ToolMeta {
         name: "rm",
@@ -125,6 +131,7 @@ pub fn create_tool(name: &str, undo_store: Option<Arc<UndoStore>>) -> Option<Box
         "read" => Some(Box::new(ReadTool)),
         "write" => Some(Box::new(WriteTool)),
         "edit" => Some(Box::new(EditTool)),
+        "apply_patch" => Some(Box::new(ApplyPatchTool)),
         "rm" => Some(Box::new(RmTool)),
         "bash" => Some(Box::new(BashTool)),
         "glob" => Some(Box::new(GlobTool)),
