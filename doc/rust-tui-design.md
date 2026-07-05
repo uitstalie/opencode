@@ -667,23 +667,32 @@ opencode debug e2e "创建 hello.txt 写入 Hello World"
 - [ ] `tui/builtins/diff.rs`：Git diff + last turn diff，分屏/统一视图
 - [ ] `tui/builtins/sidebar.rs`：文件树（notify 实时更新）
 
-### Phase 3: 内置插件 + 主题 + 打磨（4-6 天）
+### Phase 3: 主线能力补齐 + 交互层打磨（4-6 天）
 
+- [ ] 欢迎界面：最近会话、配置/provider 状态、快速新建/恢复入口（OpenRust 不采用 `--mini`）
 - [ ] `tui/builtins/which_key.rs`：快捷键帮助
 - [ ] `tui/builtins/notify.rs`：通知系统
 - [ ] `tui/builtins/theme.rs`：主题切换
-- [ ] `tui/theme/`：6 个内置主题 + ANSI palette
+- [ ] `tui/theme/`：内置主题 + ANSI palette 收口
 - [ ] `tui/keymap/`：Normal/Insert/Command 模式
 - [ ] `tui/config/kv.rs`：sled 持久化用户偏好
-- [ ] 错误处理完善（重连、超时、provider 切换）
-- [ ] 首页 session 列表
+- [ ] 错误处理完善（重连、超时、provider 切换、交互降级）
+- [ ] 首页 session 列表 / 最近会话入口 / 启动欢迎状态
 
-### Phase 4: 清理 TS 代码（2-3 天）
+### Phase 4: TS 退场门槛定义 + 迁移收口（2-3 天）
 
-- [ ] 移除 `packages/tui/`
-- [ ] 移除 `packages/opencode/`
-- [ ] 更新 Makefile：单一 `cargo build --release`
-- [ ] 更新 AGENTS.md
+- [ ] 定义 `packages/tui/` / `packages/opencode/` 的 Rust 替代完成矩阵
+- [ ] 核对 CLI / TUI / tool loop / prompt / session / permission / memory / skill 的迁移验收口径
+- [ ] 更新构建与部署文档：默认 `cargo build --release`，明确保留的非 Rust 辅助资产
+- [ ] 形成删除门槛清单，而不是直接删除 TS 代码
+
+### Phase 5: Phase 1 / 2 主线对齐审计（2-4 天）
+
+- [ ] 以最新 `dev-ai-release` 为基线，列出 Rust Phase 1 / 2 已实现能力与主线现状的差距矩阵
+- [ ] 核对 `session / prompt / compaction / tool registry / skill / memory` 语义是否仍与主线一致
+- [ ] 核对 TUI 数据通路与主线的 event stream / location 相关变化，判断是否需要回补基础架构
+- [ ] 为差距项打标签：`补测试即可` / `补行为即可` / `需要重新设计`
+- [ ] 产出对齐结论：哪些可并入 Phase 3，哪些必须成为删除 TS 代码前置条件
 
 **总预估**: 20-29 天
 

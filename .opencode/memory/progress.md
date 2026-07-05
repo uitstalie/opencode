@@ -4,8 +4,8 @@
 
 ## Rust 重写里程碑（openrust）
 - Phase 0 / 0.9 / 1A–1D / 1 收尾 / 2 全部完成：CLI + Provider + 14 工具 + 会话/权限/system prompt + 最小 TUI + 真实 tool loop + task 子 agent + 权限弹窗 + 富渲染（markdown/syntect/diff/sidebar）
-- `cargo test` 126 passed，零 warning；分支 `opencode-rust-tui` 已推送
-- 待启动：Phase 3（which-key/通知/主题/keymap/偏好）、Phase 4（清理 TS 代码）
+- `cargo test` 136 passed，零 warning；分支 `opencode-rust-tui` 已推送
+- 路线图已重估：Phase 3 改为主线能力补齐 + 交互层打磨，Phase 4 改为 TS 退场门槛定义 + 迁移收口，新增 Phase 5 用于对齐 Phase 1 / 2 与最新 `dev-ai-release`
 
 ## 已完成
 
@@ -152,10 +152,17 @@
 - `cargo test` 126 passed（113 → 126）；零 warning
 
 ## 进行中
-- 无（Phase 2 已收尾，等待 Phase 3 启动）
+- Phase 5 已启动：以最新 `dev-ai-release` 为基线审计 Phase 1 / 2 语义差距，首版矩阵见 `doc/openrust-phase5-alignment.md`
 
 ## 下一步
-- Phase 3：which-key/通知/主题切换/keymap 模式/用户偏好持久化；Phase 4：清理 TS 代码
+- Phase 3：主线能力补齐（不做 `--mini`，改做欢迎界面 / 最近会话 / 配置状态 / session 入口）+ which-key/通知/主题/keymap/偏好
+- Phase 4：先定义 TS 退场门槛和迁移验收矩阵，再决定删除 `packages/tui` / `packages/opencode`
+- Phase 5：专项审计 Phase 1 / 2 与最新 `dev-ai-release` 的语义差距，决定哪些回补项前置到 Phase 3/4
+- Phase 5A：优先补欢迎界面、agent step limits、read/web/skill failure bounds；Phase 5B 再处理 location/event stream、compaction、prompt transform 架构差距
+- 欢迎界面重构：Home 从“最近会话/方向键菜单”改为更接近 opencode 的居中 logo + prompt 首屏；普通输入直接进入 prompt，Enter 创建会话并提交，`/connect` / `/models` 在 Home 直接打开配置流，不再先创建 session；Home 不再吞方向键或普通输入；零配置目录持续显示缺 provider/model/key 的可见提示；发送路径缺配置时留在界面内提示，不再直接退出；清理旧菜单式 Home 残留方法；`cargo test` 140 passed
+- `/connect` 配置流增强：保留原有命令行形式 `/connect add <provider> <base-url> <model> [wire-model]`，并新增交互式向导入口（`/connect add` 无参数或 Connect 对话框中的 “Add custom provider”）；可逐步输入 provider、base URL、model、wire model、api key，自定义配置不再依赖单行长命令；`cargo test` 141 passed
+- Home 渲染重构：不再复用 Session/Input 主布局并通过拼接区域伪装成首页，而是改为真正独立的 Home 渲染路径；光标定位绑定到真实 Prompt 区，不再手算假位置；窗口缩放按独立布局重新计算；清理旧 Home 伪布局残留；`cargo test` 141 passed
+- Home 交互面板化：Home 模式下的 dialog/question/permission/text_input 不再以小型 centered overlay 浮在首页之上，而是占据 Home 主面板区域渲染，避免继续呈现“首页上悬浮一个主界面弹窗”的混合观感；`cargo test` 141 passed
 
 ## 待修复（预存问题）
 - core: DatabaseMigration 超时、LocationServiceMap 隔离、Npm.add 超时
