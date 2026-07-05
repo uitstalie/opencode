@@ -1,6 +1,6 @@
 //! Read file tool.
 
-use crate::tool::{resolve_path, Tool, ToolContext, ToolParams, ToolResult};
+use crate::tool::{Tool, ToolContext, ToolParams, ToolResult, resolve_path};
 use crate::try_tool;
 use serde_json::Value;
 use std::path::Path;
@@ -29,7 +29,10 @@ impl Tool for ReadTool {
     }
 
     async fn execute(&self, p: ToolParams, _ctx: &ToolContext) -> ToolResult {
-        let path = p.opt_str("path").or_else(|| p.opt_str("filePath")).unwrap_or("");
+        let path = p
+            .opt_str("path")
+            .or_else(|| p.opt_str("filePath"))
+            .unwrap_or("");
         if path.is_empty() {
             return ToolResult::error("Missing required parameter: path");
         }
@@ -43,7 +46,11 @@ impl Tool for ReadTool {
                     .filter_map(|entry| entry.ok())
                     .map(|entry| {
                         let name = entry.file_name().to_string_lossy().to_string();
-                        if entry.path().is_dir() { format!("{}/", name) } else { name }
+                        if entry.path().is_dir() {
+                            format!("{}/", name)
+                        } else {
+                            name
+                        }
                     })
                     .collect::<Vec<_>>(),
                 Err(err) => return ToolResult::error(format!("Cannot read {}", err)),
@@ -65,7 +72,10 @@ impl Tool for ReadTool {
                 .collect::<Vec<_>>()
                 .join("\n");
             if end < entries.len() {
-                out.push_str(&format!("\n... ({} entries remaining)", entries.len() - end));
+                out.push_str(&format!(
+                    "\n... ({} entries remaining)",
+                    entries.len() - end
+                ));
             }
             return ToolResult::text(out);
         }

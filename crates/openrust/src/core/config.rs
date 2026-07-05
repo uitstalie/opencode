@@ -351,9 +351,9 @@ mod tests {
         fs::write(
             &global_path,
             r#"{
-  "model": "deepseek/global-model",
+  "model": "overlay-provider/global-model",
   "provider": {
-    "deepseek": {
+    "overlay-provider": {
       "baseURL": "https://global.example/v1",
       "models": {"global-model": {"name": "global-model"}}
     }
@@ -364,9 +364,9 @@ mod tests {
         fs::write(
             &project_path,
             r#"{
-  "model": "deepseek/project-model",
+  "model": "overlay-provider/project-model",
   "provider": {
-    "deepseek": {
+    "overlay-provider": {
       "baseURL": "https://project.example/v1",
       "api_key": "project-key",
       "models": {"project-model": {"name": "project-model"}}
@@ -377,9 +377,12 @@ mod tests {
         .unwrap();
 
         let config = Config::load(&dir.path().to_path_buf()).unwrap();
-        let provider = config.get_provider("deepseek").unwrap();
+        let provider = config.get_provider("overlay-provider").unwrap();
 
-        assert_eq!(config.model.as_deref(), Some("deepseek/project-model"));
+        assert_eq!(
+            config.model.as_deref(),
+            Some("overlay-provider/project-model")
+        );
         assert_eq!(
             provider.base_url.as_deref(),
             Some("https://project.example/v1")
@@ -391,10 +394,10 @@ mod tests {
     #[test]
     fn provider_api_key_falls_back_to_config_value() {
         let config = Config {
-            model: Some("deepseek/deepseek-v4-pro".to_string()),
+            model: Some("config-only-provider/deepseek-v4-pro".to_string()),
             mode: None,
             provider: HashMap::from([(
-                "deepseek".to_string(),
+                "config-only-provider".to_string(),
                 ProviderConfig {
                     api_key: Some("config-key".to_string()),
                     base_url: Some("https://example/v1".to_string()),
@@ -404,7 +407,7 @@ mod tests {
             )]),
         };
 
-        let provider = config.get_provider("deepseek").unwrap();
+        let provider = config.get_provider("config-only-provider").unwrap();
         assert_eq!(provider.api_key.as_deref(), Some("config-key"));
     }
 

@@ -54,7 +54,9 @@ pub(super) fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         })),
         "/session" => Some(SlashCommand::Session(parts.map(str::to_string).collect())),
         "/agent" => Some(SlashCommand::Agent(parts.map(str::to_string).collect())),
-        "/compact" | "/compaction" => Some(SlashCommand::Compact(parts.map(str::to_string).collect())),
+        "/compact" | "/compaction" => {
+            Some(SlashCommand::Compact(parts.map(str::to_string).collect()))
+        }
         "/task" => Some(SlashCommand::Task(parts.map(str::to_string).collect())),
         "/connect" => Some(SlashCommand::Connect(parts.map(str::to_string).collect())),
         "/models" | "/model" => Some(SlashCommand::Models(parts.map(str::to_string).collect())),

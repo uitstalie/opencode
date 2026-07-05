@@ -51,7 +51,10 @@ pub fn evaluate(tool: &str, target: &str, project_root: &Path, interactive: bool
         return Decision::Allow;
     }
     if interactive {
-        Decision::Ask(format!("{} operates outside project scope: {}", tool, target))
+        Decision::Ask(format!(
+            "{} operates outside project scope: {}",
+            tool, target
+        ))
     } else {
         Decision::Deny(format!(
             "{}: '{}' is outside the project scope ({}).",
@@ -73,12 +76,18 @@ mod tests {
 
     #[test]
     fn non_restricted_tools_are_allowed() {
-        assert_eq!(evaluate("read", "/etc/passwd", &root(), false), Decision::Allow);
+        assert_eq!(
+            evaluate("read", "/etc/passwd", &root(), false),
+            Decision::Allow
+        );
     }
 
     #[test]
     fn in_project_paths_are_allowed() {
-        assert_eq!(evaluate("write", "src/main.rs", &root(), true), Decision::Allow);
+        assert_eq!(
+            evaluate("write", "src/main.rs", &root(), true),
+            Decision::Allow
+        );
     }
 
     #[test]

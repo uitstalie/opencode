@@ -44,6 +44,7 @@ pub struct Theme {
     tool: Color,
     dialog: Color,
     dialog_selected: Color,
+    overlay: Color,
 }
 
 impl Theme {
@@ -63,6 +64,7 @@ impl Theme {
             tool: Color::Rgb(96, 165, 250),
             dialog: Color::Rgb(30, 41, 59),
             dialog_selected: Color::Rgb(191, 219, 254),
+            overlay: Color::Rgb(9, 11, 15),
         }
     }
 
@@ -87,7 +89,11 @@ impl Theme {
     }
 
     pub fn input_border_style(&self, ai_running: bool) -> Style {
-        Style::default().fg(if ai_running { self.warning } else { self.active_border })
+        Style::default().fg(if ai_running {
+            self.warning
+        } else {
+            self.active_border
+        })
     }
 
     pub fn brand_style(&self) -> Style {
@@ -130,8 +136,16 @@ impl Theme {
         Style::default().fg(self.active_border).bg(self.dialog)
     }
 
+    pub fn overlay_style(&self) -> Style {
+        Style::default().bg(self.overlay)
+    }
+
     pub fn running_style(&self, ai_running: bool) -> Style {
-        Style::default().fg(if ai_running { self.warning } else { self.success })
+        Style::default().fg(if ai_running {
+            self.warning
+        } else {
+            self.success
+        })
     }
 
     pub fn diff_insert_style(&self) -> Style {
@@ -143,7 +157,9 @@ impl Theme {
     }
 
     pub fn sidebar_dir_style(&self) -> Style {
-        Style::default().fg(self.active_border).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(self.active_border)
+            .add_modifier(Modifier::BOLD)
     }
 
     pub fn sidebar_file_style(&self) -> Style {
@@ -167,7 +183,12 @@ pub(super) fn display_message_lines(message: &DisplayMessage, theme: &Theme) -> 
     if role == "assistant" {
         lines.extend(super::markdown::render_markdown(message.content(), theme));
     } else {
-        lines.extend(message.content().lines().map(|line| Line::from(line.to_string())));
+        lines.extend(
+            message
+                .content()
+                .lines()
+                .map(|line| Line::from(line.to_string())),
+        );
     }
     lines.push(Line::from(""));
     lines
@@ -206,7 +227,11 @@ pub(super) struct LayoutRegions {
 
 impl LayoutSpec {
     pub(super) fn split(&self, area: Rect) -> LayoutRegions {
-        let constraints = self.children.iter().map(|child| child.constraint).collect::<Vec<_>>();
+        let constraints = self
+            .children
+            .iter()
+            .map(|child| child.constraint)
+            .collect::<Vec<_>>();
         let chunks = Layout::default()
             .direction(match self.direction {
                 LayoutDirection::Vertical => Direction::Vertical,
@@ -282,4 +307,24 @@ pub(super) fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect 
         ])
         .split(vertical[1]);
     horizontal[1]
+}
+
+pub(super) fn modal_rect(percent_x: u16, height: u16, top_offset: u16, area: Rect) -> Rect {
+    let width = area
+        .width
+        .saturating_mul(percent_x)
+        .saturating_div(100)
+        .max(24);
+    let height = height.min(area.height.saturating_sub(2)).max(6);
+    let x = area.x + area.width.saturating_sub(width) / 2;
+    let y = area
+        .y
+        .saturating_add(top_offset)
+        .min(area.y + area.height.saturating_sub(height));
+    Rect {
+        x,
+        y,
+        width,
+        height,
+    }
 }

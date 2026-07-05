@@ -42,35 +42,37 @@ mod render;
 mod sidebar;
 mod worker;
 
-use dialog::{slash_hint_dialog, slash_options, Dialog, DialogKind, DialogOption};
-use input::{input_width, is_exit_command, load_script, next_char_boundary, parse_slash_command, prev_char_boundary, should_exit};
-use render::{centered_rect, display_message_lines, main_layout, DisplayMessage, Theme};
-use worker::{spawn_prompt_worker, PromptEvent, PromptJob, SessionRuntimeGuard};
+use dialog::{Dialog, DialogKind, DialogOption, slash_options};
+use input::{
+    input_width, is_exit_command, load_script, next_char_boundary, parse_slash_command,
+    prev_char_boundary, should_exit,
+};
+use render::{DisplayMessage, Theme, centered_rect, display_message_lines, main_layout};
+use worker::{PromptEvent, PromptJob, SessionRuntimeGuard, spawn_prompt_worker};
 
 pub fn run(script: Option<PathBuf>, prompt: Option<String>) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
     let config = Config::load(&cwd)?;
-    let provider_name = config
-        .provider
-        .keys()
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("No provider configured"))?
-        .to_string();
-    let resolved = config
-        .get_provider(&provider_name)
-        .ok_or_else(|| anyhow::anyhow!("Provider '{}' not found", provider_name))?;
-    let llm = provider::create_provider(&resolved)
-        .ok_or_else(|| anyhow::anyhow!("Failed to create provider '{}'", provider_name))?;
-    let model = config
+    let (provider_name, model) = config
         .resolve_provider_model()
-        .map(|(_, model)| model)
-        .ok_or_else(|| anyhow::anyhow!("No model configured"))?;
-    let system = crate::core::system_prompt::SystemPrompt::from_config(
-        &config,
-        &resolved,
-        config.mode.clone(),
-    )?
-    .render();
+        .unwrap_or_else(|| ("unconfigured".to_string(), "unconfigured".to_string()));
+    let (llm, system) = config
+        .get_provider(&provider_name)
+        .and_then(|resolved| {
+            provider::create_provider(&resolved).map(|llm| {
+                let system = crate::core::system_prompt::SystemPrompt::from_config(
+                    &config,
+                    &resolved,
+                    config.mode.clone(),
+                )
+                .ok()
+                .map(|prompt| prompt.render())
+                .unwrap_or_default();
+                (Arc::from(llm), system)
+            })
+        })
+        .map(|(llm, system)| (Some(llm), system))
+        .unwrap_or((None, String::new()));
 
     let script_lines = script
         .as_ref()
@@ -78,7 +80,7 @@ pub fn run(script: Option<PathBuf>, prompt: Option<String>) -> anyhow::Result<()
         .transpose()?
         .unwrap_or_default();
 
-    let mut session = SessionView::new(provider_name, model, system, llm.into(), config, cwd);
+    let mut session = SessionView::new(provider_name, model, system, llm, config, cwd);
     session.bootstrap(prompt, script_lines)?;
     session.run()
 }
@@ -124,7 +126,8 @@ impl PendingQuestion {
                         options
                             .iter()
                             .filter_map(|option| {
-                                let label = option.get("label").and_then(|v| v.as_str())?.to_string();
+                                let label =
+                                    option.get("label").and_then(|v| v.as_str())?.to_string();
                                 let description = option
                                     .get("description")
                                     .and_then(|v| v.as_str())
@@ -135,8 +138,16 @@ impl PendingQuestion {
                             .collect()
                     })
                     .unwrap_or_default();
-                let multiple = value.get("multiple").and_then(|v| v.as_bool()).unwrap_or(false);
-                Some(QuestionItem { header, question, options, multiple })
+                let multiple = value
+                    .get("multiple")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                Some(QuestionItem {
+                    header,
+                    question,
+                    options,
+                    multiple,
+                })
             })
             .collect();
         if items.is_empty() {
@@ -174,7 +185,11 @@ impl PendingQuestion {
 
     fn previous(&mut self) {
         let count = self.row_count();
-        self.selected = if self.selected == 0 { count - 1 } else { self.selected - 1 };
+        self.selected = if self.selected == 0 {
+            count - 1
+        } else {
+            self.selected - 1
+        };
     }
 
     fn toggle_pick(&mut self) {
@@ -247,11 +262,33 @@ struct PendingPermission {
     allow: bool,
 }
 
+struct PendingTextInput {
+    title: String,
+    description: String,
+    value: String,
+    secret: bool,
+    submit: fn(&mut SessionView, &str),
+}
+
+#[derive(Default)]
+struct ConnectDraft {
+    provider: String,
+    base_url: String,
+    model: String,
+    wire_model: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ViewMode {
+    Home,
+    Session,
+}
+
 struct SessionView {
     provider_name: String,
     model: String,
     system: String,
-    llm: Arc<dyn provider::LlmProvider>,
+    llm: Option<Arc<dyn provider::LlmProvider>>,
     config: Config,
     cwd: PathBuf,
     session_id: String,
@@ -261,6 +298,7 @@ struct SessionView {
     transcript: Vec<String>,
     pending_prompts: VecDeque<String>,
     interactive: bool,
+    view_mode: ViewMode,
     input: String,
     cursor_index: usize,
     session_scroll: usize,
@@ -274,6 +312,8 @@ struct SessionView {
     dialog: Option<Dialog>,
     pending_question: Option<PendingQuestion>,
     pending_permission: Option<PendingPermission>,
+    pending_text_input: Option<PendingTextInput>,
+    connect_draft: Option<ConnectDraft>,
     sidebar: Option<sidebar::FileTree>,
     sidebar_visible: bool,
     diff_visible: bool,
@@ -289,7 +329,7 @@ impl SessionView {
         provider_name: String,
         model: String,
         system: String,
-        llm: Arc<dyn provider::LlmProvider>,
+        llm: Option<Arc<dyn provider::LlmProvider>>,
         config: Config,
         cwd: PathBuf,
     ) -> Self {
@@ -313,6 +353,7 @@ impl SessionView {
             transcript: Vec::new(),
             pending_prompts: VecDeque::new(),
             interactive,
+            view_mode: ViewMode::Home,
             input: String::new(),
             cursor_index: 0,
             session_scroll: 0,
@@ -326,6 +367,8 @@ impl SessionView {
             dialog: None,
             pending_question: None,
             pending_permission: None,
+            pending_text_input: None,
+            connect_draft: None,
             sidebar: None,
             sidebar_visible: false,
             diff_visible: false,
@@ -342,12 +385,17 @@ impl SessionView {
         prompt: Option<String>,
         script_lines: Vec<String>,
     ) -> anyhow::Result<()> {
+        let should_start_session = prompt.is_some() || !script_lines.is_empty();
         if let Some(prompt) = prompt {
             self.enqueue(prompt);
         }
 
         for line in script_lines {
             self.enqueue(line);
+        }
+
+        if should_start_session {
+            self.view_mode = ViewMode::Session;
         }
 
         Ok(())
@@ -360,7 +408,12 @@ impl SessionView {
 
         terminal::enable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(stdout, terminal::EnterAlternateScreen, cursor::Hide, EnableMouseCapture)?;
+        execute!(
+            stdout,
+            terminal::EnterAlternateScreen,
+            cursor::Hide,
+            EnableMouseCapture
+        )?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
         let run_result = self.run_inner(&mut terminal);
@@ -398,7 +451,7 @@ impl SessionView {
                 }
             }
             self.maybe_start_next_prompt(terminal)?;
-            self.status = "Enter 发送 · /exit /q /quit 退出".to_string();
+            self.status = self.default_status_message();
             self.render_terminal(terminal)?;
             if !event::poll(Duration::from_millis(250))? {
                 continue;
@@ -410,100 +463,120 @@ impl SessionView {
                         continue;
                     }
                     if self.pending_permission.is_some() {
-                        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                        if key.code == KeyCode::Char('c')
+                            && key.modifiers.contains(KeyModifiers::CONTROL)
+                        {
                             break;
                         }
                         self.handle_permission_key(key);
                         continue;
                     }
                     if self.pending_question.is_some() {
-                        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                        if key.code == KeyCode::Char('c')
+                            && key.modifiers.contains(KeyModifiers::CONTROL)
+                        {
                             break;
                         }
                         self.handle_question_key(key);
+                        continue;
+                    }
+                    if self.pending_text_input.is_some() {
+                        if key.code == KeyCode::Char('c')
+                            && key.modifiers.contains(KeyModifiers::CONTROL)
+                        {
+                            break;
+                        }
+                        self.handle_text_input_key(key);
                         continue;
                     }
                     if should_exit(&key) {
                         break;
                     }
 
+                    if self.view_mode == ViewMode::Home
+                        && self.dialog.is_none()
+                        && self.handle_home_key(terminal, key)?
+                    {
+                        continue;
+                    }
+
                     match key.code {
-                KeyCode::Esc if self.dialog.is_some() => {
-                    self.dialog = None;
-                }
-                KeyCode::Up if self.dialog.is_some() => {
-                    if let Some(dialog) = &mut self.dialog {
-                        dialog.previous();
-                    }
-                }
-                KeyCode::Down if self.dialog.is_some() => {
-                    if let Some(dialog) = &mut self.dialog {
-                        dialog.next();
-                    }
-                }
-                KeyCode::Enter => {
-                    if self.dialog.is_some() {
-                        self.submit_dialog_selection();
-                        continue;
-                    }
-                    let input = self.input.trim().to_string();
-                    self.input.clear();
-                    self.cursor_index = 0;
-                    if input.is_empty() {
-                        continue;
-                    }
-                    if is_exit_command(&input) {
-                        return Ok(());
-                    }
-                    if self.handle_slash_command(&input) {
-                        continue;
-                    }
-                    self.enqueue_or_run_prompt(terminal, input)?;
-                }
-                KeyCode::Backspace => {
-                    if self.cursor_index > 0 {
-                        let index = prev_char_boundary(&self.input, self.cursor_index);
-                        self.input.drain(index..self.cursor_index);
-                        self.cursor_index = index;
-                    }
-                    self.sync_slash_help();
-                }
-                KeyCode::Delete => {
-                    if self.cursor_index < self.input.len() {
-                        let next = next_char_boundary(&self.input, self.cursor_index);
-                        self.input.drain(self.cursor_index..next);
-                    }
-                    self.sync_slash_help();
-                }
-                KeyCode::Left => {
-                    self.cursor_index = prev_char_boundary(&self.input, self.cursor_index);
-                }
-                KeyCode::Right => {
-                    self.cursor_index = next_char_boundary(&self.input, self.cursor_index);
-                }
-                KeyCode::Home => {
-                    self.cursor_index = 0;
-                }
-                KeyCode::End => {
-                    self.cursor_index = self.input.len();
-                }
-                KeyCode::PageUp => {
-                    self.scroll_session_up(8);
-                }
-                KeyCode::PageDown => {
-                    self.scroll_session_down(8);
-                }
-                KeyCode::Char(ch) => {
-                    if !key.modifiers.contains(KeyModifiers::CONTROL) {
-                        self.input.insert(self.cursor_index, ch);
-                        self.cursor_index += ch.len_utf8();
-                        self.sync_slash_help();
-                    }
-                }
-                KeyCode::Tab => {
-                    self.cycle_agent();
-                }
-                _ => {}
+                        KeyCode::Esc if self.dialog.is_some() => {
+                            self.dialog = None;
+                        }
+                        KeyCode::Up if self.dialog.is_some() => {
+                            if let Some(dialog) = &mut self.dialog {
+                                dialog.previous();
+                            }
+                        }
+                        KeyCode::Down if self.dialog.is_some() => {
+                            if let Some(dialog) = &mut self.dialog {
+                                dialog.next();
+                            }
+                        }
+                        KeyCode::Enter => {
+                            if self.dialog.is_some() {
+                                self.submit_dialog_selection();
+                                continue;
+                            }
+                            let input = self.input.trim().to_string();
+                            self.input.clear();
+                            self.cursor_index = 0;
+                            if input.is_empty() {
+                                continue;
+                            }
+                            if is_exit_command(&input) {
+                                return Ok(());
+                            }
+                            if self.handle_slash_command(&input) {
+                                continue;
+                            }
+                            self.enqueue_or_run_prompt(terminal, input)?;
+                        }
+                        KeyCode::Backspace => {
+                            if self.cursor_index > 0 {
+                                let index = prev_char_boundary(&self.input, self.cursor_index);
+                                self.input.drain(index..self.cursor_index);
+                                self.cursor_index = index;
+                            }
+                            self.sync_slash_help();
+                        }
+                        KeyCode::Delete => {
+                            if self.cursor_index < self.input.len() {
+                                let next = next_char_boundary(&self.input, self.cursor_index);
+                                self.input.drain(self.cursor_index..next);
+                            }
+                            self.sync_slash_help();
+                        }
+                        KeyCode::Left => {
+                            self.cursor_index = prev_char_boundary(&self.input, self.cursor_index);
+                        }
+                        KeyCode::Right => {
+                            self.cursor_index = next_char_boundary(&self.input, self.cursor_index);
+                        }
+                        KeyCode::Home => {
+                            self.cursor_index = 0;
+                        }
+                        KeyCode::End => {
+                            self.cursor_index = self.input.len();
+                        }
+                        KeyCode::PageUp => {
+                            self.scroll_session_up(8);
+                        }
+                        KeyCode::PageDown => {
+                            self.scroll_session_down(8);
+                        }
+                        KeyCode::Char(ch) => {
+                            if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                                self.input.insert(self.cursor_index, ch);
+                                self.cursor_index += ch.len_utf8();
+                                self.sync_slash_help();
+                            }
+                        }
+                        KeyCode::Tab => {
+                            self.cycle_agent();
+                        }
+                        _ => {}
                     }
                 }
                 Event::Mouse(mouse) => match mouse.kind {
@@ -519,6 +592,7 @@ impl SessionView {
     }
 
     fn handle_prompt(&mut self, stdout: &mut io::Stdout, prompt: &str) -> anyhow::Result<()> {
+        self.ensure_runtime_ready()?;
         self.messages.push(Message {
             role: "user".to_string(),
             content: prompt.to_string(),
@@ -527,14 +601,15 @@ impl SessionView {
             tool_calls: None,
         });
         self.persist_message("user", prompt);
-        self.display.push(render::DisplayMessage::new("user", prompt));
+        self.display
+            .push(render::DisplayMessage::new("user", prompt));
         self.status = "Connecting model...".to_string();
         self.ai_running = true;
         self.assistant_preview.clear();
         self.thinking_preview.clear();
         self.render(stdout, Some(&self.status))?;
         self.prompt_job = Some(spawn_prompt_worker(
-            Arc::clone(&self.llm),
+            Arc::clone(self.llm.as_ref().expect("llm ensured above")),
             self.messages.clone(),
             self.model.clone(),
             self.effective_system(),
@@ -570,7 +645,11 @@ impl SessionView {
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
         prompt: String,
     ) -> anyhow::Result<()> {
-        self.handle_interactive_prompt(terminal, &prompt)
+        if let Err(err) = self.handle_interactive_prompt(terminal, &prompt) {
+            self.note(err.to_string());
+            self.render_terminal(terminal)?;
+        }
+        Ok(())
     }
 
     fn maybe_start_next_prompt(
@@ -620,17 +699,31 @@ impl SessionView {
                     needs_render = true;
                 }
                 PromptEvent::ToolCall { id, name } => {
-                    self.display
-                        .push(render::DisplayMessage::new("tool", &format!("tool call: {} ({})", name, id)));
+                    self.display.push(render::DisplayMessage::new(
+                        "tool",
+                        &format!("tool call: {} ({})", name, id),
+                    ));
                     self.status = format!("tool call: {}", name);
-                    self.persist_message_detail("assistant", "", None, None, Some(serde_json::json!([{
-                        "id": id,
-                        "type": "function",
-                        "function": { "name": name, "arguments": "" }
-                    }])));
+                    self.persist_message_detail(
+                        "assistant",
+                        "",
+                        None,
+                        None,
+                        Some(serde_json::json!([{
+                            "id": id,
+                            "type": "function",
+                            "function": { "name": name, "arguments": "" }
+                        }])),
+                    );
                     needs_render = true;
                 }
-                PromptEvent::ToolComplete { id, name, assistant, args, result } => {
+                PromptEvent::ToolComplete {
+                    id,
+                    name,
+                    assistant,
+                    args,
+                    result,
+                } => {
                     if !assistant.trim().is_empty() {
                         self.persist_message_detail(
                             "assistant",
@@ -644,7 +737,13 @@ impl SessionView {
                             }])),
                         );
                     }
-                    self.persist_message_detail("tool", &result, Some(name.clone()), Some(id.clone()), None);
+                    self.persist_message_detail(
+                        "tool",
+                        &result,
+                        Some(name.clone()),
+                        Some(id.clone()),
+                        None,
+                    );
                     self.display.push(render::DisplayMessage::new(
                         "tool",
                         &format!("tool result: {}\n{}", name, result),
@@ -702,6 +801,7 @@ impl SessionView {
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
         prompt: &str,
     ) -> anyhow::Result<()> {
+        self.ensure_runtime_ready()?;
         self.messages.push(Message {
             role: "user".to_string(),
             content: prompt.to_string(),
@@ -710,13 +810,14 @@ impl SessionView {
             tool_calls: None,
         });
         self.persist_message("user", prompt);
-        self.display.push(render::DisplayMessage::new("user", prompt));
+        self.display
+            .push(render::DisplayMessage::new("user", prompt));
         self.status = "Connecting model...".to_string();
         self.ai_running = true;
         self.render_terminal(terminal)?;
 
         self.prompt_job = Some(spawn_prompt_worker(
-            Arc::clone(&self.llm),
+            Arc::clone(self.llm.as_ref().expect("llm ensured above")),
             self.messages.clone(),
             self.model.clone(),
             self.effective_system(),
@@ -882,11 +983,12 @@ impl SessionView {
                     "Clear the session agent and use the default workflow.",
                 )];
                 options.extend(agents.iter().enumerate().map(|(index, info)| {
-                    let active = if self.current_session_agent().as_deref() == Some(info.id.as_str()) {
-                        "● "
-                    } else {
-                        ""
-                    };
+                    let active =
+                        if self.current_session_agent().as_deref() == Some(info.id.as_str()) {
+                            "● "
+                        } else {
+                            ""
+                        };
                     DialogOption::new(
                         info.id.clone(),
                         format!("{}{}. {}", active, index + 1, info.title),
@@ -912,14 +1014,18 @@ impl SessionView {
                     self.note("usage: /task add <title> [status]".to_string());
                     return;
                 };
-                let status = args.get(2).cloned().unwrap_or_else(|| "pending".to_string());
+                let status = args
+                    .get(2)
+                    .cloned()
+                    .unwrap_or_else(|| "pending".to_string());
                 let Some(store) = &self.store else {
                     self.note("session store unavailable".to_string());
                     return;
                 };
                 let id = format!("task-{}", now_micros());
                 let agent = self.current_session_agent();
-                match store.upsert_task(&self.session_id, &id, agent, title.clone(), status.clone()) {
+                match store.upsert_task(&self.session_id, &id, agent, title.clone(), status.clone())
+                {
                     Ok(task) => self.note(format!("task added: {} [{}]", task.title, task.status)),
                     Err(err) => self.note(format!("failed to add task: {}", err)),
                 }
@@ -982,7 +1088,8 @@ impl SessionView {
                     self.note("usage: /connect use <provider>".to_string());
                 }
             }
-            Some("add") => self.add_provider(&args),
+            Some("add") if args.len() >= 4 => self.add_provider(&args),
+            Some("add") => self.start_connect_wizard(),
             Some("key") => {
                 let (Some(provider), Some(api_key)) = (args.get(1), args.get(2)) else {
                     self.note("usage: /connect key <provider> <api-key>".to_string());
@@ -1022,6 +1129,11 @@ impl SessionView {
                         )
                     })
                     .collect::<Vec<_>>();
+                options.push(DialogOption::new(
+                    "__add__",
+                    "Add custom provider",
+                    "交互式输入 provider、base URL、model 和 API key。",
+                ));
                 options.push(DialogOption::new(
                     "__verify__",
                     "Verify current provider",
@@ -1139,11 +1251,14 @@ impl SessionView {
                 None => {}
             },
             DialogKind::Task => match dialog.selected_value() {
-                Some("__new__") => self.note("use /task add <title> [status] to create a task".to_string()),
+                Some("__new__") => {
+                    self.note("use /task add <title> [status] to create a task".to_string())
+                }
                 Some(value) => self.note(format!("task selected: {}", value)),
                 None => {}
             },
             DialogKind::Provider => match dialog.selected_value() {
+                Some("__add__") => self.start_connect_wizard(),
                 Some("__verify__") => self.verify_provider(&self.provider_name.clone()),
                 Some(value) => self.switch_provider(value),
                 None => {}
@@ -1210,7 +1325,50 @@ impl SessionView {
             if let Some(permission) = self.pending_permission.take() {
                 let _ = permission.responder.send(allow);
             }
-            self.status = if allow { "permission: allowed".to_string() } else { "permission: denied".to_string() };
+            self.status = if allow {
+                "permission: allowed".to_string()
+            } else {
+                "permission: denied".to_string()
+            };
+        }
+    }
+
+    fn handle_text_input_key(&mut self, key: event::KeyEvent) {
+        enum Outcome {
+            None,
+            Cancel,
+            Submit(String, fn(&mut SessionView, &str)),
+        }
+
+        let outcome = {
+            let Some(input) = self.pending_text_input.as_mut() else {
+                return;
+            };
+            match key.code {
+                KeyCode::Esc => Outcome::Cancel,
+                KeyCode::Enter => Outcome::Submit(input.value.clone(), input.submit),
+                KeyCode::Backspace => {
+                    input.value.pop();
+                    Outcome::None
+                }
+                KeyCode::Char(ch) => {
+                    input.value.push(ch);
+                    Outcome::None
+                }
+                _ => Outcome::None,
+            }
+        };
+
+        match outcome {
+            Outcome::None => {}
+            Outcome::Cancel => {
+                self.pending_text_input = None;
+                self.note("input cancelled".to_string());
+            }
+            Outcome::Submit(value, submit) => {
+                self.pending_text_input = None;
+                submit(self, &value);
+            }
         }
     }
 
@@ -1227,19 +1385,58 @@ impl SessionView {
             theme.dialog_selected_style().add_modifier(Modifier::BOLD)
         };
         let lines = vec![
-            Line::from(Span::styled(format!("{}: {}", permission.tool, permission.detail), theme.muted_style())),
+            Line::from(Span::styled(
+                format!("{}: {}", permission.tool, permission.detail),
+                theme.muted_style(),
+            )),
             Line::from(""),
             Line::from(vec![
                 Span::styled("  [A] Allow  ", allow_style),
                 Span::styled("  [D] Deny  ", deny_style),
             ]),
             Line::from(""),
-            Line::from(Span::styled("A/Y 允许 · D/N/Esc 拒绝 · ←/→ 切换 · Enter 确认", theme.muted_style())),
+            Line::from(Span::styled(
+                "A/Y 允许 · D/N/Esc 拒绝 · ←/→ 切换 · Enter 确认",
+                theme.muted_style(),
+            )),
         ];
         Paragraph::new(lines)
             .block(
                 Block::default()
                     .title(" Permission ")
+                    .title_alignment(ratatui::layout::Alignment::Center)
+                    .title_style(theme.title_style())
+                    .borders(Borders::ALL)
+                    .border_style(theme.dialog_border_style()),
+            )
+            .style(theme.dialog_style())
+            .wrap(Wrap { trim: false })
+    }
+
+    fn text_input_widget(&self, input: &PendingTextInput) -> Paragraph<'static> {
+        let theme = &self.theme;
+        let value = if input.secret {
+            "*".repeat(input.value.chars().count())
+        } else {
+            input.value.clone()
+        };
+        let lines = vec![
+            Line::from(Span::styled(input.description.clone(), theme.muted_style())),
+            Line::from(""),
+            Line::from(Span::styled(
+                format!("> {}", value),
+                theme.dialog_selected_style(),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "输入后 Enter 保存 · Esc 取消",
+                theme.muted_style(),
+            )),
+        ];
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .title(format!(" {} ", input.title))
                     .title_alignment(ratatui::layout::Alignment::Center)
                     .title_style(theme.title_style())
                     .borders(Borders::ALL)
@@ -1282,12 +1479,24 @@ impl SessionView {
             .to_string();
         match name {
             "edit" => {
-                let before = value.get("oldString").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let after = value.get("newString").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let before = value
+                    .get("oldString")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let after = value
+                    .get("newString")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 self.last_diff = Some((format!("edit {}", path), before, after));
             }
             "write" => {
-                let after = value.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let after = value
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 self.last_diff = Some((format!("write {}", path), String::new(), after));
             }
             _ => {}
@@ -1411,9 +1620,15 @@ impl SessionView {
             } else {
                 theme.dialog_style()
             };
-            lines.push(Line::from(Span::styled(format!("{}{}{}", marker, check, label), style)));
+            lines.push(Line::from(Span::styled(
+                format!("{}{}{}", marker, check, label),
+                style,
+            )));
             if !description.is_empty() {
-                lines.push(Line::from(Span::styled(format!("      {}", description), theme.muted_style())));
+                lines.push(Line::from(Span::styled(
+                    format!("      {}", description),
+                    theme.muted_style(),
+                )));
             }
         }
         let custom_selected = q.selected == q.custom_index() && q.typing.is_none();
@@ -1429,7 +1644,10 @@ impl SessionView {
         )));
         if let Some(buffer) = &q.typing {
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(format!("  > {}", buffer), theme.dialog_selected_style())));
+            lines.push(Line::from(Span::styled(
+                format!("  > {}", buffer),
+                theme.dialog_selected_style(),
+            )));
         }
         lines.push(Line::from(""));
         let hint = if item.multiple {
@@ -1462,6 +1680,7 @@ impl SessionView {
         self.messages.clear();
         self.display.clear();
         self.session_scroll = 0;
+        self.view_mode = ViewMode::Session;
         if let Some(store) = &self.store {
             let agent = self.default_agent_id();
             let _ = store.ensure_session(&self.session_id, None);
@@ -1482,7 +1701,11 @@ impl SessionView {
             let resolved = target
                 .parse::<usize>()
                 .ok()
-                .and_then(|index| agents.get(index.saturating_sub(1)).map(|agent| agent.id.clone()))
+                .and_then(|index| {
+                    agents
+                        .get(index.saturating_sub(1))
+                        .map(|agent| agent.id.clone())
+                })
                 .unwrap_or_else(|| target.to_string());
             Some(resolved)
         };
@@ -1514,7 +1737,10 @@ impl SessionView {
             .unwrap_or(0);
         let agent_id = Some(agents[next].id.clone());
         match store.set_session_agent(&self.session_id, agent_id.clone()) {
-            Ok(()) => self.note(format!("agent: {}", agent_id.as_deref().unwrap_or("default"))),
+            Ok(()) => self.note(format!(
+                "agent: {}",
+                agent_id.as_deref().unwrap_or("default")
+            )),
             Err(err) => self.note(format!("failed to set agent: {}", err)),
         }
     }
@@ -1537,6 +1763,38 @@ impl SessionView {
         system.push_str("\n\n");
         system.push_str(&agent_system);
         system
+    }
+
+    fn ensure_runtime_ready(&mut self) -> anyhow::Result<()> {
+        if self.llm.is_some()
+            && self.provider_name != "unconfigured"
+            && self.model != "unconfigured"
+        {
+            return Ok(());
+        }
+
+        let (provider_name, model) = self
+            .config
+            .resolve_provider_model()
+            .ok_or_else(|| anyhow::anyhow!("No provider configured"))?;
+        let resolved = self
+            .config
+            .get_provider(&provider_name)
+            .ok_or_else(|| anyhow::anyhow!("Provider '{}' not found", provider_name))?;
+        let llm = provider::create_provider(&resolved)
+            .ok_or_else(|| anyhow::anyhow!("Failed to create provider '{}'", provider_name))?;
+        let system = crate::core::system_prompt::SystemPrompt::from_config(
+            &self.config,
+            &resolved,
+            self.config.mode.clone(),
+        )?
+        .render();
+
+        self.provider_name = provider_name;
+        self.model = model;
+        self.system = system;
+        self.llm = Some(Arc::from(llm));
+        Ok(())
     }
 
     fn agent_system(&self, agent_id: &str) -> Option<String> {
@@ -1611,7 +1869,11 @@ impl SessionView {
                     .effective_messages(&self.session_id)
                     .unwrap_or_default()
                     .iter()
-                    .filter(|message| message.role == "user" || message.role == "assistant" || message.role == "tool")
+                    .filter(|message| {
+                        message.role == "user"
+                            || message.role == "assistant"
+                            || message.role == "tool"
+                    })
                     .map(|message| Message {
                         role: message.role.clone(),
                         content: message.content.clone(),
@@ -1627,7 +1889,10 @@ impl SessionView {
                     "system",
                     &format!("compacted {} message(s) into checkpoint", older.len()),
                 ));
-                self.note(format!("compacted session history, kept {} recent message(s)", recent.len()));
+                self.note(format!(
+                    "compacted session history, kept {} recent message(s)",
+                    recent.len()
+                ));
             }
             Err(err) => self.note(format!("failed to compact session: {}", err)),
         }
@@ -1659,9 +1924,12 @@ impl SessionView {
         };
         self.session_id = id.clone();
         self.session_scroll = 0;
+        self.view_mode = ViewMode::Session;
         self.messages = history
             .iter()
-            .filter(|message| message.role == "user" || message.role == "assistant" || message.role == "tool")
+            .filter(|message| {
+                message.role == "user" || message.role == "assistant" || message.role == "tool"
+            })
             .map(|message| Message {
                 role: message.role.clone(),
                 content: message.content.clone(),
@@ -1675,7 +1943,9 @@ impl SessionView {
             .collect();
         self.display = history
             .iter()
-            .filter(|message| message.role == "user" || message.role == "assistant" || message.role == "tool")
+            .filter(|message| {
+                message.role == "user" || message.role == "assistant" || message.role == "tool"
+            })
             .map(|message| render::DisplayMessage::new(&message.role, &message.content))
             .collect();
         self.note(format!("session: switched to {}", id));
@@ -1720,6 +1990,149 @@ impl SessionView {
                 self.note(format!(
                     "provider added: {}; run /connect key {} <api-key>",
                     provider, provider
+                ));
+            }
+            Err(err) => self.note(format!("failed to save provider: {}", err)),
+        }
+    }
+
+    fn start_connect_wizard(&mut self) {
+        self.connect_draft = Some(ConnectDraft::default());
+        self.pending_text_input = Some(PendingTextInput {
+            title: "Connect · provider".to_string(),
+            description: "输入 provider 名称，例如 deepseek、openai、one_route。".to_string(),
+            value: String::new(),
+            secret: false,
+            submit: SessionView::save_connect_provider_name,
+        });
+        self.status = "connect: provider name".to_string();
+    }
+
+    fn save_connect_provider_name(&mut self, value: &str) {
+        let provider = value.trim();
+        if provider.is_empty() {
+            self.note("provider name cannot be empty".to_string());
+            return;
+        }
+        let draft = self.connect_draft.get_or_insert_with(ConnectDraft::default);
+        draft.provider = provider.to_string();
+        self.pending_text_input = Some(PendingTextInput {
+            title: format!("Connect · {} base URL", provider),
+            description: "输入 OpenAI-compatible base URL，例如 https://api.deepseek.com/v1 。"
+                .to_string(),
+            value: String::new(),
+            secret: false,
+            submit: SessionView::save_connect_base_url,
+        });
+        self.status = format!("connect: base URL for {}", provider);
+    }
+
+    fn save_connect_base_url(&mut self, value: &str) {
+        let base_url = value.trim();
+        if base_url.is_empty() {
+            self.note("base URL cannot be empty".to_string());
+            return;
+        }
+        let Some(draft) = self.connect_draft.as_mut() else {
+            self.note("connect wizard state missing".to_string());
+            return;
+        };
+        draft.base_url = base_url.to_string();
+        self.pending_text_input = Some(PendingTextInput {
+            title: format!("Connect · {} model", draft.provider),
+            description: "输入配置中的 model 名称，例如 deepseek-chat。".to_string(),
+            value: String::new(),
+            secret: false,
+            submit: SessionView::save_connect_model,
+        });
+        self.status = format!("connect: model for {}", draft.provider);
+    }
+
+    fn save_connect_model(&mut self, value: &str) {
+        let model = value.trim();
+        if model.is_empty() {
+            self.note("model cannot be empty".to_string());
+            return;
+        }
+        let Some(draft) = self.connect_draft.as_mut() else {
+            self.note("connect wizard state missing".to_string());
+            return;
+        };
+        draft.model = model.to_string();
+        self.pending_text_input = Some(PendingTextInput {
+            title: format!("Connect · {} wire model", draft.provider),
+            description: "输入实际发给 API 的模型名；若与上一步相同可直接回车留空。".to_string(),
+            value: String::new(),
+            secret: false,
+            submit: SessionView::save_connect_wire_model,
+        });
+        self.status = format!("connect: wire model for {}", draft.provider);
+    }
+
+    fn save_connect_wire_model(&mut self, value: &str) {
+        let Some(draft) = self.connect_draft.as_mut() else {
+            self.note("connect wizard state missing".to_string());
+            return;
+        };
+        let wire_model = value.trim();
+        draft.wire_model = if wire_model.is_empty() {
+            None
+        } else {
+            Some(wire_model.to_string())
+        };
+        self.pending_text_input = Some(PendingTextInput {
+            title: format!("Connect · {} API key", draft.provider),
+            description:
+                "输入 API key；若暂时没有可直接回车跳过，之后再用 /connect key <provider> <api-key>。"
+                    .to_string(),
+            value: String::new(),
+            secret: true,
+            submit: SessionView::save_connect_api_key,
+        });
+        self.status = format!("connect: API key for {}", draft.provider);
+    }
+
+    fn save_connect_api_key(&mut self, value: &str) {
+        let Some(draft) = self.connect_draft.take() else {
+            self.note("connect wizard state missing".to_string());
+            return;
+        };
+        self.config.provider.insert(
+            draft.provider.clone(),
+            ProviderConfig {
+                api_key: None,
+                base_url: Some(draft.base_url.clone()),
+                models: std::collections::HashMap::from([(
+                    draft.model.clone(),
+                    ModelConfig {
+                        name: draft.wire_model.clone(),
+                        variants: None,
+                        limit: None,
+                        options: None,
+                    },
+                )]),
+                options: None,
+            },
+        );
+        self.config.model = Some(format!("{}/{}", draft.provider, draft.model));
+
+        match self.save_global_config() {
+            Ok(()) => {
+                let api_key = value.trim();
+                if !api_key.is_empty() {
+                    if let Err(err) = Vault::save(&draft.provider, api_key) {
+                        self.reload_config();
+                        self.note(format!(
+                            "provider added: {}, but failed to save API key: {}",
+                            draft.provider, err
+                        ));
+                        return;
+                    }
+                }
+                self.reload_config();
+                self.note(format!(
+                    "provider configured: {} · model: {}/{}",
+                    draft.provider, draft.provider, draft.model
                 ));
             }
             Err(err) => self.note(format!("failed to save provider: {}", err)),
@@ -1860,7 +2273,7 @@ impl SessionView {
                         ) {
                             self.system = system.render();
                         }
-                        self.llm = llm.into();
+                        self.llm = Some(Arc::from(llm));
                     }
                 }
             }
@@ -1905,7 +2318,8 @@ impl SessionView {
 
     fn note(&mut self, message: String) {
         self.status = message.lines().next().unwrap_or("Ready").to_string();
-        self.display.push(render::DisplayMessage::new("system", &message));
+        self.display
+            .push(render::DisplayMessage::new("system", &message));
     }
 
     fn sync_slash_help(&mut self) {
@@ -1977,7 +2391,15 @@ impl SessionView {
 
     fn render_frame(&self, frame: &mut Frame) {
         let regions = main_layout().split(frame.area());
+        if self.view_mode == ViewMode::Home {
+            self.render_home_frame(frame, regions.status);
+            return;
+        }
 
+        self.render_session_frame(frame, regions);
+    }
+
+    fn render_session_frame(&self, frame: &mut Frame, regions: render::LayoutRegions) {
         let session_area = if self.sidebar_visible && self.sidebar.is_some() {
             let (side, main) = render::split_sidebar(regions.session);
             if let Some(tree) = &self.sidebar {
@@ -1997,8 +2419,8 @@ impl SessionView {
         } else {
             regions.session
         };
-
-        let session = Paragraph::new(self.session_lines(session_area.height as usize))
+        let lines = self.session_lines(session_area.height as usize);
+        let session = Paragraph::new(lines)
             .style(self.theme.panel_style())
             .block(
                 Block::default()
@@ -2021,7 +2443,8 @@ impl SessionView {
             )
             .wrap(Wrap { trim: false });
         frame.render_widget(input, regions.input);
-        if self.interactive {
+
+        if self.interactive && !self.modal_active() {
             let x = regions
                 .input
                 .x
@@ -2031,35 +2454,127 @@ impl SessionView {
             frame.set_cursor_position((x, y));
         }
 
-        if self.dialog.is_none() && self.input.starts_with('/') {
-            frame.render_widget(slash_hint_dialog(&self.input, &self.theme), centered_rect(54, 34, frame.area()));
-        }
-
         let footer = Paragraph::new(self.status_line()).style(self.theme.footer_style());
         frame.render_widget(footer, regions.status);
 
+        self.render_modal_layer(frame, frame.area());
+    }
+
+    fn render_home_frame(&self, frame: &mut Frame, status_area: ratatui::layout::Rect) {
+        let outer = centered_rect(76, 72, frame.area());
+
+        let top_padding = outer.height.saturating_sub(15) / 2;
+        let sections = ratatui::layout::Layout::default()
+            .direction(ratatui::layout::Direction::Vertical)
+            .constraints([
+                ratatui::layout::Constraint::Length(top_padding),
+                ratatui::layout::Constraint::Length(4),
+                ratatui::layout::Constraint::Length(3),
+                ratatui::layout::Constraint::Length(2),
+                ratatui::layout::Constraint::Length(4),
+                ratatui::layout::Constraint::Min(0),
+            ])
+            .split(outer);
+
+        let header = Paragraph::new(vec![
+            Line::from(Span::styled(
+                "OpenRust",
+                self.theme.brand_style().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "AI coding agent · Rust native runtime",
+                self.theme.muted_style(),
+            )),
+            Line::from(Span::styled(
+                format!(
+                    "model {}/{} · agent {}",
+                    self.provider_name,
+                    self.model,
+                    self.current_session_agent()
+                        .unwrap_or_else(|| "default".to_string())
+                ),
+                self.theme.muted_style(),
+            )),
+        ])
+        .alignment(ratatui::layout::Alignment::Center)
+        .style(self.theme.panel_style());
+        frame.render_widget(header, sections[1]);
+
+        let prompt = Paragraph::new(self.input.as_str())
+            .style(self.theme.input_style())
+            .block(
+                Block::default()
+                    .title(" Prompt ")
+                    .title_style(self.theme.title_style())
+                    .borders(Borders::ALL)
+                    .border_style(self.theme.input_border_style(self.ai_running)),
+            )
+            .wrap(Wrap { trim: false });
+        frame.render_widget(prompt, sections[2]);
+
+        let hint = Paragraph::new(home_input_hint())
+            .style(self.theme.muted_style())
+            .alignment(ratatui::layout::Alignment::Center)
+            .wrap(Wrap { trim: false });
+        frame.render_widget(hint, sections[3]);
+
+        let status = Paragraph::new(self.home_status_message())
+            .style(self.theme.muted_style())
+            .alignment(ratatui::layout::Alignment::Center)
+            .wrap(Wrap { trim: false });
+        frame.render_widget(status, sections[4]);
+
+        if self.interactive && !self.modal_active() {
+            let x = sections[2]
+                .x
+                .saturating_add(1)
+                .saturating_add(input_width(&self.input[..self.cursor_index]));
+            let y = sections[2].y.saturating_add(1);
+            frame.set_cursor_position((x, y));
+        }
+
+        let footer = Paragraph::new(self.status_line()).style(self.theme.footer_style());
+        frame.render_widget(footer, status_area);
+
+        self.render_modal_layer(frame, frame.area());
+    }
+
+    fn render_modal_layer(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
+        if !self.modal_active() && !self.diff_visible {
+            return;
+        }
+
+        frame.render_widget(Block::default().style(self.theme.overlay_style()), area);
+
         if let Some(dialog) = &self.dialog {
-            let area = centered_rect(70, 50, frame.area());
-            frame.render_widget(Clear, area);
-            frame.render_widget(dialog.widget(&self.theme), area);
+            let dialog_area = self.dialog_area(dialog, area);
+            frame.render_widget(Clear, dialog_area);
+            self.render_dialog_panel(frame, dialog_area, dialog);
+            return;
         }
-
         if let Some(question) = &self.pending_question {
-            let area = centered_rect(72, 60, frame.area());
-            frame.render_widget(Clear, area);
-            frame.render_widget(self.question_widget(question), area);
+            let dialog_area = centered_rect(72, 60, area);
+            frame.render_widget(Clear, dialog_area);
+            frame.render_widget(self.question_widget(question), dialog_area);
+            return;
         }
-
         if let Some(permission) = &self.pending_permission {
-            let area = centered_rect(60, 32, frame.area());
-            frame.render_widget(Clear, area);
-            frame.render_widget(self.permission_widget(permission), area);
+            let dialog_area = centered_rect(60, 32, area);
+            frame.render_widget(Clear, dialog_area);
+            frame.render_widget(self.permission_widget(permission), dialog_area);
+            return;
         }
-
+        if let Some(input) = &self.pending_text_input {
+            let dialog_area = centered_rect(64, 28, area);
+            frame.render_widget(Clear, dialog_area);
+            frame.render_widget(self.text_input_widget(input), dialog_area);
+            return;
+        }
         if self.diff_visible {
             if let Some((title, before, after)) = &self.last_diff {
-                let area = centered_rect(80, 70, frame.area());
-                frame.render_widget(Clear, area);
+                let dialog_area = centered_rect(80, 70, area);
+                frame.render_widget(Clear, dialog_area);
                 let widget = Paragraph::new(diff::render_diff(before, after, &self.theme))
                     .style(self.theme.dialog_style())
                     .block(
@@ -2071,9 +2586,70 @@ impl SessionView {
                             .border_style(self.theme.dialog_border_style()),
                     )
                     .wrap(Wrap { trim: false });
-                frame.render_widget(widget, area);
+                frame.render_widget(widget, dialog_area);
             }
         }
+    }
+
+    fn render_dialog_panel(&self, frame: &mut Frame, area: ratatui::layout::Rect, dialog: &Dialog) {
+        frame.render_widget(
+            Block::default()
+                .style(self.theme.dialog_style())
+                .borders(Borders::ALL)
+                .border_style(self.theme.dialog_border_style()),
+            area,
+        );
+
+        let inner = ratatui::layout::Layout::default()
+            .direction(ratatui::layout::Direction::Vertical)
+            .constraints([
+                ratatui::layout::Constraint::Length(2),
+                ratatui::layout::Constraint::Length(2),
+                ratatui::layout::Constraint::Min(4),
+                ratatui::layout::Constraint::Length(1),
+            ])
+            .margin(1)
+            .split(area);
+
+        let header = Paragraph::new(dialog.title())
+            .alignment(ratatui::layout::Alignment::Center)
+            .style(self.theme.title_style());
+        frame.render_widget(header, inner[0]);
+
+        let description = Paragraph::new(dialog.description())
+            .alignment(ratatui::layout::Alignment::Center)
+            .style(self.theme.muted_style())
+            .wrap(Wrap { trim: false });
+        frame.render_widget(description, inner[1]);
+
+        let options = Paragraph::new(dialog.option_lines(&self.theme))
+            .style(self.theme.dialog_style())
+            .wrap(Wrap { trim: false });
+        frame.render_widget(options, inner[2]);
+
+        let footer = Paragraph::new(dialog.footer_hint())
+            .alignment(ratatui::layout::Alignment::Center)
+            .style(self.theme.muted_style());
+        frame.render_widget(footer, inner[3]);
+    }
+
+    fn dialog_area(&self, dialog: &Dialog, area: ratatui::layout::Rect) -> ratatui::layout::Rect {
+        match dialog.kind {
+            DialogKind::Provider | DialogKind::Model => render::modal_rect(62, 16, 4, area),
+            DialogKind::Agent | DialogKind::Task => render::modal_rect(60, 15, 4, area),
+            DialogKind::SlashHelp => render::modal_rect(56, 12, 3, area),
+            DialogKind::Thinking | DialogKind::ReasoningEffort => {
+                render::modal_rect(52, 12, 4, area)
+            }
+            DialogKind::Session => render::modal_rect(58, 14, 4, area),
+        }
+    }
+
+    fn modal_active(&self) -> bool {
+        self.dialog.is_some()
+            || self.pending_question.is_some()
+            || self.pending_permission.is_some()
+            || self.pending_text_input.is_some()
     }
 
     fn pump_prompt_job(
@@ -2107,12 +2683,20 @@ impl SessionView {
                     self.render_terminal(terminal)?;
                 }
                 PromptEvent::ToolCall { id, name } => {
-                    self.display
-                        .push(render::DisplayMessage::new("tool", &format!("tool call: {} ({})", name, id)));
+                    self.display.push(render::DisplayMessage::new(
+                        "tool",
+                        &format!("tool call: {} ({})", name, id),
+                    ));
                     self.status = format!("tool call: {}", name);
                     self.render_terminal(terminal)?;
                 }
-                PromptEvent::ToolComplete { id, name, assistant, args, result } => {
+                PromptEvent::ToolComplete {
+                    id,
+                    name,
+                    assistant,
+                    args,
+                    result,
+                } => {
                     if !assistant.trim().is_empty() {
                         self.persist_message_detail(
                             "assistant",
@@ -2127,14 +2711,25 @@ impl SessionView {
                         );
                     }
                     self.capture_diff(&name, &args);
-                    self.persist_message_detail("tool", &result, Some(name.clone()), Some(id.clone()), None);
+                    self.persist_message_detail(
+                        "tool",
+                        &result,
+                        Some(name.clone()),
+                        Some(id.clone()),
+                        None,
+                    );
                     let display_text = match (name.as_str(), &self.last_diff) {
                         ("edit" | "write", Some((_, before, after))) => {
-                            format!("tool result: {}\n{}", name, diff::unified_diff(before, after))
+                            format!(
+                                "tool result: {}\n{}",
+                                name,
+                                diff::unified_diff(before, after)
+                            )
                         }
                         _ => format!("tool result: {}\n{}", name, result),
                     };
-                    self.display.push(render::DisplayMessage::new("tool", &display_text));
+                    self.display
+                        .push(render::DisplayMessage::new("tool", &display_text));
                     self.status = format!("tool result: {}", name);
                     self.render_terminal(terminal)?;
                 }
@@ -2203,7 +2798,11 @@ impl SessionView {
                 "assistant",
                 self.theme.assistant_style().add_modifier(Modifier::BOLD),
             )]));
-            lines.extend(self.assistant_preview.lines().map(|line| Line::from(line.to_string())));
+            lines.extend(
+                self.assistant_preview
+                    .lines()
+                    .map(|line| Line::from(line.to_string())),
+            );
         }
 
         if lines.is_empty() {
@@ -2218,6 +2817,54 @@ impl SessionView {
         let scroll = self.session_scroll.min(max_scroll);
         let start = lines.len().saturating_sub(visible_height + scroll);
         lines.into_iter().skip(start).take(visible_height).collect()
+    }
+
+    fn handle_home_key(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        key: event::KeyEvent,
+    ) -> anyhow::Result<bool> {
+        match key.code {
+            KeyCode::Enter => {
+                let input = self.input.trim().to_string();
+                self.input.clear();
+                self.cursor_index = 0;
+                if input.is_empty() {
+                    return Ok(true);
+                }
+                if is_exit_command(&input) {
+                    return Ok(false);
+                }
+                self.create_session();
+                if self.handle_slash_command(&input) {
+                    return Ok(true);
+                }
+                self.enqueue_or_run_prompt(terminal, input)?;
+                Ok(true)
+            }
+            KeyCode::Esc => Ok(false),
+            _ => Ok(false),
+        }
+    }
+
+    fn home_provider_ready(&self) -> bool {
+        self.config
+            .get_provider(&self.provider_name)
+            .and_then(|provider| provider.api_key)
+            .is_some()
+    }
+
+    fn home_status_message(&self) -> &'static str {
+        if self.config.provider.is_empty() {
+            return "Setup required: no provider configured. Type /connect to add one.";
+        }
+        if self.config.model.is_none() {
+            return "Setup required: no model selected. Type /models to choose one.";
+        }
+        if !self.home_provider_ready() {
+            return "Setup required: API key missing. Type /connect to configure it.";
+        }
+        "Home: type a prompt and press Enter. Esc exits."
     }
 
     fn status_line(&self) -> Line<'static> {
@@ -2246,7 +2893,10 @@ impl SessionView {
             Span::raw("  "),
             Span::raw(format!("model: {}/{}", self.provider_name, self.model)),
             Span::raw("  |  "),
-            Span::raw(format!("agent: {}", self.current_session_agent().as_deref().unwrap_or("default"))),
+            Span::raw(format!(
+                "agent: {}",
+                self.current_session_agent().as_deref().unwrap_or("default")
+            )),
             Span::raw("  |  "),
             Span::raw(task_count),
             Span::raw("  |  "),
@@ -2260,6 +2910,22 @@ impl SessionView {
             Span::raw("  |  "),
             Span::raw(self.status.clone()),
         ])
+    }
+
+    fn default_status_message(&self) -> String {
+        if self.pending_permission.is_some()
+            || self.pending_question.is_some()
+            || self.pending_text_input.is_some()
+            || self.dialog.is_some()
+            || self.ai_running
+            || self.prompt_job.is_some()
+        {
+            return self.status.clone();
+        }
+        if self.view_mode == ViewMode::Home {
+            return self.home_status_message().to_string();
+        }
+        "Enter 发送 · /exit /q /quit 退出".to_string()
     }
 }
 
@@ -2318,6 +2984,10 @@ fn now_micros() -> u128 {
         .as_micros()
 }
 
+fn home_input_hint() -> &'static str {
+    "输入消息后 Enter 开始 · /connect 配置 provider · /models 选择模型 · Esc 退出"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2370,6 +3040,72 @@ mod tests {
     fn input_width_counts_visible_cells() {
         assert_eq!(input_width("abc"), 3);
         assert_eq!(input_width("、"), 2);
+    }
+
+    #[test]
+    fn home_input_hint_lists_primary_actions() {
+        let hint = home_input_hint();
+        assert!(hint.contains("Enter"));
+        assert!(hint.contains("/connect"));
+        assert!(hint.contains("/models"));
+        assert!(hint.contains("Esc 退出"));
+    }
+
+    #[test]
+    fn connect_add_without_args_starts_wizard() {
+        let mut view = SessionView::new(
+            "unconfigured".to_string(),
+            "unconfigured".to_string(),
+            String::new(),
+            None,
+            Config::default(),
+            std::env::current_dir().unwrap(),
+        );
+
+        view.open_connect_dialog(vec!["add".to_string()]);
+
+        assert!(view.pending_text_input.is_some());
+        assert!(view.connect_draft.is_some());
+    }
+
+    #[test]
+    fn thinking_mode_labels_are_stable() {
+        assert_eq!(ThinkingMode::Show.label(), "show");
+        assert_eq!(ThinkingMode::Hide.label(), "hide");
+    }
+
+    #[test]
+    fn home_status_message_reports_missing_setup() {
+        let view = SessionView::new(
+            "unconfigured".to_string(),
+            "unconfigured".to_string(),
+            String::new(),
+            None,
+            Config::default(),
+            std::env::current_dir().unwrap(),
+        );
+
+        assert_eq!(
+            view.home_status_message(),
+            "Setup required: no provider configured. Type /connect to add one."
+        );
+    }
+
+    #[test]
+    fn default_status_message_prefers_home_guidance_when_idle() {
+        let view = SessionView::new(
+            "unconfigured".to_string(),
+            "unconfigured".to_string(),
+            String::new(),
+            None,
+            Config::default(),
+            std::env::current_dir().unwrap(),
+        );
+
+        assert_eq!(
+            view.default_status_message(),
+            "Setup required: no provider configured. Type /connect to add one."
+        );
     }
 
     #[test]

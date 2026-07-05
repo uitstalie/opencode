@@ -1,11 +1,11 @@
-pub mod config;
 pub mod agent;
+pub mod config;
 pub mod e2e;
 pub mod permission;
 pub mod prompt;
 pub mod provider;
 pub mod session;
+pub mod task;
 pub mod tool;
 pub mod tui;
-pub mod task;
 pub mod vault;

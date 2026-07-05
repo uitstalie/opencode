@@ -50,7 +50,10 @@ fn print_list(agents: &[agent::AgentInfo]) {
     }
 
     for info in agents {
-        println!("{}  [{}] {}  hidden={}", info.id, info.mode, info.description, info.hidden);
+        println!(
+            "{}  [{}] {}  hidden={}",
+            info.id, info.mode, info.description, info.hidden
+        );
     }
 }
 

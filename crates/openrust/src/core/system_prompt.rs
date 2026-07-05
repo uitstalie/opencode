@@ -126,10 +126,12 @@ fn render_capabilities(shell_kind: crate::tool::shell::ShellKind) -> String {
         "- write-skills: SKILL.md 格式与陷阱".to_string(),
         String::new(),
         "## Agents".to_string(),
-        "- agents are loaded from local markdown directories such as agents/, agent/, and modes/".to_string(),
+        "- agents are loaded from local markdown directories such as agents/, agent/, and modes/"
+            .to_string(),
         String::new(),
         "## Tasks".to_string(),
-        "- task and todo state are session-scoped and persisted in the session database".to_string(),
+        "- task and todo state are session-scoped and persisted in the session database"
+            .to_string(),
         String::new(),
         "## Tools".to_string(),
         "- debug: provider / tool / config / vault / session / prompt".to_string(),

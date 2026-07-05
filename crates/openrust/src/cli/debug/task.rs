@@ -28,15 +28,13 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
             print_list(&session, &store.list_tasks(&session)?);
             Ok(())
         }
-        Cmd::Done { session, id } => {
-            match store.update_task_status(&session, &id, "completed")? {
-                Some(task) => {
-                    println!("Task completed: {} [{}]", task.id, task.title);
-                    Ok(())
-                }
-                None => anyhow::bail!("Task '{}' not found in session '{}'", id, session),
+        Cmd::Done { session, id } => match store.update_task_status(&session, &id, "completed")? {
+            Some(task) => {
+                println!("Task completed: {} [{}]", task.id, task.title);
+                Ok(())
             }
-        }
+            None => anyhow::bail!("Task '{}' not found in session '{}'", id, session),
+        },
     }
 }
 

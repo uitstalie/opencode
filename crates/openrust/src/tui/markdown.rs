@@ -68,7 +68,10 @@ impl<'a> Builder<'a> {
             Event::HardBreak => self.flush_line(),
             Event::Rule => {
                 self.flush_line();
-                self.lines.push(Line::from(Span::styled("────────────────", self.theme.muted_style())));
+                self.lines.push(Line::from(Span::styled(
+                    "────────────────",
+                    self.theme.muted_style(),
+                )));
                 self.lines.push(Line::from(""));
             }
             _ => {}
@@ -173,7 +176,8 @@ impl<'a> Builder<'a> {
         if self.current.is_empty() {
             return;
         }
-        self.lines.push(Line::from(std::mem::take(&mut self.current)));
+        self.lines
+            .push(Line::from(std::mem::take(&mut self.current)));
     }
 
     fn finish(mut self) -> Vec<Line<'static>> {
@@ -204,7 +208,12 @@ mod tests {
     fn text_of(lines: &[Line<'static>]) -> String {
         lines
             .iter()
-            .map(|line| line.spans.iter().map(|s| s.content.as_ref()).collect::<String>())
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
             .collect::<Vec<_>>()
             .join("\n")
     }

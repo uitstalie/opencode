@@ -3,9 +3,11 @@
 use futures::StreamExt;
 
 use crate::core::agent;
-use crate::core::provider::{self, LlmProvider, Message, RequestOptions, StreamChunk, ToolDef, ToolFunction};
+use crate::core::provider::{
+    self, LlmProvider, Message, RequestOptions, StreamChunk, ToolDef, ToolFunction,
+};
 use crate::require_str;
-use crate::tool::{catalog, run_tool, Tool, ToolContext, ToolParams, ToolResult};
+use crate::tool::{Tool, ToolContext, ToolParams, ToolResult, catalog, run_tool};
 use serde_json::Value;
 
 /// Maximum provider turns for a single sub-agent run (guards against loops).
@@ -77,10 +79,20 @@ impl Tool for TaskTool {
             tool_calls: None,
         }];
 
-        match run_agent(llm.as_ref(), model, &system, ctx.reasoning_effort.as_deref(), initial, &sub_ctx).await {
-            Ok(output) if output.trim().is_empty() => {
-                ToolResult::text(format!("[{} sub-agent finished with no textual output]", subagent_type))
-            }
+        match run_agent(
+            llm.as_ref(),
+            model,
+            &system,
+            ctx.reasoning_effort.as_deref(),
+            initial,
+            &sub_ctx,
+        )
+        .await
+        {
+            Ok(output) if output.trim().is_empty() => ToolResult::text(format!(
+                "[{} sub-agent finished with no textual output]",
+                subagent_type
+            )),
             Ok(output) => ToolResult::text(output),
             Err(err) => ToolResult::error(format!("task: sub-agent failed: {}", err)),
         }
@@ -132,6 +144,7 @@ pub async fn run_agent(
         let mut assistant_text = String::new();
         let mut pending: Vec<(String, String, String)> = Vec::new();
         let mut finish_seen = false;
+        let mut tool_executed = false;
 
         while let Some(chunk) = stream.next().await {
             match chunk? {
@@ -141,12 +154,20 @@ pub async fn run_agent(
                     pending.push((id, name, String::new()));
                 }
                 StreamChunk::ToolCallDelta { id, args } => {
-                    if let Some((_, _, buffer)) = pending.iter_mut().rev().find(|(call_id, _, _)| call_id == &id) {
+                    if let Some((_, _, buffer)) = pending
+                        .iter_mut()
+                        .rev()
+                        .find(|(call_id, _, _)| call_id == &id)
+                    {
                         buffer.push_str(&args);
                     }
                 }
                 StreamChunk::ToolCallEnd { id } => {
-                    let Some((_, name, args)) = pending.iter().find(|(call_id, _, _)| call_id == &id).cloned() else {
+                    let Some((_, name, args)) = pending
+                        .iter()
+                        .find(|(call_id, _, _)| call_id == &id)
+                        .cloned()
+                    else {
                         continue;
                     };
                     let output = run_tool(&name, &args, tool_ctx).await;
@@ -173,6 +194,7 @@ pub async fn run_agent(
                     });
                     assistant_text.clear();
                     pending.clear();
+                    tool_executed = true;
                     break;
                 }
                 StreamChunk::Finish { .. } => finish_seen = true,
@@ -188,6 +210,10 @@ pub async fn run_agent(
                 tool_call_id: None,
                 tool_calls: None,
             });
+        }
+
+        if tool_executed {
+            continue;
         }
 
         if pending.is_empty() {
@@ -208,6 +234,61 @@ pub async fn run_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+
+    struct FakeProvider {
+        calls: Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for FakeProvider {
+        async fn chat(
+            &self,
+            messages: Vec<Message>,
+            _tools: Vec<ToolDef>,
+            _options: RequestOptions,
+        ) -> anyhow::Result<provider::ChunkStream> {
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+
+            if *calls == 1 {
+                return Ok(Box::pin(futures::stream::iter(vec![
+                    Ok(StreamChunk::ToolCallStart {
+                        id: "call-1".to_string(),
+                        name: "write".to_string(),
+                    }),
+                    Ok(StreamChunk::ToolCallDelta {
+                        id: "call-1".to_string(),
+                        args: r#"{"path":"/tmp/openrust-denied/out.txt","content":"blocked"}"#
+                            .to_string(),
+                    }),
+                    Ok(StreamChunk::ToolCallEnd {
+                        id: "call-1".to_string(),
+                    }),
+                ])));
+            }
+
+            let denied = messages.iter().any(|message| {
+                message.role == "tool" && message.content.contains("outside the project scope")
+            });
+            Ok(Box::pin(futures::stream::iter(vec![
+                Ok(StreamChunk::TextDelta(if denied {
+                    "permission denied observed".to_string()
+                } else {
+                    "permission result missing".to_string()
+                })),
+                Ok(StreamChunk::Finish { usage: None }),
+            ])))
+        }
+
+        fn list_models(&self) -> Vec<String> {
+            vec!["fake-model".to_string()]
+        }
+
+        fn name(&self) -> &str {
+            "fake"
+        }
+    }
 
     #[tokio::test]
     async fn errors_without_llm() {
@@ -223,5 +304,32 @@ mod tests {
             )
             .await;
         assert!(matches!(result, ToolResult::Error(_)));
+    }
+
+    #[tokio::test]
+    async fn subagent_tool_calls_use_permission_gate() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ToolContext {
+            llm: Some(Arc::new(FakeProvider {
+                calls: Mutex::new(0),
+            })),
+            model: Some("fake-model".to_string()),
+            interactive: false,
+            ..ToolContext::new(dir.path().to_path_buf())
+        };
+
+        let result = TaskTool
+            .execute(
+                ToolParams::new(serde_json::json!({
+                    "description": "permission check",
+                    "prompt": "try a write",
+                    "subagent_type": "general"
+                })),
+                &ctx,
+            )
+            .await;
+
+        assert_eq!(result.into_text(), "permission denied observed");
+        assert!(!std::path::Path::new("/tmp/openrust-denied/out.txt").exists());
     }
 }

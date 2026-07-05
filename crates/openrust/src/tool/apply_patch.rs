@@ -14,7 +14,7 @@
 //! *** End Patch
 //! ```
 
-use crate::tool::{resolve_path, Tool, ToolContext, ToolParams, ToolResult};
+use crate::tool::{Tool, ToolContext, ToolParams, ToolResult, resolve_path};
 use serde_json::Value;
 
 pub struct ApplyPatchTool;
@@ -45,12 +45,22 @@ impl Tool for ApplyPatchTool {
 
         let hunks = match parse_patch(patch_text) {
             Ok(hunks) => hunks,
-            Err(err) => return ToolResult::error(format!("apply_patch verification failed: {}", err)),
+            Err(err) => {
+                return ToolResult::error(format!("apply_patch verification failed: {}", err));
+            }
         };
         if hunks.is_empty() {
             return ToolResult::error("patch rejected: empty patch");
         }
-        if hunks.iter().any(|hunk| matches!(hunk, Hunk::Update { move_path: Some(_), .. })) {
+        if hunks.iter().any(|hunk| {
+            matches!(
+                hunk,
+                Hunk::Update {
+                    move_path: Some(_),
+                    ..
+                }
+            )
+        }) {
             return ToolResult::error("apply_patch moves are not supported yet");
         }
 
@@ -82,9 +92,18 @@ impl Tool for ApplyPatchTool {
 // ── Patch model ────────────────────────────────────
 
 enum Hunk {
-    Add { path: String, contents: String },
-    Delete { path: String },
-    Update { path: String, move_path: Option<String>, chunks: Vec<UpdateChunk> },
+    Add {
+        path: String,
+        contents: String,
+    },
+    Delete {
+        path: String,
+    },
+    Update {
+        path: String,
+        move_path: Option<String>,
+        chunks: Vec<UpdateChunk>,
+    },
 }
 
 struct UpdateChunk {
@@ -96,7 +115,9 @@ struct UpdateChunk {
 
 fn parse_patch(patch_text: &str) -> Result<Vec<Hunk>, String> {
     let lines: Vec<&str> = patch_text.trim().split('\n').collect();
-    let begin = lines.iter().position(|line| line.trim() == "*** Begin Patch");
+    let begin = lines
+        .iter()
+        .position(|line| line.trim() == "*** Begin Patch");
     let end = lines.iter().position(|line| line.trim() == "*** End Patch");
     let (Some(begin), Some(end)) = (begin, end) else {
         return Err("missing Begin/End markers".to_string());
@@ -145,9 +166,16 @@ fn parse_patch(patch_text: &str) -> Result<Vec<Hunk>, String> {
             }
             let (chunks, after) = parse_update(&lines, next)?;
             if chunks.is_empty() {
-                return Err(format!("invalid update hunk for {}: expected at least one @@ chunk", path));
+                return Err(format!(
+                    "invalid update hunk for {}: expected at least one @@ chunk",
+                    path
+                ));
             }
-            hunks.push(Hunk::Update { path, move_path, chunks });
+            hunks.push(Hunk::Update {
+                path,
+                move_path,
+                chunks,
+            });
             index = after;
             continue;
         }
@@ -178,7 +206,11 @@ fn parse_update(lines: &[&str], start: usize) -> Result<(Vec<UpdateChunk>, usize
         };
         let change_context = {
             let trimmed = context_rest.trim();
-            if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
         };
         let mut old_lines = Vec::new();
         let mut new_lines = Vec::new();
@@ -209,7 +241,12 @@ fn parse_update(lines: &[&str], start: usize) -> Result<(Vec<UpdateChunk>, usize
             }
             index += 1;
         }
-        chunks.push(UpdateChunk { old_lines, new_lines, change_context, end_of_file });
+        chunks.push(UpdateChunk {
+            old_lines,
+            new_lines,
+            change_context,
+            end_of_file,
+        });
     }
     Ok((chunks, index))
 }
@@ -243,7 +280,8 @@ fn apply_hunk(ctx: &ToolContext, hunk: &Hunk) -> Result<String, String> {
         }
         Hunk::Update { path, chunks, .. } => {
             let resolved = resolve_path(ctx, path);
-            let original = std::fs::read_to_string(&resolved).map_err(|e| format!("{}: {}", path, e))?;
+            let original =
+                std::fs::read_to_string(&resolved).map_err(|e| format!("{}: {}", path, e))?;
             let updated = derive(path, chunks, &original)?;
             if let Some(store) = &ctx.undo_store {
                 store.save_snapshot(&resolved, &original);
@@ -304,7 +342,11 @@ fn compute_replacements(
             found = seek(lines, &old_lines, line_index, chunk.end_of_file);
         }
         let Some(found) = found else {
-            return Err(format!("Failed to find expected lines in {}:\n{}", path, chunk.old_lines.join("\n")));
+            return Err(format!(
+                "Failed to find expected lines in {}:\n{}",
+                path,
+                chunk.old_lines.join("\n")
+            ));
         };
         let remove = old_lines.len();
         replacements.push((found, remove, new_lines));
@@ -334,8 +376,16 @@ fn seek(lines: &[String], pattern: &[String], start: usize, eof: bool) -> Option
     None
 }
 
-fn matches_at(lines: &[String], pattern: &[String], offset: usize, compare: fn(&str, &str) -> bool) -> bool {
-    pattern.iter().enumerate().all(|(i, line)| compare(&lines[offset + i], line))
+fn matches_at(
+    lines: &[String],
+    pattern: &[String],
+    offset: usize,
+    compare: fn(&str, &str) -> bool,
+) -> bool {
+    pattern
+        .iter()
+        .enumerate()
+        .all(|(i, line)| compare(&lines[offset + i], line))
 }
 
 fn cmp_exact(left: &str, right: &str) -> bool {
@@ -361,10 +411,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let patch = "*** Begin Patch\n*** Add File: new.txt\n+hello\n+world\n*** End Patch";
         let r = ApplyPatchTool
-            .execute(ToolParams::new(serde_json::json!({"patchText": patch})), &ctx(dir.path()))
+            .execute(
+                ToolParams::new(serde_json::json!({"patchText": patch})),
+                &ctx(dir.path()),
+            )
             .await;
         assert!(r.into_text().contains("A new.txt"));
-        assert_eq!(std::fs::read_to_string(dir.path().join("new.txt")).unwrap(), "hello\nworld\n");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("new.txt")).unwrap(),
+            "hello\nworld\n"
+        );
     }
 
     #[tokio::test]
@@ -373,10 +429,16 @@ mod tests {
         std::fs::write(dir.path().join("f.txt"), "alpha\nbeta\ngamma\n").unwrap();
         let patch = "*** Begin Patch\n*** Update File: f.txt\n@@\n alpha\n-beta\n+BETA\n gamma\n*** End Patch";
         let r = ApplyPatchTool
-            .execute(ToolParams::new(serde_json::json!({"patchText": patch})), &ctx(dir.path()))
+            .execute(
+                ToolParams::new(serde_json::json!({"patchText": patch})),
+                &ctx(dir.path()),
+            )
             .await;
         assert!(r.into_text().contains("M f.txt"));
-        assert_eq!(std::fs::read_to_string(dir.path().join("f.txt")).unwrap(), "alpha\nBETA\ngamma\n");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+            "alpha\nBETA\ngamma\n"
+        );
     }
 
     #[tokio::test]
@@ -385,7 +447,10 @@ mod tests {
         std::fs::write(dir.path().join("gone.txt"), "x\n").unwrap();
         let patch = "*** Begin Patch\n*** Delete File: gone.txt\n*** End Patch";
         let r = ApplyPatchTool
-            .execute(ToolParams::new(serde_json::json!({"patchText": patch})), &ctx(dir.path()))
+            .execute(
+                ToolParams::new(serde_json::json!({"patchText": patch})),
+                &ctx(dir.path()),
+            )
             .await;
         assert!(r.into_text().contains("D gone.txt"));
         assert!(!dir.path().join("gone.txt").exists());
@@ -395,7 +460,10 @@ mod tests {
     async fn rejects_missing_markers() {
         let dir = tempfile::tempdir().unwrap();
         let r = ApplyPatchTool
-            .execute(ToolParams::new(serde_json::json!({"patchText": "not a patch"})), &ctx(dir.path()))
+            .execute(
+                ToolParams::new(serde_json::json!({"patchText": "not a patch"})),
+                &ctx(dir.path()),
+            )
             .await;
         assert!(r.into_text().contains("verification failed"));
     }
@@ -406,7 +474,10 @@ mod tests {
         std::fs::write(dir.path().join("f.txt"), "one\ntwo\n").unwrap();
         let patch = "*** Begin Patch\n*** Update File: f.txt\n@@\n-nope\n+yep\n*** End Patch";
         let r = ApplyPatchTool
-            .execute(ToolParams::new(serde_json::json!({"patchText": patch})), &ctx(dir.path()))
+            .execute(
+                ToolParams::new(serde_json::json!({"patchText": patch})),
+                &ctx(dir.path()),
+            )
             .await;
         assert!(r.into_text().contains("Failed to find expected lines"));
     }

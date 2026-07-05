@@ -59,9 +59,20 @@ impl Tool for TodoWriteTool {
             .map(|(index, item)| Task {
                 id: format!("{}", index + 1),
                 agent: None,
-                title: item.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                status: item.get("status").and_then(|v| v.as_str()).unwrap_or("pending").to_string(),
-                priority: item.get("priority").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                title: item
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                status: item
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("pending")
+                    .to_string(),
+                priority: item
+                    .get("priority")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
                 created_at: now.clone(),
                 updated_at: now.clone(),
             })
@@ -86,7 +97,11 @@ impl Tool for TodoWriteTool {
             .collect::<Vec<_>>()
             .join("\n");
 
-        ToolResult::text(format!("Updated todo list ({} items):\n{}", tasks.len(), rendered))
+        ToolResult::text(format!(
+            "Updated todo list ({} items):\n{}",
+            tasks.len(),
+            rendered
+        ))
     }
 }
 
@@ -133,7 +148,11 @@ mod tests {
 
         let tasks = store.list_tasks(&session_id).unwrap();
         assert_eq!(tasks.len(), 2);
-        assert!(tasks.iter().any(|t| t.title == "first" && t.status == "in_progress"));
+        assert!(
+            tasks
+                .iter()
+                .any(|t| t.title == "first" && t.status == "in_progress")
+        );
     }
 
     #[tokio::test]

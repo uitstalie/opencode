@@ -4,7 +4,7 @@
 //! Project-scope permission goes through `Tool::execute_checked`.
 
 use crate::core::paths;
-use crate::tool::{resolve_path, Tool, ToolContext, ToolParams, ToolResult};
+use crate::tool::{Tool, ToolContext, ToolParams, ToolResult, resolve_path};
 use crate::{require_str, try_tool};
 use serde_json::Value;
 

@@ -89,13 +89,19 @@ impl Tool for QuestionTool {
             .iter()
             .enumerate()
             .map(|(index, question)| {
-                let header = question.get("header").and_then(|v| v.as_str()).unwrap_or("");
+                let header = question
+                    .get("header")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let label = if header.is_empty() {
                     format!("Q{}", index + 1)
                 } else {
                     header.to_string()
                 };
-                let answer = answers.get(index).map(String::as_str).unwrap_or("(no answer)");
+                let answer = answers
+                    .get(index)
+                    .map(String::as_str)
+                    .unwrap_or("(no answer)");
                 format!("{}: {}", label, answer)
             })
             .collect::<Vec<_>>()

@@ -137,7 +137,10 @@ impl SessionStore {
 
     pub fn effective_messages(&self, session_id: &str) -> anyhow::Result<Vec<Message>> {
         let messages = self.get_messages(session_id)?;
-        let Some(index) = messages.iter().rposition(|message| message.summary.is_some()) else {
+        let Some(index) = messages
+            .iter()
+            .rposition(|message| message.summary.is_some())
+        else {
             return Ok(messages);
         };
         Ok(messages[index..].to_vec())
@@ -170,7 +173,11 @@ impl SessionStore {
 
     pub fn replace_messages(&self, session_id: &str, messages: &[Message]) -> anyhow::Result<()> {
         let tree = self.db.open_tree("messages")?;
-        for key in tree.scan_prefix(format!("{session_id}:").as_bytes()).keys().flatten() {
+        for key in tree
+            .scan_prefix(format!("{session_id}:").as_bytes())
+            .keys()
+            .flatten()
+        {
             tree.remove(key)?;
         }
         for message in messages {
@@ -269,7 +276,9 @@ impl SessionStore {
     }
 
     pub fn get_session_agent(&self, session_id: &str) -> anyhow::Result<Option<String>> {
-        Ok(self.get_session(session_id)?.and_then(|session| session.agent))
+        Ok(self
+            .get_session(session_id)?
+            .and_then(|session| session.agent))
     }
 
     pub fn list_tasks(&self, session_id: &str) -> anyhow::Result<Vec<TaskSummary>> {
@@ -327,17 +336,29 @@ impl SessionStore {
     /// Replace all tasks for a session with the given set (full-list semantics for todowrite).
     pub fn replace_tasks(&self, session_id: &str, tasks: &[Task]) -> anyhow::Result<()> {
         let tree = self.db.open_tree("tasks")?;
-        for key in tree.scan_prefix(format!("{session_id}:").as_bytes()).keys().flatten() {
+        for key in tree
+            .scan_prefix(format!("{session_id}:").as_bytes())
+            .keys()
+            .flatten()
+        {
             tree.remove(key)?;
         }
         for task in tasks {
-            tree.insert(self.task_key(session_id, &task.id), serde_json::to_vec(task)?)?;
+            tree.insert(
+                self.task_key(session_id, &task.id),
+                serde_json::to_vec(task)?,
+            )?;
         }
         self.touch_session(session_id)?;
         Ok(())
     }
 
-    pub fn update_task_status(&self, session_id: &str, id: &str, status: &str) -> anyhow::Result<Option<Task>> {
+    pub fn update_task_status(
+        &self,
+        session_id: &str,
+        id: &str,
+        status: &str,
+    ) -> anyhow::Result<Option<Task>> {
         let key = self.task_key(session_id, id);
         let tree = self.db.open_tree("tasks")?;
         let Some(value) = tree.get(key.as_bytes())? else {
@@ -462,15 +483,22 @@ mod tests {
 
         {
             let store = SessionStore::open_at(dir.path()).unwrap();
-            store.ensure_session("session-5", Some("build".to_string())).unwrap();
-            store.set_session_agent("session-5", Some("review".to_string())).unwrap();
+            store
+                .ensure_session("session-5", Some("build".to_string()))
+                .unwrap();
+            store
+                .set_session_agent("session-5", Some("review".to_string()))
+                .unwrap();
             drop(store);
         }
 
         std::thread::sleep(std::time::Duration::from_millis(25));
 
         let store = SessionStore::open_at(dir.path()).unwrap();
-        assert_eq!(store.get_session_agent("session-5").unwrap().as_deref(), Some("review"));
+        assert_eq!(
+            store.get_session_agent("session-5").unwrap().as_deref(),
+            Some("review")
+        );
         let sessions = store.list_sessions().unwrap();
         assert_eq!(sessions[0].agent.as_deref(), Some("review"));
     }
@@ -481,7 +509,9 @@ mod tests {
         let store = SessionStore::open_at(dir.path()).unwrap();
         store.ensure_session("session-6", None).unwrap();
         store.append_message("session-6", "user", "one").unwrap();
-        store.append_message("session-6", "assistant", "two").unwrap();
+        store
+            .append_message("session-6", "assistant", "two")
+            .unwrap();
 
         let replacement = [Message {
             id: "summary-1".to_string(),
@@ -508,12 +538,22 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = SessionStore::open_at(dir.path()).unwrap();
         store.ensure_session("session-7", None).unwrap();
-        store.append_message("session-7", "user", "old one").unwrap();
-        store.append_message("session-7", "assistant", "old two").unwrap();
         store
-            .append_compaction("session-7", "checkpoint".to_string(), "old one\nold two".to_string())
+            .append_message("session-7", "user", "old one")
             .unwrap();
-        store.append_message("session-7", "user", "new one").unwrap();
+        store
+            .append_message("session-7", "assistant", "old two")
+            .unwrap();
+        store
+            .append_compaction(
+                "session-7",
+                "checkpoint".to_string(),
+                "old one\nold two".to_string(),
+            )
+            .unwrap();
+        store
+            .append_message("session-7", "user", "new one")
+            .unwrap();
 
         let messages = store.effective_messages("session-7").unwrap();
         assert_eq!(messages.len(), 2);

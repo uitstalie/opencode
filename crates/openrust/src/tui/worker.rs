@@ -4,12 +4,15 @@ use std::sync::mpsc;
 
 use crossterm::{cursor, event::DisableMouseCapture, execute, terminal};
 use futures::StreamExt;
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{Terminal, backend::CrosstermBackend};
 
-use crate::core::{provider, provider::RequestOptions, provider::StreamChunk, provider::ToolDef, provider::ToolFunction};
 use crate::core::session::SessionStore;
-use crate::tool::{AskRequest, PermissionRequest, ToolContext};
+use crate::core::{
+    provider, provider::RequestOptions, provider::StreamChunk, provider::ToolDef,
+    provider::ToolFunction,
+};
 use crate::tool::catalog;
+use crate::tool::{AskRequest, PermissionRequest, ToolContext};
 
 pub(super) struct PromptJob {
     pub(super) receiver: mpsc::Receiver<PromptEvent>,
@@ -20,7 +23,10 @@ pub(super) struct PromptJob {
 pub(super) enum PromptEvent {
     AssistantDelta(String),
     ThinkingDelta(String),
-    ToolCall { id: String, name: String },
+    ToolCall {
+        id: String,
+        name: String,
+    },
     ToolComplete {
         id: String,
         name: String,
@@ -112,7 +118,11 @@ pub(super) fn spawn_prompt_worker(
                 session_id,
                 store,
                 ask_tx: if interactive { Some(ask_tx) } else { None },
-                permission_tx: if interactive { Some(permission_tx) } else { None },
+                permission_tx: if interactive {
+                    Some(permission_tx)
+                } else {
+                    None
+                },
                 llm: Some(Arc::clone(&llm)),
                 model: Some(model.clone()),
                 reasoning_effort: reasoning_effort.clone(),
@@ -157,12 +167,20 @@ pub(super) fn spawn_prompt_worker(
                             let _ = tx.send(PromptEvent::ToolCall { id, name });
                         }
                         StreamChunk::ToolCallDelta { id, args } => {
-                            if let Some((_, _, buffer)) = pending_tools.iter_mut().rev().find(|(call_id, _, _)| call_id == &id) {
+                            if let Some((_, _, buffer)) = pending_tools
+                                .iter_mut()
+                                .rev()
+                                .find(|(call_id, _, _)| call_id == &id)
+                            {
                                 buffer.push_str(&args);
                             }
                         }
                         StreamChunk::ToolCallEnd { id } => {
-                            let Some((_, name, args)) = pending_tools.iter().find(|(call_id, _, _)| call_id == &id).cloned() else {
+                            let Some((_, name, args)) = pending_tools
+                                .iter()
+                                .find(|(call_id, _, _)| call_id == &id)
+                                .cloned()
+                            else {
                                 continue;
                             };
                             let tool_output = crate::tool::run_tool(&name, &args, &tool_ctx).await;

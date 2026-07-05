@@ -1,7 +1,7 @@
 //! File-tree sidebar with live refresh via `notify`.
 
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{Receiver, channel};
 
 use notify::{RecursiveMode, Watcher};
 use ratatui::text::{Line, Span};
@@ -10,7 +10,14 @@ use super::render::Theme;
 
 const MAX_DEPTH: usize = 4;
 const MAX_ENTRIES: usize = 500;
-const SKIP_DIRS: &[&str] = &[".git", "target", "node_modules", ".opencode", "dist", ".cache"];
+const SKIP_DIRS: &[&str] = &[
+    ".git",
+    "target",
+    "node_modules",
+    ".opencode",
+    "dist",
+    ".cache",
+];
 
 pub struct FileTree {
     root: PathBuf,
@@ -129,7 +136,11 @@ fn walk(dir: &Path, depth: usize, entries: &mut Vec<TreeEntry>) {
         if entries.len() >= MAX_ENTRIES {
             return;
         }
-        entries.push(TreeEntry { depth, name, is_dir });
+        entries.push(TreeEntry {
+            depth,
+            name,
+            is_dir,
+        });
         if is_dir {
             walk(&path, depth + 1, entries);
         }

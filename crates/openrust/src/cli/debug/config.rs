@@ -181,9 +181,61 @@ fn show_config(config: &Config) {
 fn show_paths() {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let paths = crate::core::platform::PlatformPaths::detect();
-    println!("Project config:  {}/openrust.json", cwd.display());
-    println!("Global config:   {}", paths.global_config_path().display());
-    println!("Vault (enc):     {}", paths.credentials_path().display());
-    println!("Undo store:      {}", paths.undo_dir().display());
-    println!("Sessions DB:     {}", paths.sessions_db_path().display());
+    for line in render_paths(&cwd, &paths) {
+        println!("{}", line);
+    }
+}
+
+fn render_paths(
+    cwd: &std::path::Path,
+    paths: &crate::core::platform::PlatformPaths,
+) -> [String; 5] {
+    [
+        format!("Project config:  {}/openrust.json", cwd.display()),
+        format!("Global config:   {}", paths.global_config_path().display()),
+        format!("Vault (enc):     {}", paths.credentials_path().display()),
+        format!("Undo store:      {}", paths.undo_dir().display()),
+        format!("Sessions DB:     {}", paths.sessions_db_path().display()),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::platform::{PlatformKind, PlatformPaths, PlatformScope};
+
+    #[test]
+    fn render_paths_includes_all_expected_labels() {
+        let cwd = PathBuf::from("/work/app");
+        let paths = PlatformPaths {
+            kind: PlatformKind::Fedora,
+            home: PathBuf::from("/home/test"),
+            config: PlatformScope {
+                dir: PathBuf::from("/home/test/.config/openrust"),
+            },
+            data: PlatformScope {
+                dir: PathBuf::from("/home/test/.local/share/openrust"),
+            },
+            cache: PlatformScope {
+                dir: PathBuf::from("/home/test/.cache/openrust"),
+            },
+        };
+
+        let lines = render_paths(&cwd, &paths);
+
+        assert_eq!(lines[0], "Project config:  /work/app/openrust.json");
+        assert_eq!(
+            lines[1],
+            "Global config:   /home/test/.config/openrust/config.json"
+        );
+        assert_eq!(
+            lines[2],
+            "Vault (enc):     /home/test/.config/openrust/credentials.enc"
+        );
+        assert_eq!(lines[3], "Undo store:      /home/test/.cache/openrust/undo");
+        assert_eq!(
+            lines[4],
+            "Sessions DB:     /home/test/.local/share/openrust/sessions.db"
+        );
+    }
 }

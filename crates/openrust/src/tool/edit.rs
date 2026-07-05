@@ -1,6 +1,6 @@
 //! Edit file tool — exact `oldString` → `newString` replacement.
 
-use crate::tool::{resolve_path, Tool, ToolContext, ToolParams, ToolResult};
+use crate::tool::{Tool, ToolContext, ToolParams, ToolResult, resolve_path};
 use crate::{require_str, try_tool};
 use serde_json::Value;
 
@@ -29,7 +29,10 @@ impl Tool for EditTool {
     }
 
     async fn execute(&self, p: ToolParams, ctx: &ToolContext) -> ToolResult {
-        let path_str = p.opt_str("path").or_else(|| p.opt_str("filePath")).unwrap_or("");
+        let path_str = p
+            .opt_str("path")
+            .or_else(|| p.opt_str("filePath"))
+            .unwrap_or("");
         if path_str.is_empty() {
             return ToolResult::error("Missing required parameter: path");
         }
@@ -156,6 +159,9 @@ mod tests {
             )
             .await;
         assert!(r.into_text().contains("1 occurrence"));
-        assert_eq!(std::fs::read_to_string(dir.path().join("f.txt")).unwrap(), "beta\n");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+            "beta\n"
+        );
     }
 }

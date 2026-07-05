@@ -253,8 +253,11 @@ pub(crate) async fn run_tool(name: &str, args: &str, ctx: &ToolContext) -> Strin
     let Some(tool) = catalog::create_tool(name, ctx.undo_store.clone()) else {
         return format!("Unknown tool: {}", name);
     };
-    let parsed = serde_json::from_str(args).unwrap_or_else(|_| serde_json::json!({ "input": args }));
-    tool.execute_checked(ToolParams::new(parsed), ctx).await.into_text()
+    let parsed =
+        serde_json::from_str(args).unwrap_or_else(|_| serde_json::json!({ "input": args }));
+    tool.execute_checked(ToolParams::new(parsed), ctx)
+        .await
+        .into_text()
 }
 
 // ── Tool Trait ─────────────────────────────────────
@@ -285,7 +288,10 @@ pub trait Tool: Send + Sync {
                     })
                     .is_err()
                 {
-                    return ToolResult::error(format!("{}: permission UI unavailable", self.name()));
+                    return ToolResult::error(format!(
+                        "{}: permission UI unavailable",
+                        self.name()
+                    ));
                 }
                 match decision_rx.recv() {
                     Ok(true) => self.execute(params, ctx).await,

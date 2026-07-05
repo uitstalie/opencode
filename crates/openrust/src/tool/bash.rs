@@ -1,6 +1,6 @@
 //! Shell tool — command execution with timeout and cwd.
 
-use crate::tool::{resolve_path, Tool, ToolContext, ToolParams, ToolResult};
+use crate::tool::{Tool, ToolContext, ToolParams, ToolResult, resolve_path};
 use crate::{require_str, try_tool};
 use serde_json::Value;
 use std::process::Stdio;
@@ -32,7 +32,10 @@ impl Tool for BashTool {
     async fn execute(&self, p: ToolParams, ctx: &ToolContext) -> ToolResult {
         let cmd_str = require_str!(p, "command");
         let timeout_ms = p.u64_or("timeout", 120_000);
-        let workdir = p.opt_str("workdir").map(|value| resolve_path(ctx, value)).unwrap_or_else(|| ctx.cwd.clone());
+        let workdir = p
+            .opt_str("workdir")
+            .map(|value| resolve_path(ctx, value))
+            .unwrap_or_else(|| ctx.cwd.clone());
         let shell_kind = crate::tool::shell::detect_shell_kind();
         let (shell_bin, shell_args) = crate::tool::shell::shell_command(shell_kind);
 

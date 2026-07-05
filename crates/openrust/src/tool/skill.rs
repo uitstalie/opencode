@@ -43,7 +43,10 @@ impl Tool for SkillTool {
 
         let available = list_skills(ctx);
         if available.is_empty() {
-            return ToolResult::error(format!("skill '{}' not found; no skills are installed", name));
+            return ToolResult::error(format!(
+                "skill '{}' not found; no skills are installed",
+                name
+            ));
         }
         ToolResult::error(format!(
             "skill '{}' not found. Available skills: {}",
@@ -85,7 +88,10 @@ fn list_skills(ctx: &ToolContext) -> Vec<String> {
 
 /// Strip a leading `---` YAML frontmatter block, returning the body.
 fn strip_frontmatter(content: &str) -> String {
-    let Some(rest) = content.strip_prefix("---\n").or_else(|| content.strip_prefix("---\r\n")) else {
+    let Some(rest) = content
+        .strip_prefix("---\n")
+        .or_else(|| content.strip_prefix("---\r\n"))
+    else {
         return content.to_string();
     };
     let Some(end) = rest.find("\n---\n").or_else(|| rest.find("\r\n---\r\n")) else {
@@ -136,7 +142,10 @@ mod tests {
 
         let ctx = ToolContext::new(root);
         let result = SkillTool
-            .execute(ToolParams::new(serde_json::json!({ "name": "absent" })), &ctx)
+            .execute(
+                ToolParams::new(serde_json::json!({ "name": "absent" })),
+                &ctx,
+            )
             .await;
         assert!(matches!(result, ToolResult::Error(_)));
         assert!(result.into_text().contains("present"));

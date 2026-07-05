@@ -44,7 +44,11 @@ impl Tool for WebFetchTool {
         }
         let body = try_tool!(resp.text().await, |e| format!("Read: {}", e));
         let format = p.opt_str("format").unwrap_or("markdown");
-        let content = if format == "html" { body.clone() } else { strip_html(&body) };
+        let content = if format == "html" {
+            body.clone()
+        } else {
+            strip_html(&body)
+        };
 
         let out = if content.len() > 100_000 {
             format!(

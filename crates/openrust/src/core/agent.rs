@@ -64,7 +64,11 @@ fn candidate_directories(cwd: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-fn collect_markdown(root: &Path, directory: &Path, agents: &mut Vec<AgentInfo>) -> anyhow::Result<()> {
+fn collect_markdown(
+    root: &Path,
+    directory: &Path,
+    agents: &mut Vec<AgentInfo>,
+) -> anyhow::Result<()> {
     for entry in std::fs::read_dir(directory)? {
         let entry = entry?;
         let path = entry.path();
@@ -93,7 +97,10 @@ fn collect_markdown(root: &Path, directory: &Path, agents: &mut Vec<AgentInfo>) 
             .cloned()
             .or_else(|| first_nonempty_paragraph(&system))
             .unwrap_or_else(|| title.clone());
-        let mode = frontmatter.get("mode").cloned().unwrap_or_else(|| "all".to_string());
+        let mode = frontmatter
+            .get("mode")
+            .cloned()
+            .unwrap_or_else(|| "all".to_string());
         let hidden = frontmatter
             .get("hidden")
             .map(|value| value == "true")
@@ -113,9 +120,11 @@ fn collect_markdown(root: &Path, directory: &Path, agents: &mut Vec<AgentInfo>) 
 }
 
 fn first_heading(content: &str) -> Option<String> {
-    content
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("# ").map(|value| value.trim().to_string()))
+    content.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("# ")
+            .map(|value| value.trim().to_string())
+    })
 }
 
 fn first_nonempty_paragraph(content: &str) -> Option<String> {
@@ -137,7 +146,10 @@ fn first_nonempty_paragraph(content: &str) -> Option<String> {
 }
 
 fn parse_agent_document(content: &str) -> (std::collections::HashMap<String, String>, String) {
-    let Some(rest) = content.strip_prefix("---\n").or_else(|| content.strip_prefix("---\r\n")) else {
+    let Some(rest) = content
+        .strip_prefix("---\n")
+        .or_else(|| content.strip_prefix("---\r\n"))
+    else {
         return (std::collections::HashMap::new(), content.to_string());
     };
     let Some(end) = rest.find("\n---\n").or_else(|| rest.find("\r\n---\r\n")) else {
@@ -154,7 +166,14 @@ fn parse_agent_document(content: &str) -> (std::collections::HashMap<String, Str
         let Some((key, value)) = line.split_once(':') else {
             continue;
         };
-        data.insert(key.trim().to_string(), value.trim().trim_matches('"').trim_matches('\'').to_string());
+        data.insert(
+            key.trim().to_string(),
+            value
+                .trim()
+                .trim_matches('"')
+                .trim_matches('\'')
+                .to_string(),
+        );
     }
     (data, body)
 }
@@ -234,8 +253,7 @@ fn builtin_agents() -> Vec<AgentInfo> {
     ]
 }
 
-const BUILTIN_BUILD_SYSTEM: &str =
-    "You are an AI coding agent. Help the user accomplish software engineering tasks by inspecting the workspace, making targeted changes, and using tools according to the configured permissions.";
+const BUILTIN_BUILD_SYSTEM: &str = "You are an AI coding agent. Help the user accomplish software engineering tasks by inspecting the workspace, making targeted changes, and using tools according to the configured permissions.";
 
 const BUILTIN_GENERAL_SYSTEM: &str = "You are a general-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel.";
 
@@ -358,7 +376,10 @@ mod tests {
         std::fs::write(agents.join("custom-review.md"), "# Review\nReview agent.").unwrap();
 
         let list = load_agents(dir.path()).unwrap();
-        assert_eq!(agent_by_id(&list, "nested/custom-review").unwrap().id, "nested/custom-review");
+        assert_eq!(
+            agent_by_id(&list, "nested/custom-review").unwrap().id,
+            "nested/custom-review"
+        );
     }
 
     #[test]
