@@ -1,9 +1,9 @@
 //! Minimal interactive TUI for OpenRust.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::io::IsTerminal;
-use std::io::{self, Write};
+use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -12,18 +12,12 @@ use std::time::{Duration, Instant};
 
 use crossterm::{
     cursor,
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    event::{self, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
-    terminal::{self, ClearType},
+    terminal,
 };
 use futures::StreamExt;
-use ratatui::{
-    Frame, Terminal,
-    backend::CrosstermBackend,
-    style::Modifier,
-    text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
-};
+use ratatui::{Frame, Terminal, backend::CrosstermBackend, style::Modifier, text::{Line, Span}, widgets::{Block, Borders, Clear, Paragraph, Wrap}};
 
 use crate::core::{
     agent,
@@ -41,14 +35,14 @@ mod highlight;
 mod input;
 mod markdown;
 mod render;
+mod interaction;
+mod prompt_flow;
+mod session_render;
 mod sidebar;
 mod worker;
 
 use dialog::{Dialog, DialogKind, DialogOption, slash_options};
-use input::{
-    input_width, is_exit_command, load_script, next_char_boundary, parse_slash_command,
-    prev_char_boundary, should_exit,
-};
+use input::{input_width, is_exit_command, load_script, next_char_boundary, prev_char_boundary, should_exit};
 use render::{DisplayMessage, Theme, centered_rect, display_message_lines, main_layout};
 use worker::{PromptEvent, PromptJob, SessionRuntimeGuard, spawn_prompt_worker};
 
@@ -278,6 +272,13 @@ struct PendingTextInput {
     submit: fn(&mut SessionView, &str),
 }
 
+#[derive(Clone)]
+struct SessionRenderLine {
+    line: Line<'static>,
+    text: String,
+    tool_message_index: Option<usize>,
+}
+
 #[derive(Default)]
 struct ConnectDraft {
     provider: String,
@@ -332,8 +333,13 @@ struct SessionView {
     shutdown: Arc<AtomicBool>,
     assistant_preview: String,
     thinking_preview: String,
+    session_render_lines: RefCell<Vec<SessionRenderLine>>,
+    session_selection: Option<(usize, usize)>,
+    mouse_down_row: Option<usize>,
+    mouse_dragging: bool,
     session_area_top: Cell<u16>,
     session_area_height: Cell<u16>,
+    dialog_area: Cell<Option<ratatui::layout::Rect>>,
 }
 
 impl SessionView {
@@ -410,8 +416,13 @@ impl SessionView {
             shutdown: Arc::new(AtomicBool::new(false)),
             assistant_preview: String::new(),
             thinking_preview: String::new(),
+            session_render_lines: RefCell::new(Vec::new()),
+            session_selection: None,
+            mouse_down_row: None,
+            mouse_dragging: false,
             session_area_top: Cell::new(0),
             session_area_height: Cell::new(24),
+            dialog_area: Cell::new(None),
         }
     }
 
@@ -446,7 +457,8 @@ impl SessionView {
         execute!(
             stdout,
             terminal::EnterAlternateScreen,
-            cursor::Hide
+            cursor::Hide,
+            EnableMouseCapture
         )?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
@@ -503,30 +515,18 @@ impl SessionView {
                         continue;
                     }
                     if self.pending_permission.is_some() {
-                        if key.code == KeyCode::Char('c')
-                            && key.modifiers.contains(KeyModifiers::CONTROL)
-                        {
-                            break;
-                        }
                         self.handle_permission_key(key);
                         continue;
                     }
                     if self.pending_question.is_some() {
-                        if key.code == KeyCode::Char('c')
-                            && key.modifiers.contains(KeyModifiers::CONTROL)
-                        {
-                            break;
-                        }
                         self.handle_question_key(key);
                         continue;
                     }
                     if self.pending_text_input.is_some() {
-                        if key.code == KeyCode::Char('c')
-                            && key.modifiers.contains(KeyModifiers::CONTROL)
-                        {
-                            break;
-                        }
                         self.handle_text_input_key(key);
+                        continue;
+                    }
+                    if self.handle_global_copy_key(key)? {
                         continue;
                     }
                     if should_exit(&key) {
@@ -636,321 +636,12 @@ impl SessionView {
                         _ => {}
                     }
                 }
-                Event::Mouse(_) => {}
+                Event::Mouse(mouse) => self.handle_mouse_event(mouse, terminal)?,
                 _ => {}
             }
         }
 
         Ok(())
-    }
-
-    fn handle_prompt(&mut self, stdout: &mut io::Stdout, prompt: &str) -> anyhow::Result<()> {
-        self.ensure_runtime_ready()?;
-        self.messages.push(Message {
-            role: "user".to_string(),
-            content: MessageContent::text(prompt),
-            name: None,
-            tool_call_id: None,
-            tool_calls: None,
-        });
-        self.persist_message("user", prompt);
-        self.generate_title();
-        self.display
-            .push(render::DisplayMessage::new("user", prompt));
-        self.status = "Connecting model...".to_string();
-        self.ai_running = true;
-        self.assistant_preview.clear();
-        self.thinking_preview.clear();
-        self.render(stdout, Some(&self.status))?;
-        let Some(llm) = &self.llm else {
-            self.note("LLM not initialized".to_string());
-            return Ok(());
-        };
-        self.prompt_job = Some(spawn_prompt_worker(
-            Arc::clone(llm),
-            self.messages.clone(),
-            self.model.clone(),
-            self.effective_system(),
-            self.reasoning_effort.clone(),
-            self.cwd.clone(),
-            Arc::clone(&self.shutdown),
-            Some(self.session_id.clone()),
-            self.store.clone(),
-            false,
-            self.current_agent_max_steps(),
-            self.current_agent_mode(),
-            self.current_context_window(),
-        ));
-        while self.prompt_job.is_some() {
-            self.pump_prompt_job_for_stdout(stdout)?;
-        }
-        Ok(())
-    }
-
-    fn enqueue_or_run_prompt(
-        &mut self,
-        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-        prompt: String,
-    ) -> anyhow::Result<()> {
-        if self.ai_running || self.prompt_job.is_some() {
-            self.pending_prompts.push_back(prompt);
-            self.status = format!("queued: {} prompt(s)", self.pending_prompts.len());
-            return Ok(());
-        }
-
-        self.start_prompt_job(terminal, prompt)
-    }
-
-    fn start_prompt_job(
-        &mut self,
-        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-        prompt: String,
-    ) -> anyhow::Result<()> {
-        if let Err(err) = self.handle_interactive_prompt(terminal, &prompt) {
-            tracing::error!(error = %err, "handle_interactive_prompt failed");
-            self.note(err.to_string());
-            self.render_terminal(terminal)?;
-        }
-        Ok(())
-    }
-
-    fn maybe_start_next_prompt(
-        &mut self,
-        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    ) -> anyhow::Result<()> {
-        if self.ai_running || self.prompt_job.is_some() {
-            return Ok(());
-        }
-
-        let Some(prompt) = self.pending_prompts.pop_front() else {
-            return Ok(());
-        };
-
-        self.start_prompt_job(terminal, prompt)
-    }
-
-    fn pump_prompt_job_for_stdout(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
-        let Some(job) = &self.prompt_job else {
-            return Ok(());
-        };
-
-        let mut events = Vec::new();
-        loop {
-            match job.receiver.try_recv() {
-                Ok(event) => events.push(event),
-                Err(mpsc::TryRecvError::Empty) => {
-                    std::thread::sleep(Duration::from_millis(10));
-                    break;
-                }
-                Err(mpsc::TryRecvError::Disconnected) => break,
-            }
-        }
-
-        let mut finished = false;
-        let mut needs_render = false;
-        for event in events {
-            match event {
-                PromptEvent::AssistantDelta(text) => {
-                    self.assistant_preview.push_str(&text);
-                    self.status = "AI running".to_string();
-                    needs_render = true;
-                }
-                PromptEvent::ThinkingDelta(text) => {
-                    self.thinking_preview.push_str(&text);
-                    self.status = "AI thinking".to_string();
-                    needs_render = true;
-                }
-                PromptEvent::ToolCall { name, .. } => {
-                    self.status = format!("tool call: {}", name);
-                    needs_render = true;
-                }
-                PromptEvent::ToolBatch {
-                    assistant,
-                    tool_calls,
-                    results,
-                } => {
-                    self.persist_message_detail(
-                        "assistant",
-                        &assistant,
-                        None,
-                        None,
-                        Some(serde_json::json!(tool_calls)),
-                    );
-                    self.messages.push(Message {
-                        role: "assistant".to_string(),
-                        content: MessageContent::text(assistant.clone()),
-                        name: None,
-                        tool_call_id: None,
-                        tool_calls: Some(serde_json::from_value(serde_json::json!(tool_calls)).unwrap_or_default()),
-                    });
-                    self.display.push(render::DisplayMessage::new("assistant", &assistant));
-                    self.assistant_preview.clear();
-                    if self.thinking_mode == ThinkingMode::Show && !self.thinking_preview.trim().is_empty() {
-                        self.display.push(render::DisplayMessage::new("thinking", &self.thinking_preview));
-                    }
-                    self.thinking_preview.clear();
-                    for item in &results {
-                        self.persist_message_detail(
-                            "tool",
-                            &item.result,
-                            Some(item.name.clone()),
-                            Some(item.id.clone()),
-                            None,
-                        );
-                        self.messages.push(Message {
-                            role: "tool".to_string(),
-                            content: MessageContent::text(item.result.clone()),
-                            name: Some(item.name.clone()),
-                            tool_call_id: Some(item.id.clone()),
-                            tool_calls: None,
-                        });
-                        self.display.push(render::DisplayMessage::new_collapsed(
-                            "tool",
-                            &format!("{}\n{}", Self::tool_display_preview(&item.name, &item.args, &item.result), item.result),
-                        ));
-                    }
-                    self.status = format!("tool results: {} tools", results.len());
-                    needs_render = true;
-                }
-                PromptEvent::Finish => {
-                    let assistant = self.assistant_preview.trim().to_string();
-                    if !assistant.is_empty() {
-                        self.messages.push(Message {
-                            role: "assistant".to_string(),
-                            content: MessageContent::text(assistant.clone()),
-                            name: None,
-                            tool_call_id: None,
-                            tool_calls: None,
-                        });
-                        self.persist_message("assistant", &assistant);
-                        self.display
-                            .push(render::DisplayMessage::new("assistant", &assistant));
-                    }
-                    self.cache_total = self.cache_total.saturating_add(1);
-                    self.ai_running = false;
-                    self.status = "Ready".to_string();
-                    self.prompt_job = None;
-                    self.assistant_preview.clear();
-                    if self.thinking_mode == ThinkingMode::Show && !self.thinking_preview.trim().is_empty() {
-                        self.display.push(render::DisplayMessage::new("thinking", &self.thinking_preview));
-                    }
-                    self.thinking_preview.clear();
-                    needs_render = true;
-                    finished = true;
-                    self.generate_summary();
-                }
-                PromptEvent::Error(err) => {
-                    self.note(format!("provider error: {}", err));
-                    self.ai_running = false;
-                    self.prompt_job = None;
-                    self.assistant_preview.clear();
-                    self.thinking_preview.clear();
-                    needs_render = true;
-                    finished = true;
-                    self.generate_summary();
-                }
-            }
-            if finished {
-                break;
-            }
-        }
-
-        if needs_render {
-            self.render(stdout, Some(&self.status))?;
-        }
-
-        Ok(())
-    }
-
-    fn handle_interactive_prompt(
-        &mut self,
-        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-        prompt: &str,
-    ) -> anyhow::Result<()> {
-        self.ensure_runtime_ready()?;
-        self.messages.push(Message {
-            role: "user".to_string(),
-            content: MessageContent::text(prompt),
-            name: None,
-            tool_call_id: None,
-            tool_calls: None,
-        });
-        self.persist_message("user", prompt);
-        self.generate_title();
-        self.display
-            .push(render::DisplayMessage::new("user", prompt));
-        self.status = "Connecting model...".to_string();
-        self.ai_running = true;
-        self.render_terminal(terminal)?;
-
-        let Some(llm) = &self.llm else {
-            self.note("LLM not initialized".to_string());
-            return Ok(());
-        };
-        self.prompt_job = Some(spawn_prompt_worker(
-            Arc::clone(llm),
-            self.messages.clone(),
-            self.model.clone(),
-            self.effective_system(),
-            self.reasoning_effort.clone(),
-            self.cwd.clone(),
-            Arc::clone(&self.shutdown),
-            Some(self.session_id.clone()),
-            self.store.clone(),
-            true,
-            self.current_agent_max_steps(),
-            self.current_agent_mode(),
-            self.current_context_window(),
-        ));
-        Ok(())
-    }
-
-    fn enqueue(&mut self, prompt: String) {
-        self.transcript.push(prompt);
-    }
-
-    fn handle_slash_command(&mut self, input: &str) -> bool {
-        let Some(command) = parse_slash_command(input) else {
-            return false;
-        };
-        match command {
-            SlashCommand::Thinking(mode) => {
-                self.open_thinking_dialog(mode);
-                true
-            }
-            SlashCommand::Session(args) => {
-                self.open_session_dialog(args);
-                true
-            }
-            SlashCommand::Agent(args) => {
-                self.open_agent_dialog(args);
-                true
-            }
-            SlashCommand::Task(args) => {
-                self.open_task_dialog(args);
-                true
-            }
-            SlashCommand::Compact(args) => {
-                self.compact_session(args);
-                true
-            }
-            SlashCommand::Connect(args) => {
-                self.open_connect_dialog(args);
-                true
-            }
-            SlashCommand::Models(args) => {
-                self.open_models_dialog(args);
-                true
-            }
-            SlashCommand::Files => {
-                self.toggle_sidebar();
-                true
-            }
-            SlashCommand::Diff => {
-                self.toggle_diff();
-                true
-            }
-        }
     }
 
     fn open_thinking_dialog(&mut self, mode: ThinkingModeCommand) {
@@ -2678,233 +2369,6 @@ impl SessionView {
         ));
     }
 
-    fn render(&self, stdout: &mut io::Stdout, status: Option<&str>) -> anyhow::Result<()> {
-        if self.interactive {
-            execute!(
-                stdout,
-                terminal::Clear(ClearType::All),
-                cursor::MoveTo(0, 0)
-            )?;
-        }
-        writeln!(stdout, "OpenRust TUI")?;
-        writeln!(stdout, "provider: {}", self.provider_name)?;
-        writeln!(stdout, "model: {}", self.model)?;
-        writeln!(stdout, "")?;
-        if let Some(status) = status {
-            writeln!(stdout, "status: {}", status)?;
-        }
-        writeln!(stdout, "")?;
-        if self.interactive {
-            writeln!(stdout, "input: {}", self.input)?;
-            writeln!(stdout, "")?;
-        }
-        writeln!(stdout, "history:")?;
-        for msg in self.messages.iter().rev().take(12).rev() {
-            writeln!(stdout, "- {}: {}", msg.role, msg.content)?;
-        }
-        stdout.flush()?;
-        Ok(())
-    }
-
-    fn render_terminal(
-        &self,
-        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    ) -> anyhow::Result<()> {
-        terminal.draw(|frame| self.render_frame(frame))?;
-        Ok(())
-    }
-
-    fn render_frame(&self, frame: &mut Frame) {
-        let regions = main_layout().split(frame.area());
-        if self.view_mode == ViewMode::Home {
-            self.render_home_frame(frame, regions.status);
-            return;
-        }
-
-        self.render_session_frame(frame, regions);
-    }
-
-    fn render_session_frame(&self, frame: &mut Frame, regions: render::LayoutRegions) {
-        let session_area = if self.sidebar_visible && self.sidebar.is_some() {
-            let (side, main) = render::split_sidebar(regions.session);
-            if let Some(tree) = &self.sidebar {
-                let sidebar = Paragraph::new(tree.lines(&self.theme))
-                    .style(self.theme.panel_style())
-                    .block(
-                        Block::default()
-                            .title(" Files ")
-                            .title_style(self.theme.title_style())
-                            .borders(Borders::ALL)
-                            .border_style(self.theme.border_style()),
-                    )
-                    .wrap(Wrap { trim: false });
-                frame.render_widget(sidebar, side);
-            }
-            main
-        } else {
-            regions.session
-        };
-        let lines = self.session_lines(session_area.height as usize);
-        self.session_area_top.set(session_area.y);
-        self.session_area_height.set(session_area.height);
-        let session = Paragraph::new(lines)
-            .style(self.theme.panel_style())
-            .block(
-                Block::default()
-                    .title(" Session ")
-                    .title_style(self.theme.title_style())
-                    .borders(Borders::ALL)
-                    .border_style(self.theme.border_style()),
-            )
-            .wrap(Wrap { trim: false });
-        frame.render_widget(session, session_area);
-
-        let input = Paragraph::new(self.input.as_str())
-            .style(self.theme.input_style())
-            .block(
-                Block::default()
-                    .title(" Input ")
-                    .title_style(self.theme.title_style())
-                    .borders(Borders::ALL)
-                    .border_style(self.theme.input_border_style(self.ai_running)),
-            )
-            .wrap(Wrap { trim: false });
-        frame.render_widget(input, regions.input);
-
-        if self.interactive
-            && self.pending_permission.is_none()
-            && self.pending_question.is_none()
-            && self.pending_text_input.is_none()
-        {
-            let x = regions
-                .input
-                .x
-                .saturating_add(1)
-                .saturating_add(input_width(&self.input[..self.cursor_index]));
-            let y = regions.input.y.saturating_add(1);
-            frame.set_cursor_position((x, y));
-        }
-
-        let footer = Paragraph::new(self.status_line()).style(self.theme.footer_style());
-        frame.render_widget(footer, regions.status);
-
-        if let Some(toast) = &self.toast {
-            let toast_area = render::toast_rect(frame.area());
-            let widget = Paragraph::new(toast.as_str())
-                .style(self.theme.system_style())
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_style(self.theme.border_style())
-                        .style(self.theme.panel_style()),
-                )
-                .wrap(Wrap { trim: false });
-            frame.render_widget(Clear, toast_area);
-            frame.render_widget(widget, toast_area);
-        }
-
-        self.render_modal_layer(frame, frame.area());
-    }
-
-    fn render_home_frame(&self, frame: &mut Frame, status_area: ratatui::layout::Rect) {
-        let outer = centered_rect(76, 72, frame.area());
-
-        let top_padding = outer.height.saturating_sub(15) / 2;
-        let sections = ratatui::layout::Layout::default()
-            .direction(ratatui::layout::Direction::Vertical)
-            .constraints([
-                ratatui::layout::Constraint::Length(top_padding),
-                ratatui::layout::Constraint::Length(4),
-                ratatui::layout::Constraint::Length(3),
-                ratatui::layout::Constraint::Length(2),
-                ratatui::layout::Constraint::Length(4),
-                ratatui::layout::Constraint::Min(0),
-            ])
-            .split(outer);
-
-        let header = Paragraph::new(vec![
-            Line::from(Span::styled(
-                "OpenRust",
-                self.theme.brand_style().add_modifier(Modifier::BOLD),
-            )),
-            Line::from(""),
-            Line::from(Span::styled(
-                "AI coding agent · Rust native runtime",
-                self.theme.muted_style(),
-            )),
-            Line::from(Span::styled(
-                format!(
-                    "model {}/{} · agent {}",
-                    self.provider_name,
-                    self.model,
-                    self.current_session_agent()
-                        .unwrap_or_else(|| "default".to_string())
-                ),
-                self.theme.muted_style(),
-            )),
-        ])
-        .alignment(ratatui::layout::Alignment::Center)
-        .style(self.theme.panel_style());
-        frame.render_widget(header, sections[1]);
-
-        let prompt = Paragraph::new(self.input.as_str())
-            .style(self.theme.input_style())
-            .block(
-                Block::default()
-                    .title(" Prompt ")
-                    .title_style(self.theme.title_style())
-                    .borders(Borders::ALL)
-                    .border_style(self.theme.input_border_style(self.ai_running)),
-            )
-            .wrap(Wrap { trim: false });
-        frame.render_widget(prompt, sections[2]);
-
-        let hint = Paragraph::new(home_input_hint())
-            .style(self.theme.muted_style())
-            .alignment(ratatui::layout::Alignment::Center)
-            .wrap(Wrap { trim: false });
-        frame.render_widget(hint, sections[3]);
-
-        let status = Paragraph::new(self.home_status_message())
-            .style(self.theme.muted_style())
-            .alignment(ratatui::layout::Alignment::Center)
-            .wrap(Wrap { trim: false });
-        frame.render_widget(status, sections[4]);
-
-        if self.interactive
-            && self.pending_permission.is_none()
-            && self.pending_question.is_none()
-            && self.pending_text_input.is_none()
-        {
-            let x = sections[2]
-                .x
-                .saturating_add(1)
-                .saturating_add(input_width(&self.input[..self.cursor_index]));
-            let y = sections[2].y.saturating_add(1);
-            frame.set_cursor_position((x, y));
-        }
-
-        let footer = Paragraph::new(self.status_line()).style(self.theme.footer_style());
-        frame.render_widget(footer, status_area);
-
-        if let Some(toast) = &self.toast {
-            let toast_area = render::toast_rect(frame.area());
-            let widget = Paragraph::new(toast.as_str())
-                .style(self.theme.system_style())
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_style(self.theme.border_style())
-                        .style(self.theme.panel_style()),
-                )
-                .wrap(Wrap { trim: false });
-            frame.render_widget(Clear, toast_area);
-            frame.render_widget(widget, toast_area);
-        }
-
-        self.render_modal_layer(frame, frame.area());
-    }
-
     fn render_modal_layer(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
         if !self.modal_active() && !self.diff_visible {
             return;
@@ -2914,23 +2378,27 @@ impl SessionView {
 
         if let Some(dialog) = &self.dialog {
             let dialog_area = self.dialog_area(dialog, area);
+            self.dialog_area.set(Some(dialog_area));
             frame.render_widget(Clear, dialog_area);
             self.render_dialog_panel(frame, dialog_area, dialog);
             return;
         }
         if let Some(question) = &self.pending_question {
+            self.dialog_area.set(Some(centered_rect(72, 60, area)));
             let dialog_area = centered_rect(72, 60, area);
             frame.render_widget(Clear, dialog_area);
             frame.render_widget(self.question_widget(question), dialog_area);
             return;
         }
         if let Some(permission) = &self.pending_permission {
+            self.dialog_area.set(Some(centered_rect(60, 32, area)));
             let dialog_area = centered_rect(60, 32, area);
             frame.render_widget(Clear, dialog_area);
             frame.render_widget(self.permission_widget(permission), dialog_area);
             return;
         }
         if let Some(input) = &self.pending_text_input {
+            self.dialog_area.set(Some(centered_rect(64, 28, area)));
             let dialog_area = centered_rect(64, 28, area);
             frame.render_widget(Clear, dialog_area);
             frame.render_widget(self.text_input_widget(input), dialog_area);
@@ -2938,6 +2406,7 @@ impl SessionView {
         }
         if self.diff_visible {
             if let Some((title, before, after)) = &self.last_diff {
+                self.dialog_area.set(Some(centered_rect(80, 70, area)));
                 let dialog_area = centered_rect(80, 70, area);
                 frame.render_widget(Clear, dialog_area);
                 let widget = Paragraph::new(diff::render_diff(before, after, &self.theme))
@@ -3152,51 +2621,6 @@ impl SessionView {
         }
 
         Ok(())
-    }
-
-    fn session_lines(&self, region_height: usize) -> Vec<Line<'static>> {
-        let mut lines = self
-            .display
-            .iter()
-            .flat_map(|message| display_message_lines(message, &self.theme))
-            .collect::<Vec<_>>();
-
-        if self.ai_running && !self.thinking_preview.trim().is_empty() {
-            if self.thinking_mode == ThinkingMode::Show {
-                lines.push(Line::from(vec![Span::styled(
-                    "thinking",
-                    self.theme.thinking_style().add_modifier(Modifier::BOLD),
-                )]));
-                lines.extend(self.thinking_preview.lines().map(|line| {
-                    Line::from(Span::styled(line.to_string(), self.theme.thinking_style()))
-                }));
-            }
-        }
-
-        if self.ai_running && !self.assistant_preview.trim().is_empty() {
-            lines.push(Line::from(vec![Span::styled(
-                "assistant",
-                self.theme.assistant_style().add_modifier(Modifier::BOLD),
-            )]));
-            lines.extend(
-                self.assistant_preview
-                    .lines()
-                    .map(|line| Line::from(line.to_string())),
-            );
-        }
-
-        if lines.is_empty() {
-            return vec![Line::from(Span::styled(
-                "No messages yet. Type in the input window and press Enter.",
-                self.theme.muted_style(),
-            ))];
-        }
-
-        let visible_height = region_height.saturating_sub(2).max(1);
-        let max_scroll = lines.len().saturating_sub(visible_height);
-        let scroll = self.session_scroll.min(max_scroll);
-        let start = lines.len().saturating_sub(visible_height + scroll);
-        lines.into_iter().skip(start).take(visible_height).collect()
     }
 
     fn handle_home_key(

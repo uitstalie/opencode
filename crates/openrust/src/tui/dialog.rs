@@ -66,6 +66,10 @@ impl Dialog {
             .map(|option| option.value.as_str())
     }
 
+    pub(super) fn set_selected(&mut self, selected: usize) {
+        self.selected = selected.min(self.options.len().saturating_sub(1));
+    }
+
     pub(super) fn title(&self) -> &str {
         self.title
     }
@@ -106,6 +110,18 @@ impl Dialog {
                 ]
             })
             .collect()
+    }
+
+    pub(super) fn option_index_at(&self, row: usize, max_visible: usize) -> Option<usize> {
+        let offset = self.compute_offset(max_visible);
+        let index = offset + row / 3;
+        if index >= self.options.len() {
+            return None;
+        }
+        if index >= offset + max_visible {
+            return None;
+        }
+        Some(index)
     }
 
     fn compute_offset(&self, max_visible: usize) -> usize {
