@@ -20,6 +20,7 @@ pub(super) struct PromptJob {
     pub(super) permission_receiver: mpsc::Receiver<PermissionRequest>,
 }
 
+#[derive(Debug)]
 pub(super) enum PromptEvent {
     AssistantDelta(String),
     ThinkingDelta(String),

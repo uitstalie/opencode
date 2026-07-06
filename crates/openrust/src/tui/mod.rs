@@ -487,13 +487,16 @@ impl SessionView {
             self.handle_interactive_prompt(terminal, &prompt)?;
         }
 
+        self.status = self.default_status_message();
+        self.render_terminal(terminal)?;
+
         loop {
-            self.pump_prompt_job(terminal)?;
+            let mut needs_render = self.pump_prompt_job()?;
             self.poll_ask_request();
             self.poll_permission_request();
             if self.sidebar_visible {
                 if let Some(tree) = &mut self.sidebar {
-                    tree.poll_refresh();
+                    needs_render |= tree.poll_refresh();
                 }
             }
             self.maybe_start_next_prompt(terminal)?;
@@ -502,142 +505,178 @@ impl SessionView {
                 if Instant::now() >= deadline {
                     self.toast = None;
                     self.toast_deadline = None;
+                    needs_render = true;
                 }
             }
-            self.render_terminal(terminal)?;
-            if !event::poll(Duration::from_millis(250))? {
+            let poll_timeout = if self.prompt_job.is_some() || self.ai_running {
+                Duration::from_millis(1)
+            } else {
+                Duration::from_millis(33)
+            };
+            if !event::poll(poll_timeout)? {
+                if needs_render {
+                    self.render_terminal(terminal)?;
+                }
                 continue;
             }
 
-            match event::read()? {
+            let mut handled_input = false;
+            let event = event::read()?;
+            match event {
                 Event::Key(key) => {
                     if key.kind != KeyEventKind::Press {
+                        if needs_render {
+                            self.render_terminal(terminal)?;
+                        }
                         continue;
                     }
                     if self.pending_permission.is_some() {
                         self.handle_permission_key(key);
-                        continue;
-                    }
-                    if self.pending_question.is_some() {
+                        handled_input = true;
+                    } else if self.pending_question.is_some() {
                         self.handle_question_key(key);
-                        continue;
-                    }
-                    if self.pending_text_input.is_some() {
+                        handled_input = true;
+                    } else if self.pending_text_input.is_some() {
                         self.handle_text_input_key(key);
-                        continue;
-                    }
-                    if self.handle_global_copy_key(key)? {
-                        continue;
-                    }
-                    if should_exit(&key) {
+                        handled_input = true;
+                    } else if self.handle_global_copy_key(key)? {
+                        handled_input = true;
+                    } else if should_exit(&key) {
                         break;
-                    }
-
-                    if self.view_mode == ViewMode::Home
+                    } else if self.view_mode == ViewMode::Home
                         && self.dialog.is_none()
                         && self.handle_home_key(terminal, key)?
                     {
-                        continue;
-                    }
-
-                    match key.code {
-                        KeyCode::Esc if self.dialog.is_some() => {
-                            self.dialog = None;
-                        }
-                        KeyCode::Up if self.dialog.is_some() => {
-                            if let Some(dialog) = &mut self.dialog {
-                                dialog.previous();
+                        handled_input = true;
+                    } else {
+                        match key.code {
+                            KeyCode::Esc if self.dialog.is_some() => {
+                                self.dialog = None;
+                                handled_input = true;
                             }
-                        }
-                        KeyCode::Down if self.dialog.is_some() => {
-                            if let Some(dialog) = &mut self.dialog {
-                                dialog.next();
+                            KeyCode::Up if self.dialog.is_some() => {
+                                if let Some(dialog) = &mut self.dialog {
+                                    dialog.previous();
+                                }
+                                handled_input = true;
                             }
-                        }
-                        KeyCode::Up if self.view_mode == ViewMode::Session => {
-                            self.scroll_session_up(3);
-                        }
-                        KeyCode::Down if self.view_mode == ViewMode::Session => {
-                            self.scroll_session_down(3);
-                        }
-                        KeyCode::Enter => {
-                            if self.dialog.is_some() {
-                                let is_slash = matches!(
-                                    self.dialog.as_ref().map(|d| &d.kind),
-                                    Some(DialogKind::SlashHelp)
-                                );
-                                self.submit_dialog_selection();
-                                if !is_slash {
-                                    continue;
+                            KeyCode::Down if self.dialog.is_some() => {
+                                if let Some(dialog) = &mut self.dialog {
+                                    dialog.next();
+                                }
+                                handled_input = true;
+                            }
+                            KeyCode::Up if self.view_mode == ViewMode::Session => {
+                                self.scroll_session_up(3);
+                                handled_input = true;
+                            }
+                            KeyCode::Down if self.view_mode == ViewMode::Session => {
+                                self.scroll_session_down(3);
+                                handled_input = true;
+                            }
+                            KeyCode::Enter => {
+                                let mut skip_input = false;
+                                if self.dialog.is_some() {
+                                    let is_slash = matches!(
+                                        self.dialog.as_ref().map(|d| &d.kind),
+                                        Some(DialogKind::SlashHelp)
+                                    );
+                                    self.submit_dialog_selection();
+                                    handled_input = true;
+                                    skip_input = !is_slash;
+                                }
+                                if !skip_input {
+                                    let input = self.input.trim().to_string();
+                                    self.input.clear();
+                                    self.cursor_index = 0;
+                                    handled_input = true;
+                                    if input.is_empty() {
+                                        continue;
+                                    }
+                                    if is_exit_command(&input) {
+                                        return Ok(());
+                                    }
+                                    if self.handle_slash_command(&input) {
+                                        continue;
+                                    }
+                                    self.enqueue_or_run_prompt(terminal, input)?;
                                 }
                             }
-                            let input = self.input.trim().to_string();
-                            self.input.clear();
-                            self.cursor_index = 0;
-                            if input.is_empty() {
-                                continue;
-                            }
-                            if is_exit_command(&input) {
-                                return Ok(());
-                            }
-                            if self.handle_slash_command(&input) {
-                                continue;
-                            }
-                            self.enqueue_or_run_prompt(terminal, input)?;
-                        }
-                        KeyCode::Backspace => {
-                            if self.cursor_index > 0 {
-                                let index = prev_char_boundary(&self.input, self.cursor_index);
-                                self.input.drain(index..self.cursor_index);
-                                self.cursor_index = index;
-                            }
-                            self.sync_slash_help();
-                        }
-                        KeyCode::Delete => {
-                            if self.cursor_index < self.input.len() {
-                                let next = next_char_boundary(&self.input, self.cursor_index);
-                                self.input.drain(self.cursor_index..next);
-                            }
-                            self.sync_slash_help();
-                        }
-                        KeyCode::Left => {
-                            self.cursor_index = prev_char_boundary(&self.input, self.cursor_index);
-                        }
-                        KeyCode::Right => {
-                            self.cursor_index = next_char_boundary(&self.input, self.cursor_index);
-                        }
-                        KeyCode::Home => {
-                            self.cursor_index = 0;
-                        }
-                        KeyCode::End => {
-                            self.cursor_index = self.input.len();
-                        }
-                        KeyCode::PageUp => {
-                            self.scroll_session_up(8);
-                        }
-                        KeyCode::PageDown => {
-                            self.scroll_session_down(8);
-                        }
-                        KeyCode::Char('e')
-                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
-                            self.toggle_tool_collapse();
-                        }
-                        KeyCode::Char(ch) => {
-                            if !key.modifiers.contains(KeyModifiers::CONTROL) {
-                                self.input.insert(self.cursor_index, ch);
-                                self.cursor_index += ch.len_utf8();
+                            KeyCode::Backspace => {
+                                if self.cursor_index > 0 {
+                                    let index = prev_char_boundary(&self.input, self.cursor_index);
+                                    self.input.drain(index..self.cursor_index);
+                                    self.cursor_index = index;
+                                }
                                 self.sync_slash_help();
+                                handled_input = true;
                             }
+                            KeyCode::Delete => {
+                                if self.cursor_index < self.input.len() {
+                                    let next = next_char_boundary(&self.input, self.cursor_index);
+                                    self.input.drain(self.cursor_index..next);
+                                }
+                                self.sync_slash_help();
+                                handled_input = true;
+                            }
+                            KeyCode::Left => {
+                                self.cursor_index = prev_char_boundary(&self.input, self.cursor_index);
+                                handled_input = true;
+                            }
+                            KeyCode::Right => {
+                                self.cursor_index = next_char_boundary(&self.input, self.cursor_index);
+                                handled_input = true;
+                            }
+                            KeyCode::Home => {
+                                self.cursor_index = 0;
+                                handled_input = true;
+                            }
+                            KeyCode::End => {
+                                self.cursor_index = self.input.len();
+                                handled_input = true;
+                            }
+                            KeyCode::PageUp => {
+                                self.scroll_session_up(8);
+                                handled_input = true;
+                            }
+                            KeyCode::PageDown => {
+                                self.scroll_session_down(8);
+                                handled_input = true;
+                            }
+                            KeyCode::Char('e')
+                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
+                                self.toggle_tool_collapse();
+                                handled_input = true;
+                            }
+                            KeyCode::Char(ch) => {
+                                if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                                    self.input.insert(self.cursor_index, ch);
+                                    self.cursor_index += ch.len_utf8();
+                                    self.sync_slash_help();
+                                    handled_input = true;
+                                }
+                            }
+                            KeyCode::Tab => {
+                                self.cycle_agent();
+                                handled_input = true;
+                            }
+                            _ => {}
                         }
-                        KeyCode::Tab => {
-                            self.cycle_agent();
-                        }
-                        _ => {}
                     }
                 }
-                Event::Mouse(mouse) => self.handle_mouse_event(mouse, terminal)?,
+                Event::Mouse(mouse) => {
+                    if matches!(mouse.kind, crossterm::event::MouseEventKind::Moved) {
+                        continue;
+                    }
+                    self.handle_mouse_event(mouse, terminal)?;
+                    handled_input = true;
+                }
                 _ => {}
+            }
+
+            if handled_input || needs_render {
+                self.render_terminal(terminal)?;
             }
         }
 
@@ -2489,10 +2528,9 @@ impl SessionView {
 
     fn pump_prompt_job(
         &mut self,
-        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         let Some(job) = &self.prompt_job else {
-            return Ok(());
+            return Ok(false);
         };
 
         let mut events = Vec::new();
@@ -2504,22 +2542,22 @@ impl SessionView {
             }
         }
 
-        let mut finished = false;
+        let mut needs_render = false;
         for event in events {
             match event {
                 PromptEvent::AssistantDelta(text) => {
                     self.assistant_preview.push_str(&text);
                     self.status = "AI running".to_string();
-                    self.render_terminal(terminal)?;
+                    needs_render = true;
                 }
                 PromptEvent::ThinkingDelta(text) => {
                     self.thinking_preview.push_str(&text);
                     self.status = "AI thinking".to_string();
-                    self.render_terminal(terminal)?;
+                    needs_render = true;
                 }
                 PromptEvent::ToolCall { name, .. } => {
                     self.status = format!("tool call: {}", name);
-                    self.render_terminal(terminal)?;
+                    needs_render = true;
                 }
                 PromptEvent::ToolBatch {
                     assistant,
@@ -2574,7 +2612,7 @@ impl SessionView {
                         ));
                     }
                     self.status = format!("tool results: {} tools", results.len());
-                    self.render_terminal(terminal)?;
+                    needs_render = true;
                 }
                 PromptEvent::Finish => {
                     let assistant = self.assistant_preview.trim().to_string();
@@ -2599,8 +2637,7 @@ impl SessionView {
                         self.display.push(render::DisplayMessage::new("thinking", &self.thinking_preview));
                     }
                     self.thinking_preview.clear();
-                    self.render_terminal(terminal)?;
-                    finished = true;
+                    needs_render = true;
                     self.generate_summary();
                 }
                 PromptEvent::Error(err) => {
@@ -2610,17 +2647,13 @@ impl SessionView {
                     self.prompt_job = None;
                     self.assistant_preview.clear();
                     self.thinking_preview.clear();
-                    self.render_terminal(terminal)?;
-                    finished = true;
+                    needs_render = true;
                     self.generate_summary();
                 }
             }
-            if finished {
-                break;
-            }
         }
 
-        Ok(())
+        Ok(needs_render)
     }
 
     fn handle_home_key(
