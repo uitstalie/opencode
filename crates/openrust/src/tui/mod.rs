@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use crossterm::{
     cursor,
-    event::{self, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind},
+    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
     terminal::{self, ClearType},
 };
@@ -49,7 +49,7 @@ use input::{
     input_width, is_exit_command, load_script, next_char_boundary, parse_slash_command,
     prev_char_boundary, should_exit,
 };
-use render::{DisplayMessage, Theme, centered_rect, display_message_lines, main_layout, tool_msg_line_count};
+use render::{DisplayMessage, Theme, centered_rect, display_message_lines, main_layout};
 use worker::{PromptEvent, PromptJob, SessionRuntimeGuard, spawn_prompt_worker};
 
 pub fn run(script: Option<PathBuf>, prompt: Option<String>) -> anyhow::Result<()> {
@@ -334,7 +334,6 @@ struct SessionView {
     thinking_preview: String,
     session_area_top: Cell<u16>,
     session_area_height: Cell<u16>,
-    mouse_dragging: bool,
 }
 
 impl SessionView {
@@ -413,7 +412,6 @@ impl SessionView {
             thinking_preview: String::new(),
             session_area_top: Cell::new(0),
             session_area_height: Cell::new(24),
-            mouse_dragging: false,
         }
     }
 
@@ -448,8 +446,7 @@ impl SessionView {
         execute!(
             stdout,
             terminal::EnterAlternateScreen,
-            cursor::Hide,
-            EnableMouseCapture
+            cursor::Hide
         )?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
@@ -639,23 +636,7 @@ impl SessionView {
                         _ => {}
                     }
                 }
-                Event::Mouse(mouse) => match mouse.kind {
-                    MouseEventKind::ScrollUp => self.scroll_session_up(3),
-                    MouseEventKind::ScrollDown => self.scroll_session_down(3),
-                    MouseEventKind::Down(_) => {
-                        self.mouse_dragging = false;
-                    }
-                    MouseEventKind::Drag(_) => {
-                        self.mouse_dragging = true;
-                    }
-                    MouseEventKind::Up(_) => {
-                        if !self.mouse_dragging {
-                            self.toggle_tool_at_row(mouse.row, mouse.column);
-                        }
-                        self.mouse_dragging = false;
-                    }
-                    _ => {}
-                },
+                Event::Mouse(_) => {}
                 _ => {}
             }
         }
@@ -1584,33 +1565,6 @@ impl SessionView {
         if let Some(msg) = self.display.iter_mut().rev().find(|m| m.role == "tool") {
             msg.collapsed = !msg.collapsed;
         }
-    }
-
-    fn toggle_tool_at_row(&mut self, row: u16, _col: u16) {
-        let top = self.session_area_top.get().saturating_add(1);
-        let visible_height = self.session_area_height.get().saturating_sub(2).max(1) as usize;
-        let counts: Vec<(usize, usize, bool)> = self
-            .display
-            .iter()
-            .enumerate()
-            .map(|(i, msg)| (i, tool_msg_line_count(msg), msg.role == "tool"))
-            .collect();
-        let total: usize = counts.iter().map(|(_, c, _)| c).sum();
-        let max_scroll = total.saturating_sub(visible_height);
-        let scroll = self.session_scroll.min(max_scroll);
-        let start = total.saturating_sub(visible_height + scroll);
-        let clicked = start + (row as usize).saturating_sub(top as usize);
-        let mut off: usize = 0;
-        for (i, cnt, is_tool) in &counts {
-            if clicked >= off && clicked < off + cnt && *is_tool {
-                if let Some(msg) = self.display.get_mut(*i) {
-                    msg.collapsed = !msg.collapsed;
-                }
-                return;
-            }
-            off += cnt;
-        }
-        self.toggle_tool_collapse();
     }
 
     /// Capture the last edit/write as a diff for the `/diff` viewer.
