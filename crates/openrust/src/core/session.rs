@@ -183,6 +183,59 @@ impl SessionStore {
         Ok(())
     }
 
+    pub fn delete_session(&self, session_id: &str) -> anyhow::Result<()> {
+        let sessions = self.db.open_tree("sessions")?;
+        sessions.remove(session_id.as_bytes())?;
+
+        let messages = self.db.open_tree("messages")?;
+        let keys: Vec<Vec<u8>> = messages
+            .scan_prefix(format!("{session_id}:").as_bytes())
+            .filter_map(|entry| entry.ok())
+            .map(|(key, _)| key.to_vec())
+            .collect();
+        for key in &keys {
+            messages.remove(key)?;
+        }
+
+        let tasks = self.db.open_tree("tasks")?;
+        let task_keys: Vec<Vec<u8>> = tasks
+            .scan_prefix(format!("{session_id}:").as_bytes())
+            .filter_map(|entry| entry.ok())
+            .map(|(key, _)| key.to_vec())
+            .collect();
+        for key in &task_keys {
+            tasks.remove(key)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn cleanup_old_sessions(&self, max_age_secs: u64) -> anyhow::Result<usize> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let cutoff = now.saturating_sub(max_age_secs);
+
+        let old: Vec<String> = self
+            .list_sessions()?
+            .into_iter()
+            .filter(|s| {
+                s.updated_at
+                    .parse::<f64>()
+                    .map(|ts| (ts as u64) < cutoff)
+                    .unwrap_or(false)
+            })
+            .map(|s| s.id)
+            .collect();
+
+        let count = old.len();
+        for id in &old {
+            let _ = self.delete_session(id);
+        }
+        Ok(count)
+    }
+
     pub fn save_message(&self, message: &Message) -> anyhow::Result<()> {
         self.db.open_tree("messages")?.insert(
             self.message_key(&message.session_id, &message.id),

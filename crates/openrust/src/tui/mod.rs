@@ -1,5 +1,6 @@
 //! Minimal interactive TUI for OpenRust.
 
+use std::cell::Cell;
 use std::collections::VecDeque;
 use std::io::IsTerminal;
 use std::io::{self, Write};
@@ -11,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use crossterm::{
     cursor,
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind},
+    event::{self, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind},
     execute,
     terminal::{self, ClearType},
 };
@@ -48,7 +49,7 @@ use input::{
     input_width, is_exit_command, load_script, next_char_boundary, parse_slash_command,
     prev_char_boundary, should_exit,
 };
-use render::{DisplayMessage, Theme, centered_rect, display_message_lines, main_layout};
+use render::{DisplayMessage, Theme, centered_rect, display_message_lines, main_layout, tool_msg_line_count};
 use worker::{PromptEvent, PromptJob, SessionRuntimeGuard, spawn_prompt_worker};
 
 pub fn run(script: Option<PathBuf>, prompt: Option<String>) -> anyhow::Result<()> {
@@ -317,7 +318,6 @@ struct SessionView {
     thinking_mode: ThinkingMode,
     reasoning_effort: Option<String>,
     dialog: Option<Dialog>,
-    previous_dialog_active: bool,
     toast: Option<String>,
     toast_deadline: Option<Instant>,
     pending_question: Option<PendingQuestion>,
@@ -332,6 +332,9 @@ struct SessionView {
     shutdown: Arc<AtomicBool>,
     assistant_preview: String,
     thinking_preview: String,
+    session_area_top: Cell<u16>,
+    session_area_height: Cell<u16>,
+    mouse_dragging: bool,
 }
 
 impl SessionView {
@@ -361,6 +364,12 @@ impl SessionView {
         };
         if let Some(store) = &store {
             let _ = store.ensure_session(&session_id, None);
+            let cleanup_age = 30 * 24 * 60 * 60;
+            match store.cleanup_old_sessions(cleanup_age) {
+                Ok(0) => {}
+                Ok(n) => tracing::info!(count = n, max_age_days = 30, "cleaned old sessions"),
+                Err(e) => tracing::error!(err = %e, "cleanup_old_sessions failed"),
+            }
         }
         Self {
             provider_name,
@@ -388,7 +397,6 @@ impl SessionView {
             thinking_mode: ThinkingMode::Show,
             reasoning_effort: None,
             dialog: None,
-            previous_dialog_active: false,
             toast: None,
             toast_deadline: None,
             pending_question: None,
@@ -403,6 +411,9 @@ impl SessionView {
             shutdown: Arc::new(AtomicBool::new(false)),
             assistant_preview: String::new(),
             thinking_preview: String::new(),
+            session_area_top: Cell::new(0),
+            session_area_height: Cell::new(24),
+            mouse_dragging: false,
         }
     }
 
@@ -482,17 +493,6 @@ impl SessionView {
                 if Instant::now() >= deadline {
                     self.toast = None;
                     self.toast_deadline = None;
-                }
-            }
-            {
-                let dialog_active = self.dialog.is_some();
-                if dialog_active != self.previous_dialog_active {
-                    if dialog_active {
-                        execute!(terminal.backend_mut(), DisableMouseCapture)?;
-                    } else {
-                        execute!(terminal.backend_mut(), EnableMouseCapture)?;
-                    }
-                    self.previous_dialog_active = dialog_active;
                 }
             }
             self.render_terminal(terminal)?;
@@ -643,7 +643,16 @@ impl SessionView {
                     MouseEventKind::ScrollUp => self.scroll_session_up(3),
                     MouseEventKind::ScrollDown => self.scroll_session_down(3),
                     MouseEventKind::Down(_) => {
-                        self.toggle_tool_collapse();
+                        self.mouse_dragging = false;
+                    }
+                    MouseEventKind::Drag(_) => {
+                        self.mouse_dragging = true;
+                    }
+                    MouseEventKind::Up(_) => {
+                        if !self.mouse_dragging {
+                            self.toggle_tool_at_row(mouse.row, mouse.column);
+                        }
+                        self.mouse_dragging = false;
                     }
                     _ => {}
                 },
@@ -816,7 +825,7 @@ impl SessionView {
                         });
                         self.display.push(render::DisplayMessage::new_collapsed(
                             "tool",
-                            &format!("{}:\n{}", item.name, item.result),
+                            &format!("{}\n{}", Self::tool_display_preview(&item.name, &item.args, &item.result), item.result),
                         ));
                     }
                     self.status = format!("tool results: {} tools", results.len());
@@ -851,8 +860,6 @@ impl SessionView {
                 }
                 PromptEvent::Error(err) => {
                     self.note(format!("provider error: {}", err));
-                    self.input = err.clone();
-                    self.cursor_index = self.input.len();
                     self.ai_running = false;
                     self.prompt_job = None;
                     self.assistant_preview.clear();
@@ -1000,6 +1007,13 @@ impl SessionView {
                     self.note("usage: /session switch <id|number>".to_string());
                 }
             }
+            Some("delete") | Some("rm") => {
+                if let Some(target) = args.get(1) {
+                    self.delete_session(target);
+                } else {
+                    self.note("usage: /session delete <id|number>".to_string());
+                }
+            }
             _ => {
                 let Some(store) = self.store.clone() else {
                     tracing::warn!("open_session_dialog: store is None");
@@ -1031,15 +1045,23 @@ impl SessionView {
                                 ""
                             };
                             let summary_preview = session.summary.as_deref()
-                                .map(|s| format!(" · {}", &s[..s.len().min(60)]))
+                                .map(|s| {
+                                    let short = &s[..s.len().min(30)];
+                                    format!(" · {}", short)
+                                })
                                 .unwrap_or_default();
+                            let mut desc = format!(
+                                "{} msg · {} · {}",
+                                session.message_count, agent, summary_preview
+                            );
+                            if desc.len() > 60 {
+                                desc.truncate(57);
+                                desc.push_str("...");
+                            }
                             DialogOption::new(
                                 session.id.clone(),
                                 format!("{}{}. {}", marker, index + 1, title),
-                                format!(
-                                    "{} messages · {} · agent: {}{}",
-                                    session.message_count, session.id, agent, summary_preview
-                                ),
+                                desc,
                             )
                         }),
                 );
@@ -1559,20 +1581,36 @@ impl SessionView {
     }
 
     fn toggle_tool_collapse(&mut self) {
-        let mut any_tool = false;
-        let new_state = self.display.iter().any(|m| m.role == "tool" && m.collapsed);
-        for msg in &mut self.display {
-            if msg.role == "tool" {
-                msg.collapsed = !new_state;
-                any_tool = true;
+        if let Some(msg) = self.display.iter_mut().rev().find(|m| m.role == "tool") {
+            msg.collapsed = !msg.collapsed;
+        }
+    }
+
+    fn toggle_tool_at_row(&mut self, row: u16, _col: u16) {
+        let top = self.session_area_top.get().saturating_add(1);
+        let visible_height = self.session_area_height.get().saturating_sub(2).max(1) as usize;
+        let counts: Vec<(usize, usize, bool)> = self
+            .display
+            .iter()
+            .enumerate()
+            .map(|(i, msg)| (i, tool_msg_line_count(msg), msg.role == "tool"))
+            .collect();
+        let total: usize = counts.iter().map(|(_, c, _)| c).sum();
+        let max_scroll = total.saturating_sub(visible_height);
+        let scroll = self.session_scroll.min(max_scroll);
+        let start = total.saturating_sub(visible_height + scroll);
+        let clicked = start + (row as usize).saturating_sub(top as usize);
+        let mut off: usize = 0;
+        for (i, cnt, is_tool) in &counts {
+            if clicked >= off && clicked < off + cnt && *is_tool {
+                if let Some(msg) = self.display.get_mut(*i) {
+                    msg.collapsed = !msg.collapsed;
+                }
+                return;
             }
+            off += cnt;
         }
-        if any_tool {
-            self.note(format!(
-                "tools {}",
-                if new_state { "expanded" } else { "collapsed" }
-            ));
-        }
+        self.toggle_tool_collapse();
     }
 
     /// Capture the last edit/write as a diff for the `/diff` viewer.
@@ -2232,6 +2270,32 @@ impl SessionView {
         self.note(format!("session: switched to {}", id));
     }
 
+    fn delete_session(&mut self, target: &str) {
+        let Some(store) = self.store.clone() else {
+            self.note("session store unavailable".to_string());
+            return;
+        };
+        let id = target
+            .parse::<usize>()
+            .ok()
+            .and_then(|index| {
+                store
+                    .list_sessions()
+                    .ok()?
+                    .get(index.saturating_sub(1))
+                    .map(|s| s.id.clone())
+            })
+            .unwrap_or_else(|| target.to_string());
+        if id == self.session_id {
+            self.note("cannot delete the active session".to_string());
+            return;
+        }
+        match store.delete_session(&id) {
+            Ok(()) => self.note(format!("session deleted: {}", id)),
+            Err(e) => self.note(format!("delete failed: {}", e)),
+        }
+    }
+
     fn scroll_session_up(&mut self, lines: usize) {
         self.session_scroll = self.session_scroll.saturating_add(lines);
     }
@@ -2601,6 +2665,28 @@ impl SessionView {
         }
     }
 
+    fn tool_display_preview(name: &str, args: &str, result: &str) -> String {
+        let args_val = serde_json::from_str::<serde_json::Value>(args).ok();
+        let path = args_val
+            .as_ref()
+            .and_then(|v| {
+                v.get("path")
+                    .or_else(|| v.get("file_path"))
+                    .or_else(|| v.get("filePath"))
+                    .or_else(|| v.get("url"))
+                    .or_else(|| v.get("pattern"))
+                    .or_else(|| v.get("query"))
+                    .or_else(|| v.get("message"))
+                    .and_then(|v| v.as_str())
+            });
+        if let Some(p) = path {
+            return format!("{} {}", name, p);
+        }
+        let preview = result.lines().next().unwrap_or("");
+        let preview = &preview[..preview.len().min(60)];
+        format!("{}: {}", name, preview)
+    }
+
     fn note(&mut self, message: String) {
         self.status = message.lines().next().unwrap_or("Ready").to_string();
         self.toast = Some(message);
@@ -2705,6 +2791,8 @@ impl SessionView {
             regions.session
         };
         let lines = self.session_lines(session_area.height as usize);
+        self.session_area_top.set(session_area.y);
+        self.session_area_height.set(session_area.height);
         let session = Paragraph::new(lines)
             .style(self.theme.panel_style())
             .block(
@@ -2745,6 +2833,21 @@ impl SessionView {
 
         let footer = Paragraph::new(self.status_line()).style(self.theme.footer_style());
         frame.render_widget(footer, regions.status);
+
+        if let Some(toast) = &self.toast {
+            let toast_area = render::toast_rect(frame.area());
+            let widget = Paragraph::new(toast.as_str())
+                .style(self.theme.system_style())
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(self.theme.border_style())
+                        .style(self.theme.panel_style()),
+                )
+                .wrap(Wrap { trim: false });
+            frame.render_widget(Clear, toast_area);
+            frame.render_widget(widget, toast_area);
+        }
 
         self.render_modal_layer(frame, frame.area());
     }
@@ -3080,8 +3183,6 @@ impl SessionView {
                 PromptEvent::Error(err) => {
                     tracing::error!(error = %err, "prompt worker error");
                     self.note(format!("provider error: {}", err));
-                    self.input = err.clone();
-                    self.cursor_index = self.input.len();
                     self.ai_running = false;
                     self.prompt_job = None;
                     self.assistant_preview.clear();

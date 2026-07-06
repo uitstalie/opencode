@@ -177,6 +177,13 @@ impl Theme {
     }
 }
 
+pub(super) fn tool_msg_line_count(message: &DisplayMessage) -> usize {
+    if message.collapsed {
+        return 3;
+    }
+    1 + message.content().lines().count() + 1
+}
+
 pub(super) fn display_message_lines(message: &DisplayMessage, theme: &Theme) -> Vec<Line<'static>> {
     let role = message.role();
     let role_style = match role {
