@@ -92,13 +92,7 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
 
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(async {
-                let messages = vec![crate::core::provider::Message {
-                    role: "user".to_string(),
-                    content: prompt.clone(),
-                    name: None,
-                    tool_call_id: None,
-                    tool_calls: None,
-                }];
+                let messages = vec![crate::core::provider::Message::user(prompt.clone())];
 
                 let mut stream = provider
                     .chat(
@@ -110,6 +104,7 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
                             max_tokens: None,
                             system: None,
                             reasoning_effort: None,
+                            tool_choice: None,
                         },
                     )
                     .await?;

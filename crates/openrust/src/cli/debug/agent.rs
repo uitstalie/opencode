@@ -70,6 +70,7 @@ mod tests {
             description: "Build agent".to_string(),
             mode: "all".to_string(),
             hidden: false,
+            max_steps: 50,
             system: String::new(),
             path: std::path::PathBuf::from("agents/build.md"),
             content: String::new(),

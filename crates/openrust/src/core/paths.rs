@@ -1,6 +1,27 @@
-//! System path utilities — protected paths and scope checks.
+//! System path utilities — protected paths, scope checks, and cross-platform
+//! separator helpers.
 
 use std::path::{Path, PathBuf};
+
+// ── Separator utilities ────────────────────────────
+
+pub const SEPARATORS: &[char] = &['/', '\\'];
+
+/// Trim leading `/` or `\` separators.
+pub fn trim_leading(s: &str) -> &str {
+    s.trim_start_matches(SEPARATORS)
+}
+
+/// Trim trailing `/` or `\` separators.
+pub fn trim_trailing(s: &str) -> &str {
+    s.trim_end_matches(SEPARATORS)
+}
+
+/// True when `rel` exactly equals `component` or starts with `component/` or `component\`.
+pub fn has_component(rel: &str, component: &str) -> bool {
+    rel.strip_prefix(component)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(SEPARATORS))
+}
 
 // ── Protected system paths (Linux) ──────────────────
 
@@ -26,11 +47,22 @@ pub fn home_dir() -> Option<PathBuf> {
 
 /// Check if a canonical path is protected. Returns the reason if it is.
 pub fn is_protected_path(canonical: &Path) -> Option<&'static str> {
-    let s = canonical.to_string_lossy();
+    let raw = canonical.to_string_lossy();
+    let s = raw.as_ref();
+
+    // Windows: strip \\?\ prefix from canonical paths
+    let s = s.strip_prefix("\\\\?\\").unwrap_or(s);
 
     // Exact match against system prefixes
     for prefix in SYSTEM_PROTECTED {
-        if s.as_ref() == *prefix {
+        if s == *prefix {
+            return Some("protected system path");
+        }
+    }
+
+    // Windows: drive root (e.g. C:\) or Windows system directory
+    if cfg!(windows) {
+        if is_drive_root(s) || s.eq_ignore_ascii_case("C:\\Windows") {
             return Some("protected system path");
         }
     }
@@ -39,9 +71,9 @@ pub fn is_protected_path(canonical: &Path) -> Option<&'static str> {
     if let Some(home) = home_dir() {
         let home_str = home.to_string_lossy();
         if s.starts_with(home_str.as_ref()) {
-            let rel = s[home_str.len()..].trim_start_matches('/');
+            let rel = trim_leading(&s[home_str.len()..]);
             for dir in USER_PROTECTED {
-                if rel == *dir || rel.starts_with(&format!("{}/", dir)) {
+                if rel == *dir || has_component(rel, dir) {
                     return Some("protected user directory");
                 }
             }
@@ -54,6 +86,14 @@ pub fn is_protected_path(canonical: &Path) -> Option<&'static str> {
     }
 
     None
+}
+
+#[cfg(windows)]
+fn is_drive_root(s: &str) -> bool {
+    s.len() == 3
+        && s.as_bytes()[1] == b':'
+        && s.as_bytes()[2] == b'\\'
+        && s.as_bytes()[0].is_ascii_alphabetic()
 }
 
 // ── Project scope ───────────────────────────────────
@@ -76,12 +116,17 @@ mod tests {
 
     #[test]
     fn root_is_protected() {
-        assert!(is_protected_path(Path::new("/")).is_some());
+        let root = if cfg!(windows) { "C:\\" } else { "/" };
+        assert!(is_protected_path(Path::new(root)).is_some());
     }
 
     #[test]
     fn etc_is_protected() {
-        assert!(is_protected_path(Path::new("/etc")).is_some());
+        if cfg!(windows) {
+            assert!(is_protected_path(Path::new("C:\\Windows")).is_some());
+        } else {
+            assert!(is_protected_path(Path::new("/etc")).is_some());
+        }
     }
 
     #[test]

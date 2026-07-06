@@ -28,19 +28,15 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
     let system = render_run_system(&run_config)?;
 
     let ctx = ToolContext::new(cwd);
-    let messages = vec![Message {
-        role: "user".to_string(),
-        content: prompt,
-        name: None,
-        tool_call_id: None,
-        tool_calls: None,
-    }];
+    let messages = vec![Message::user(prompt)];
 
     let rt = tokio::runtime::Runtime::new()?;
     let result = rt.block_on(run_agent(
         llm.as_ref(),
         &run_config.model,
         &system,
+        "all",
+        50,
         None,
         messages,
         &ctx,

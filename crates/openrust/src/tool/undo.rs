@@ -43,7 +43,9 @@ impl UndoStore {
         }
 
         // GC check every 10 saves
-        let mut count = self.save_count.lock().unwrap();
+        let Ok(mut count) = self.save_count.lock() else {
+            return None;
+        };
         *count += 1;
         if *count % 10 == 0 {
             drop(count);

@@ -1,5 +1,8 @@
 //! Session storage and message history for Phase 1B.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use serde::{Deserialize, Serialize};
 
 /// A stored chat session.
@@ -7,6 +10,8 @@ use serde::{Deserialize, Serialize};
 pub struct Session {
     pub id: String,
     pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
     pub mode: Option<String>,
     #[serde(default)]
     pub agent: Option<String>,
@@ -21,6 +26,8 @@ pub struct Message {
     pub session_id: String,
     pub role: String,
     pub content: String,
+    #[serde(default)]
+    pub seq: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -50,6 +57,7 @@ pub struct Task {
 pub struct SessionSummary {
     pub id: String,
     pub title: Option<String>,
+    pub summary: Option<String>,
     pub mode: Option<String>,
     pub agent: Option<String>,
     pub message_count: usize,
@@ -76,17 +84,20 @@ pub struct TaskSummary {
 #[derive(Clone)]
 pub struct SessionStore {
     db: sled::Db,
+    next_seq: Arc<AtomicU64>,
 }
 
 impl SessionStore {
     pub fn open() -> anyhow::Result<Self> {
         let db = sled::open(Self::db_path())?;
-        Ok(Self { db })
+        let next_seq = Arc::new(AtomicU64::new(now_micros() as u64));
+        Ok(Self { db, next_seq })
     }
 
     pub fn open_at(path: impl AsRef<std::path::Path>) -> anyhow::Result<Self> {
         let db = sled::open(path)?;
-        Ok(Self { db })
+        let next_seq = Arc::new(AtomicU64::new(now_micros() as u64));
+        Ok(Self { db, next_seq })
     }
 
     pub fn list_sessions(&self) -> anyhow::Result<Vec<SessionSummary>> {
@@ -101,6 +112,7 @@ impl SessionStore {
                 SessionSummary {
                     id: session.id,
                     title: session.title,
+                    summary: session.summary,
                     mode: session.mode,
                     agent: session.agent,
                     message_count,
@@ -128,10 +140,18 @@ impl SessionStore {
             .open_tree("messages")?
             .scan_prefix(format!("{session_id}:").as_bytes())
             .filter_map(|entry| entry.ok())
-            .filter_map(|(_, value)| serde_json::from_slice::<Message>(value.as_ref()).ok())
+            .filter_map(|(_, value)| {
+                serde_json::from_slice::<Message>(value.as_ref())
+                    .inspect_err(|e| eprintln!("deserialize message failed: {e}"))
+                    .ok()
+            })
             .collect::<Vec<_>>();
 
-        messages.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        messages.sort_by(|a, b| {
+            a.seq
+                .cmp(&b.seq)
+                .then_with(|| a.created_at.cmp(&b.created_at))
+        });
         Ok(messages)
     }
 
@@ -199,6 +219,7 @@ impl SessionStore {
         let session = Session {
             id: id.to_string(),
             title: None,
+            summary: None,
             mode,
             agent: None,
             created_at: now.clone(),
@@ -226,11 +247,13 @@ impl SessionStore {
         tool_call_id: Option<String>,
         tool_calls: Option<serde_json::Value>,
     ) -> anyhow::Result<Message> {
+        let seq = self.next_seq.fetch_add(1, Ordering::SeqCst);
         let message = Message {
-            id: format!("msg-{}", now_micros()),
+            id: format!("msg-{seq}"),
             session_id: session_id.to_string(),
             role: role.to_string(),
             content: content.to_string(),
+            seq,
             name,
             tool_call_id,
             tool_calls,
@@ -249,11 +272,13 @@ impl SessionStore {
         summary: String,
         recent: String,
     ) -> anyhow::Result<Message> {
+        let seq = self.next_seq.fetch_add(1, Ordering::SeqCst);
         let message = Message {
-            id: format!("compact-{}", now_micros()),
+            id: format!("compact-{seq}"),
             session_id: session_id.to_string(),
             role: "system".to_string(),
             content: summary.clone(),
+            seq,
             name: None,
             tool_call_id: None,
             tool_calls: None,
@@ -279,6 +304,24 @@ impl SessionStore {
         Ok(self
             .get_session(session_id)?
             .and_then(|session| session.agent))
+    }
+
+    pub fn set_title(&self, session_id: &str, title: String) -> anyhow::Result<()> {
+        let Some(mut session) = self.get_session(session_id)? else {
+            return Ok(());
+        };
+        session.title = Some(title);
+        session.updated_at = now_string();
+        self.save_session(&session)
+    }
+
+    pub fn set_summary(&self, session_id: &str, summary: String) -> anyhow::Result<()> {
+        let Some(mut session) = self.get_session(session_id)? else {
+            return Ok(());
+        };
+        session.summary = Some(summary);
+        session.updated_at = now_string();
+        self.save_session(&session)
     }
 
     pub fn list_tasks(&self, session_id: &str) -> anyhow::Result<Vec<TaskSummary>> {
@@ -518,6 +561,7 @@ mod tests {
             session_id: "session-6".to_string(),
             role: "system".to_string(),
             content: "summary".to_string(),
+            seq: 0,
             name: None,
             tool_call_id: None,
             tool_calls: None,
@@ -604,3 +648,5 @@ mod tests {
         assert_eq!(transcript.history[2].content, "first prompt");
     }
 }
+
+

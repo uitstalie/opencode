@@ -80,6 +80,7 @@ mod tests {
         let sessions = [crate::core::session::SessionSummary {
             id: "session-1".to_string(),
             title: Some("Build".to_string()),
+            summary: None,
             mode: Some("build".to_string()),
             agent: Some("review".to_string()),
             message_count: 2,

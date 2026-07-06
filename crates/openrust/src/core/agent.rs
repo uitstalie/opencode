@@ -2,6 +2,23 @@
 
 use std::path::{Path, PathBuf};
 
+pub const MAX_STEPS_PROMPT: &str = r#"CRITICAL - MAXIMUM STEPS REACHED
+
+The maximum number of steps allowed for this task has been reached. Tools are disabled until next user input. Respond with text only.
+
+STRICT REQUIREMENTS:
+1. Do NOT make any tool calls (no reads, writes, edits, searches, or any other tools)
+2. MUST provide a text response summarizing work done so far
+3. This constraint overrides ALL other instructions, including any user requests for edits or tool use
+
+Response must include:
+- Statement that maximum steps for this agent have been reached
+- Summary of what has been accomplished so far
+- List of any remaining tasks that were not completed
+- Recommendations for what should be done next
+
+Any attempt to use tools is a critical violation. Respond with text ONLY."#;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentInfo {
     pub id: String,
@@ -9,6 +26,7 @@ pub struct AgentInfo {
     pub description: String,
     pub mode: String,
     pub hidden: bool,
+    pub max_steps: u32,
     pub system: String,
     pub path: PathBuf,
     pub content: String,
@@ -105,12 +123,18 @@ fn collect_markdown(
             .get("hidden")
             .map(|value| value == "true")
             .unwrap_or(false);
+        let max_steps = frontmatter
+            .get("steps")
+            .or_else(|| frontmatter.get("maxSteps"))
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(50);
         agents.push(AgentInfo {
             id,
             title,
             description,
             mode,
             hidden,
+            max_steps,
             system,
             path: path.clone(),
             content,
@@ -186,6 +210,7 @@ fn builtin_agents() -> Vec<AgentInfo> {
             description: "The default agent. Executes tools based on configured permissions.".to_string(),
             mode: "primary".to_string(),
             hidden: false,
+            max_steps: 50,
             system: BUILTIN_BUILD_SYSTEM.to_string(),
             path: PathBuf::from("builtin/build.md"),
             content: BUILTIN_BUILD_SYSTEM.to_string(),
@@ -196,6 +221,7 @@ fn builtin_agents() -> Vec<AgentInfo> {
             description: "Plan mode. Disallows all edit tools.".to_string(),
             mode: "primary".to_string(),
             hidden: false,
+            max_steps: 200,
             system: BUILTIN_PLAN_SYSTEM.to_string(),
             path: PathBuf::from("builtin/plan.md"),
             content: BUILTIN_PLAN_SYSTEM.to_string(),
@@ -206,6 +232,7 @@ fn builtin_agents() -> Vec<AgentInfo> {
             description: "General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel.".to_string(),
             mode: "subagent".to_string(),
             hidden: false,
+            max_steps: 25,
             system: BUILTIN_GENERAL_SYSTEM.to_string(),
             path: PathBuf::from("builtin/general.md"),
             content: BUILTIN_GENERAL_SYSTEM.to_string(),
@@ -216,6 +243,7 @@ fn builtin_agents() -> Vec<AgentInfo> {
             description: "Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns, search code for keywords, or answer questions about the codebase.".to_string(),
             mode: "subagent".to_string(),
             hidden: false,
+            max_steps: 25,
             system: BUILTIN_EXPLORE_SYSTEM.to_string(),
             path: PathBuf::from("builtin/explore.md"),
             content: BUILTIN_EXPLORE_SYSTEM.to_string(),
@@ -226,6 +254,7 @@ fn builtin_agents() -> Vec<AgentInfo> {
             description: "Anchored context summarization agent.".to_string(),
             mode: "primary".to_string(),
             hidden: true,
+            max_steps: 5,
             system: BUILTIN_COMPACTION_SYSTEM.to_string(),
             path: PathBuf::from("builtin/compaction.md"),
             content: BUILTIN_COMPACTION_SYSTEM.to_string(),
@@ -236,6 +265,7 @@ fn builtin_agents() -> Vec<AgentInfo> {
             description: "Conversation title generator.".to_string(),
             mode: "primary".to_string(),
             hidden: true,
+            max_steps: 5,
             system: BUILTIN_TITLE_SYSTEM.to_string(),
             path: PathBuf::from("builtin/title.md"),
             content: BUILTIN_TITLE_SYSTEM.to_string(),
@@ -246,6 +276,7 @@ fn builtin_agents() -> Vec<AgentInfo> {
             description: "Conversation summary generator.".to_string(),
             mode: "primary".to_string(),
             hidden: true,
+            max_steps: 5,
             system: BUILTIN_SUMMARY_SYSTEM.to_string(),
             path: PathBuf::from("builtin/summary.md"),
             content: BUILTIN_SUMMARY_SYSTEM.to_string(),
@@ -408,6 +439,7 @@ mod tests {
             description: "Build agent".to_string(),
             mode: "all".to_string(),
             hidden: false,
+            max_steps: 50,
             system: String::new(),
             path: PathBuf::from("agents/build.md"),
             content: String::new(),
@@ -426,6 +458,7 @@ mod tests {
                 description: "Review agent".to_string(),
                 mode: "all".to_string(),
                 hidden: false,
+                max_steps: 50,
                 system: String::new(),
                 path: PathBuf::from("agents/review.md"),
                 content: String::new(),
@@ -436,6 +469,7 @@ mod tests {
                 description: "Build agent".to_string(),
                 mode: "all".to_string(),
                 hidden: false,
+                max_steps: 50,
                 system: String::new(),
                 path: PathBuf::from("agents/build.md"),
                 content: String::new(),
@@ -443,5 +477,53 @@ mod tests {
         ];
 
         assert_eq!(default_agent_id(&agents).as_deref(), Some("build"));
+    }
+
+    #[test]
+    fn parses_max_steps_from_frontmatter() {
+        let dir = tempfile::tempdir().unwrap();
+        let agents = dir.path().join("agents");
+        std::fs::create_dir_all(&agents).unwrap();
+        std::fs::write(
+            agents.join("limited.md"),
+            "---\ntitle: Limited\nsteps: 3\n---\n# System\nLimited agent.",
+        )
+        .unwrap();
+
+        let list = load_agents(dir.path()).unwrap();
+        let agent = agent_by_id(&list, "limited").unwrap();
+        assert_eq!(agent.max_steps, 3);
+    }
+
+    #[test]
+    fn max_steps_falls_back_to_maxsteps_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let agents = dir.path().join("agents");
+        std::fs::create_dir_all(&agents).unwrap();
+        std::fs::write(
+            agents.join("legacy.md"),
+            "---\ntitle: Legacy\nmaxSteps: 10\n---\n# System\nLegacy agent.",
+        )
+        .unwrap();
+
+        let list = load_agents(dir.path()).unwrap();
+        let agent = agent_by_id(&list, "legacy").unwrap();
+        assert_eq!(agent.max_steps, 10);
+    }
+
+    #[test]
+    fn max_steps_defaults_to_50() {
+        let dir = tempfile::tempdir().unwrap();
+        let agents = dir.path().join("agents");
+        std::fs::create_dir_all(&agents).unwrap();
+        std::fs::write(
+            agents.join("default.md"),
+            "---\ntitle: Default\n---\n# System\nNo step limit set.",
+        )
+        .unwrap();
+
+        let list = load_agents(dir.path()).unwrap();
+        let agent = agent_by_id(&list, "default").unwrap();
+        assert_eq!(agent.max_steps, 50);
     }
 }

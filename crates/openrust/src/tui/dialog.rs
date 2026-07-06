@@ -78,10 +78,13 @@ impl Dialog {
         "↑/↓ 选择 · Enter 确认 · Esc 关闭"
     }
 
-    pub(super) fn option_lines(&self, theme: &Theme) -> Vec<Line<'static>> {
+    pub(super) fn option_lines(&self, theme: &Theme, max_visible: usize) -> Vec<Line<'static>> {
+        let offset = self.compute_offset(max_visible);
         self.options
             .iter()
             .enumerate()
+            .skip(offset)
+            .take(max_visible)
             .flat_map(|(index, option)| {
                 let selected = index == self.selected;
                 let marker = if selected { "› " } else { "  " };
@@ -103,6 +106,15 @@ impl Dialog {
                 ]
             })
             .collect()
+    }
+
+    fn compute_offset(&self, max_visible: usize) -> usize {
+        let mv = max_visible.max(1);
+        if self.selected < mv {
+            return 0;
+        }
+        let offset = self.selected.saturating_sub(mv / 2);
+        offset.min(self.options.len().saturating_sub(mv))
     }
 }
 

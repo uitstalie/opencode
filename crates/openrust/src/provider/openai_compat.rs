@@ -12,7 +12,7 @@ use serde_json::Value;
 
 use crate::core::config::ResolvedProvider;
 use crate::core::provider::{
-    ChunkStream, LlmProvider, Message, RequestOptions, StreamChunk, Usage,
+    ChunkStream, LlmProvider, Message, MessageContent, RequestOptions, StreamChunk, Usage,
 };
 
 pub struct OpenAICompatProvider {
@@ -50,7 +50,7 @@ impl LlmProvider for OpenAICompatProvider {
             "messages": messages.iter().map(|m| {
                 let mut message = serde_json::json!({
                     "role": m.role,
-                    "content": m.content,
+                    "content": serialize_content(&m.content),
                 });
                 if let Some(name) = &m.name {
                     message["name"] = serde_json::json!(name);
@@ -79,6 +79,9 @@ impl LlmProvider for OpenAICompatProvider {
         if let Some(effort) = options.reasoning_effort {
             body["reasoning_effort"] = serde_json::json!(effort);
         }
+        if let Some(ref tc) = options.tool_choice {
+            body["tool_choice"] = serde_json::json!(tc);
+        }
         if let Some(ref system) = options.system {
             // Insert system message at the beginning
             if let Some(arr) = body["messages"].as_array_mut() {
@@ -94,25 +97,22 @@ impl LlmProvider for OpenAICompatProvider {
 
         tracing::debug!("POST {} (model={})", url, options.model);
 
-        let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!(
-                "Provider {} returned HTTP {}: {}",
-                self.name,
-                status,
-                text
-            ));
-        }
+        let response = retry_with_backoff(3, || {
+            let client = &self.client;
+            let url = &url;
+            let api_key = &self.api_key;
+            let body = &body;
+            async move {
+                client
+                    .post(url)
+                    .header("Authorization", format!("Bearer {}", api_key))
+                    .header("Content-Type", "application/json")
+                    .json(body)
+                    .send()
+                    .await
+            }
+        })
+        .await?;
 
         let stream = response.bytes_stream();
 
@@ -153,10 +153,11 @@ impl LlmProvider for OpenAICompatProvider {
                         }
                     };
 
-                    let choices = parsed["choices"].as_array();
-                    if choices.is_none() { continue; }
+                    let Some(choices) = parsed["choices"].as_array() else {
+                        continue;
+                    };
 
-                    for choice in choices.unwrap() {
+                    for choice in choices {
                         let delta = &choice["delta"];
 
                         // Tool calls
@@ -167,9 +168,9 @@ impl LlmProvider for OpenAICompatProvider {
                                 let args = tc["function"]["arguments"].as_str().unwrap_or("");
 
                                 if !id.is_empty() && tool_call_id.as_deref() != Some(&id) {
-                                    if tool_call_id.is_some() {
+                                    if let Some(prev_id) = tool_call_id.take() {
                                         yield Ok(StreamChunk::ToolCallEnd {
-                                            id: tool_call_id.take().unwrap(),
+                                            id: prev_id,
                                         });
                                     }
                                     tool_call_id = Some(id.clone());
@@ -208,9 +209,9 @@ impl LlmProvider for OpenAICompatProvider {
                                 completion_tokens: u.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
                                 total_tokens: u.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
                             });
-                            if tool_call_id.is_some() {
+                            if let Some(prev_id) = tool_call_id.take() {
                                 yield Ok(StreamChunk::ToolCallEnd {
-                                    id: tool_call_id.take().unwrap(),
+                                    id: prev_id,
                                 });
                             }
                             yield Ok(StreamChunk::Finish { usage });
@@ -220,9 +221,9 @@ impl LlmProvider for OpenAICompatProvider {
             }
 
             // Flush any pending tool call
-            if tool_call_id.is_some() {
+            if let Some(prev_id) = tool_call_id.take() {
                 yield Ok(StreamChunk::ToolCallEnd {
-                    id: tool_call_id.take().unwrap(),
+                    id: prev_id,
                 });
             }
         };
@@ -255,4 +256,67 @@ pub fn create(cfg: &ResolvedProvider) -> Option<OpenAICompatProvider> {
         base_url,
         models,
     ))
+}
+
+/// Serialize message content — plain string or multimodal content array.
+fn serialize_content(content: &MessageContent) -> serde_json::Value {
+    match content {
+        MessageContent::Text(text) => serde_json::json!(text),
+        MessageContent::Parts(parts) => serde_json::json!(parts),
+    }
+}
+
+use std::future::Future;
+
+async fn retry_with_backoff<F, Fut>(
+    max_retries: u32,
+    f: F,
+) -> anyhow::Result<reqwest::Response>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = Result<reqwest::Response, reqwest::Error>>,
+{
+    let mut attempt = 0;
+    loop {
+        let result = f().await;
+        match result {
+            Ok(response) => {
+                let status = response.status();
+                if status.is_success() {
+                    return Ok(response);
+                }
+                if attempt < max_retries && (status.as_u16() == 429 || status.as_u16() >= 500) {
+                    attempt += 1;
+                    let delay_ms = 1000u64 * 2u64.pow(attempt);
+                    tracing::warn!(
+                        "Provider returned {}, retrying in {}ms (attempt {}/{})",
+                        status,
+                        delay_ms,
+                        attempt,
+                        max_retries
+                    );
+                    tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+                    continue;
+                }
+                let text = response.text().await.unwrap_or_default();
+                return Err(anyhow::anyhow!("HTTP {}: {}", status, text));
+            }
+            Err(e) => {
+                if attempt < max_retries && e.is_connect() || e.is_timeout() {
+                    attempt += 1;
+                    let delay_ms = 1000u64 * 2u64.pow(attempt);
+                    tracing::warn!(
+                        "Connection error, retrying in {}ms (attempt {}/{}): {}",
+                        delay_ms,
+                        attempt,
+                        max_retries,
+                        e
+                    );
+                    tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+                    continue;
+                }
+                return Err(anyhow::anyhow!("Request failed: {}", e));
+            }
+        }
+    }
 }

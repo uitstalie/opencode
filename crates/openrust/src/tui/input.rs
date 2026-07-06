@@ -36,8 +36,7 @@ pub(super) fn next_char_boundary(input: &str, index: usize) -> usize {
 }
 
 pub(super) fn should_exit(key: &crossterm::event::KeyEvent) -> bool {
-    key.code == KeyCode::Esc
-        || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
+    key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL)
 }
 
 pub(super) fn is_exit_command(input: &str) -> bool {

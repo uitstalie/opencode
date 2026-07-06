@@ -123,6 +123,11 @@ impl ToolParams {
 #[derive(Debug, Clone)]
 pub enum ToolResult {
     Text(String),
+    Image {
+        mime_type: String,
+        base64_data: String,
+        description: String,
+    },
     Structured {
         content: String,
         metadata: HashMap<String, serde_json::Value>,
@@ -140,6 +145,7 @@ impl ToolResult {
     pub fn into_text(self) -> String {
         match self {
             Self::Text(t) => t,
+            Self::Image { description, .. } => description,
             Self::Structured { content, .. } => content,
             Self::Error(e) => e,
         }
@@ -248,16 +254,15 @@ pub fn check_permission(
 }
 
 /// Execute a tool by name against a context (parsing raw JSON args), returning
-/// its text output. Shared by the TUI worker and the nested-agent runner.
-pub(crate) async fn run_tool(name: &str, args: &str, ctx: &ToolContext) -> String {
+/// the full ToolResult. Shared by the TUI worker and the nested-agent runner.
+pub(crate) async fn run_tool(name: &str, args: &str, ctx: &ToolContext) -> ToolResult {
     let Some(tool) = catalog::create_tool(name, ctx.undo_store.clone()) else {
-        return format!("Unknown tool: {}", name);
+        return ToolResult::error(format!("Unknown tool: {}", name));
     };
     let parsed =
         serde_json::from_str(args).unwrap_or_else(|_| serde_json::json!({ "input": args }));
     tool.execute_checked(ToolParams::new(parsed), ctx)
         .await
-        .into_text()
 }
 
 // ── Tool Trait ─────────────────────────────────────

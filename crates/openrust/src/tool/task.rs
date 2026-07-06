@@ -4,14 +4,11 @@ use futures::StreamExt;
 
 use crate::core::agent;
 use crate::core::provider::{
-    self, LlmProvider, Message, RequestOptions, StreamChunk, ToolDef, ToolFunction,
+    self, LlmProvider, Message, MessageContent, RequestOptions, StreamChunk, ToolDef, ToolFunction,
 };
 use crate::require_str;
 use crate::tool::{Tool, ToolContext, ToolParams, ToolResult, catalog, run_tool};
 use serde_json::Value;
-
-/// Maximum provider turns for a single sub-agent run (guards against loops).
-const MAX_TURNS: usize = 24;
 
 pub struct TaskTool;
 
@@ -44,10 +41,10 @@ impl Tool for TaskTool {
         };
 
         let agents = agent::load_agents(&ctx.cwd).unwrap_or_default();
-        let system = match agent::agent_by_id(&agents, subagent_type) {
-            Some(found) => found.system.clone(),
+        let (system, agent_mode, max_steps) = match agent::agent_by_id(&agents, subagent_type) {
+            Some(found) => (found.system.clone(), found.mode.clone(), found.max_steps),
             None => match agent::builtin_agent_system(subagent_type) {
-                Some(system) => system.to_string(),
+                Some(system) => (system.to_string(), "subagent".to_string(), 25u32),
                 None => {
                     let available = agents
                         .iter()
@@ -71,18 +68,14 @@ impl Tool for TaskTool {
             ..ctx.clone()
         };
 
-        let initial = vec![Message {
-            role: "user".to_string(),
-            content: prompt.to_string(),
-            name: None,
-            tool_call_id: None,
-            tool_calls: None,
-        }];
+        let initial = vec![Message::user(prompt)];
 
         match run_agent(
             llm.as_ref(),
             model,
             &system,
+            &agent_mode,
+            max_steps,
             ctx.reasoning_effort.as_deref(),
             initial,
             &sub_ctx,
@@ -105,13 +98,15 @@ pub async fn run_agent(
     llm: &dyn LlmProvider,
     model: &str,
     system: &str,
+    agent_mode: &str,
+    max_steps: u32,
     reasoning_effort: Option<&str>,
     initial: Vec<Message>,
     tool_ctx: &ToolContext,
 ) -> anyhow::Result<String> {
-    let tool_defs: Vec<ToolDef> = catalog::TOOL_CATALOG
+    let allowed = catalog::tools_for_mode(agent_mode, true);
+    let tool_defs: Vec<ToolDef> = allowed
         .iter()
-        .filter(|meta| meta.name != "task" && meta.name != "question")
         .filter_map(|meta| catalog::create_tool(meta.name, None))
         .map(|tool| ToolDef {
             r#type: "function".to_string(),
@@ -125,8 +120,21 @@ pub async fn run_agent(
 
     let mut history = initial;
     let mut last_assistant = String::new();
+    let mut step_count: u32 = 0;
 
-    for _ in 0..MAX_TURNS {
+    loop {
+        step_count += 1;
+        if step_count > max_steps {
+            return Ok(last_assistant);
+        }
+
+        let is_last_step = step_count == max_steps;
+        if is_last_step {
+            history.push(Message::assistant(
+                agent::MAX_STEPS_PROMPT.to_string(),
+            ));
+        }
+
         let mut stream = llm
             .chat(
                 history.clone(),
@@ -137,6 +145,7 @@ pub async fn run_agent(
                     max_tokens: None,
                     system: Some(system.to_string()),
                     reasoning_effort: reasoning_effort.map(str::to_string),
+                    tool_choice: None,
                 },
             )
             .await?;
@@ -170,10 +179,10 @@ pub async fn run_agent(
                     else {
                         continue;
                     };
-                    let output = run_tool(&name, &args, tool_ctx).await;
+                    let output = run_tool(&name, &args, tool_ctx).await.into_text();
                     history.push(Message {
                         role: "assistant".to_string(),
-                        content: assistant_text.clone(),
+                        content: MessageContent::text(assistant_text.clone()),
                         name: None,
                         tool_call_id: None,
                         tool_calls: Some(vec![provider::ToolCall {
@@ -185,13 +194,7 @@ pub async fn run_agent(
                             },
                         }]),
                     });
-                    history.push(Message {
-                        role: "tool".to_string(),
-                        content: output,
-                        name: Some(name),
-                        tool_call_id: Some(id),
-                        tool_calls: None,
-                    });
+                    history.push(Message::tool(output, id));
                     assistant_text.clear();
                     pending.clear();
                     tool_executed = true;
@@ -203,13 +206,7 @@ pub async fn run_agent(
 
         if !assistant_text.trim().is_empty() {
             last_assistant = assistant_text.clone();
-            history.push(Message {
-                role: "assistant".to_string(),
-                content: assistant_text,
-                name: None,
-                tool_call_id: None,
-                tool_calls: None,
-            });
+            history.push(Message::assistant(assistant_text));
         }
 
         if tool_executed {
@@ -223,12 +220,6 @@ pub async fn run_agent(
             return Ok(last_assistant);
         }
     }
-
-    Ok(if last_assistant.is_empty() {
-        "[task reached the maximum number of turns]".to_string()
-    } else {
-        last_assistant
-    })
 }
 
 #[cfg(test)]
@@ -269,7 +260,7 @@ mod tests {
             }
 
             let denied = messages.iter().any(|message| {
-                message.role == "tool" && message.content.contains("outside the project scope")
+                message.role == "tool" && message.content.as_text().contains("outside the project scope")
             });
             Ok(Box::pin(futures::stream::iter(vec![
                 Ok(StreamChunk::TextDelta(if denied {

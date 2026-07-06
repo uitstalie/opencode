@@ -7,6 +7,7 @@ use ratatui::{
 pub struct DisplayMessage {
     pub role: String,
     pub content: String,
+    pub collapsed: bool,
 }
 
 impl DisplayMessage {
@@ -24,6 +25,15 @@ impl DisplayMessage {
         Self {
             role: role.to_string(),
             content: content.to_string(),
+            collapsed: false,
+        }
+    }
+
+    pub fn new_collapsed(role: &str, content: &str) -> Self {
+        Self {
+            role: role.to_string(),
+            content: content.to_string(),
+            collapsed: true,
         }
     }
 }
@@ -180,6 +190,17 @@ pub(super) fn display_message_lines(message: &DisplayMessage, theme: &Theme) -> 
         role.to_string(),
         role_style.add_modifier(Modifier::BOLD),
     )])];
+
+    if message.collapsed {
+        let first_line = message.content().lines().next().unwrap_or("");
+        lines.push(Line::from(vec![
+            Span::from(format!("▶ {}", first_line)),
+            Span::styled("  [click to expand]", theme.muted_style()),
+        ]));
+        lines.push(Line::from(""));
+        return lines;
+    }
+
     if role == "assistant" {
         lines.extend(super::markdown::render_markdown(message.content(), theme));
     } else {
@@ -327,4 +348,12 @@ pub(super) fn modal_rect(percent_x: u16, height: u16, top_offset: u16, area: Rec
         width,
         height,
     }
+}
+
+pub(super) fn toast_rect(area: Rect) -> Rect {
+    let width = area.width.saturating_mul(60).saturating_div(100).max(20);
+    let height = 3u16;
+    let x = area.x + area.width.saturating_sub(width) / 2;
+    let y = area.y + area.height.saturating_sub(4);
+    Rect { x, y, width, height }
 }

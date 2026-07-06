@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod compaction;
 pub mod config;
 pub mod crypto;
 pub mod paths;
@@ -6,5 +7,7 @@ pub mod permission;
 pub mod platform;
 pub mod provider;
 pub mod session;
+pub mod session_input;
 pub mod system_prompt;
+pub mod token;
 pub mod vault;

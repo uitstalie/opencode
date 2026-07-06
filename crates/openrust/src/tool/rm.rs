@@ -103,10 +103,11 @@ mod tests {
 
     #[tokio::test]
     async fn refuses_root() {
+        let root = if cfg!(windows) { r"C:\" } else { "/" };
         let r = RmTool
             .execute(
                 ToolParams::new(serde_json::json!({
-                    "target": "/"
+                    "target": root
                 })),
                 &ctx(),
             )

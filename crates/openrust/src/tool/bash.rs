@@ -116,10 +116,15 @@ mod tests {
 
     #[tokio::test]
     async fn timeout_kills() {
+        let sleep_cmd = match crate::tool::shell::detect_shell_kind() {
+            crate::tool::shell::ShellKind::Cmd => "ping -n 11 127.0.0.1 > NUL",
+            _ if cfg!(windows) => "Start-Sleep -Seconds 10",
+            _ => "sleep 10",
+        };
         let r = BashTool
             .execute(
                 ToolParams::new(serde_json::json!({
-                    "command": "sleep 10", "timeout": 300
+                    "command": sleep_cmd, "timeout": 300
                 })),
                 &ctx(),
             )

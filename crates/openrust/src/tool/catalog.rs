@@ -174,6 +174,27 @@ pub fn create_tool(name: &str, undo_store: Option<Arc<UndoStore>>) -> Option<Box
     }
 }
 
+const WRITE_TOOLS: &[&str] = &["write", "edit", "rm", "apply_patch", "bash"];
+const SUBTASK_EXCLUDE: &[&str] = &["task", "question"];
+
+/// Returns the tool names that should be available for a given agent mode and
+/// subagent context. Plan mode strips write tools; subagents strip task/question.
+pub fn tools_for_mode(mode: &str, is_subagent: bool) -> Vec<&'static ToolMeta> {
+    let is_plan = mode == "plan" || mode == "explore";
+    TOOL_CATALOG
+        .iter()
+        .filter(|meta| {
+            if is_plan && WRITE_TOOLS.contains(&meta.name) {
+                return false;
+            }
+            if is_subagent && SUBTASK_EXCLUDE.contains(&meta.name) {
+                return false;
+            }
+            true
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

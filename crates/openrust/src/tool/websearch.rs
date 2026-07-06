@@ -41,22 +41,29 @@ impl Tool for WebSearchTool {
             "https://html.duckduckgo.com/html/?q={}",
             urlencoding::encode(query)
         );
-        let resp = try_tool!(client.get(&url).send().await, |e| format!("Search: {}", e));
+        let resp = try_tool!(client.get(&url).send().await, |e| format!("Search failed: {}", e));
         if !resp.status().is_success() {
-            return ToolResult::error(format!("HTTP {}", resp.status()));
+            return ToolResult::error(format!("HTTP {} from search", resp.status().as_u16()));
         }
         let html = try_tool!(resp.text().await, |e| format!("Read: {}", e));
 
         let results = parse_results(&html, limit);
         if results.is_empty() {
-            return ToolResult::text("No results found.");
+            return ToolResult::error("No results found for this query.".to_string());
         }
         let out: Vec<String> = results
             .iter()
             .enumerate()
             .map(|(i, r)| format!("{}. {}\n   {}\n   {}", i + 1, r.title, r.url, r.snippet))
             .collect();
-        ToolResult::text(out.join("\n\n"))
+
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("query".to_string(), serde_json::json!(query));
+        metadata.insert("results".to_string(), serde_json::json!(results.len()));
+        ToolResult::Structured {
+            content: out.join("\n\n"),
+            metadata,
+        }
     }
 }
 

@@ -126,7 +126,7 @@ impl Vault {
 
     // ── Internal ──────────────────────────────────────
 
-    fn path() -> std::path::PathBuf {
+    pub fn path() -> std::path::PathBuf {
         crate::core::platform::PlatformPaths::detect().credentials_path()
     }
 

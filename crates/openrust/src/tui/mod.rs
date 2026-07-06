@@ -7,11 +7,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::{
     cursor,
-    event::{self, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind},
     execute,
     terminal::{self, ClearType},
 };
@@ -27,8 +27,9 @@ use ratatui::{
 use crate::core::{
     agent,
     config::{Config, ModelConfig, ProviderConfig},
-    provider::{self, Message, RequestOptions, StreamChunk},
+    provider::{self, Message, MessageContent, RequestOptions, StreamChunk},
     session::SessionStore,
+    token,
     vault::Vault,
 };
 use crate::tool::AskRequest;
@@ -53,6 +54,12 @@ use worker::{PromptEvent, PromptJob, SessionRuntimeGuard, spawn_prompt_worker};
 pub fn run(script: Option<PathBuf>, prompt: Option<String>) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
     let config = Config::load(&cwd)?;
+
+    // Validate config at startup — show clear errors before TUI initializes.
+    for error in config.validate() {
+        eprintln!("openrust config: {}", error);
+    }
+
     let (provider_name, model) = config
         .resolve_provider_model()
         .unwrap_or_else(|| ("unconfigured".to_string(), "unconfigured".to_string()));
@@ -310,6 +317,9 @@ struct SessionView {
     thinking_mode: ThinkingMode,
     reasoning_effort: Option<String>,
     dialog: Option<Dialog>,
+    previous_dialog_active: bool,
+    toast: Option<String>,
+    toast_deadline: Option<Instant>,
     pending_question: Option<PendingQuestion>,
     pending_permission: Option<PendingPermission>,
     pending_text_input: Option<PendingTextInput>,
@@ -335,7 +345,20 @@ impl SessionView {
     ) -> Self {
         let interactive = io::stdin().is_terminal() && io::stdout().is_terminal();
         let session_id = format!("session-{}", now_micros());
-        let store = SessionStore::open().ok();
+        let db_path = crate::core::platform::PlatformPaths::detect().sessions_db_path();
+        tracing::info!(path = %db_path.display(), "SessionStore opening");
+        let (store, status) = match SessionStore::open() {
+            Ok(s) => {
+                let count = s.list_sessions().map(|v| v.len()).unwrap_or(0);
+                tracing::info!(count, "SessionStore opened");
+                (Some(s), String::new())
+            }
+            Err(e) => {
+                let msg = format!("DB locked: {e}");
+                tracing::error!(err = %e, "SessionStore open failed");
+                (None, msg)
+            }
+        };
         if let Some(store) = &store {
             let _ = store.ensure_session(&session_id, None);
         }
@@ -357,14 +380,17 @@ impl SessionView {
             input: String::new(),
             cursor_index: 0,
             session_scroll: 0,
-            status: "Ready".to_string(),
+            status,
             ai_running: false,
             cache_hits: 0,
             cache_total: 0,
             theme: Theme::dark(),
-            thinking_mode: ThinkingMode::Hide,
+            thinking_mode: ThinkingMode::Show,
             reasoning_effort: None,
             dialog: None,
+            previous_dialog_active: false,
+            toast: None,
+            toast_deadline: None,
             pending_question: None,
             pending_permission: None,
             pending_text_input: None,
@@ -452,6 +478,23 @@ impl SessionView {
             }
             self.maybe_start_next_prompt(terminal)?;
             self.status = self.default_status_message();
+            if let Some(deadline) = self.toast_deadline {
+                if Instant::now() >= deadline {
+                    self.toast = None;
+                    self.toast_deadline = None;
+                }
+            }
+            {
+                let dialog_active = self.dialog.is_some();
+                if dialog_active != self.previous_dialog_active {
+                    if dialog_active {
+                        execute!(terminal.backend_mut(), DisableMouseCapture)?;
+                    } else {
+                        execute!(terminal.backend_mut(), EnableMouseCapture)?;
+                    }
+                    self.previous_dialog_active = dialog_active;
+                }
+            }
             self.render_terminal(terminal)?;
             if !event::poll(Duration::from_millis(250))? {
                 continue;
@@ -514,10 +557,22 @@ impl SessionView {
                                 dialog.next();
                             }
                         }
+                        KeyCode::Up if self.view_mode == ViewMode::Session => {
+                            self.scroll_session_up(3);
+                        }
+                        KeyCode::Down if self.view_mode == ViewMode::Session => {
+                            self.scroll_session_down(3);
+                        }
                         KeyCode::Enter => {
                             if self.dialog.is_some() {
+                                let is_slash = matches!(
+                                    self.dialog.as_ref().map(|d| &d.kind),
+                                    Some(DialogKind::SlashHelp)
+                                );
                                 self.submit_dialog_selection();
-                                continue;
+                                if !is_slash {
+                                    continue;
+                                }
                             }
                             let input = self.input.trim().to_string();
                             self.input.clear();
@@ -566,6 +621,11 @@ impl SessionView {
                         KeyCode::PageDown => {
                             self.scroll_session_down(8);
                         }
+                        KeyCode::Char('e')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            self.toggle_tool_collapse();
+                        }
                         KeyCode::Char(ch) => {
                             if !key.modifiers.contains(KeyModifiers::CONTROL) {
                                 self.input.insert(self.cursor_index, ch);
@@ -582,6 +642,9 @@ impl SessionView {
                 Event::Mouse(mouse) => match mouse.kind {
                     MouseEventKind::ScrollUp => self.scroll_session_up(3),
                     MouseEventKind::ScrollDown => self.scroll_session_down(3),
+                    MouseEventKind::Down(_) => {
+                        self.toggle_tool_collapse();
+                    }
                     _ => {}
                 },
                 _ => {}
@@ -595,12 +658,13 @@ impl SessionView {
         self.ensure_runtime_ready()?;
         self.messages.push(Message {
             role: "user".to_string(),
-            content: prompt.to_string(),
+            content: MessageContent::text(prompt),
             name: None,
             tool_call_id: None,
             tool_calls: None,
         });
         self.persist_message("user", prompt);
+        self.generate_title();
         self.display
             .push(render::DisplayMessage::new("user", prompt));
         self.status = "Connecting model...".to_string();
@@ -608,8 +672,12 @@ impl SessionView {
         self.assistant_preview.clear();
         self.thinking_preview.clear();
         self.render(stdout, Some(&self.status))?;
+        let Some(llm) = &self.llm else {
+            self.note("LLM not initialized".to_string());
+            return Ok(());
+        };
         self.prompt_job = Some(spawn_prompt_worker(
-            Arc::clone(self.llm.as_ref().expect("llm ensured above")),
+            Arc::clone(llm),
             self.messages.clone(),
             self.model.clone(),
             self.effective_system(),
@@ -619,6 +687,9 @@ impl SessionView {
             Some(self.session_id.clone()),
             self.store.clone(),
             false,
+            self.current_agent_max_steps(),
+            self.current_agent_mode(),
+            self.current_context_window(),
         ));
         while self.prompt_job.is_some() {
             self.pump_prompt_job_for_stdout(stdout)?;
@@ -646,6 +717,7 @@ impl SessionView {
         prompt: String,
     ) -> anyhow::Result<()> {
         if let Err(err) = self.handle_interactive_prompt(terminal, &prompt) {
+            tracing::error!(error = %err, "handle_interactive_prompt failed");
             self.note(err.to_string());
             self.render_terminal(terminal)?;
         }
@@ -698,57 +770,56 @@ impl SessionView {
                     self.status = "AI thinking".to_string();
                     needs_render = true;
                 }
-                PromptEvent::ToolCall { id, name } => {
-                    self.display.push(render::DisplayMessage::new(
-                        "tool",
-                        &format!("tool call: {} ({})", name, id),
-                    ));
+                PromptEvent::ToolCall { name, .. } => {
                     self.status = format!("tool call: {}", name);
-                    self.persist_message_detail(
-                        "assistant",
-                        "",
-                        None,
-                        None,
-                        Some(serde_json::json!([{
-                            "id": id,
-                            "type": "function",
-                            "function": { "name": name, "arguments": "" }
-                        }])),
-                    );
                     needs_render = true;
                 }
-                PromptEvent::ToolComplete {
-                    id,
-                    name,
+                PromptEvent::ToolBatch {
                     assistant,
-                    args,
-                    result,
+                    tool_calls,
+                    results,
                 } => {
-                    if !assistant.trim().is_empty() {
-                        self.persist_message_detail(
-                            "assistant",
-                            &assistant,
-                            None,
-                            None,
-                            Some(serde_json::json!([{
-                                "id": id,
-                                "type": "function",
-                                "function": { "name": name, "arguments": args }
-                            }])),
-                        );
-                    }
                     self.persist_message_detail(
-                        "tool",
-                        &result,
-                        Some(name.clone()),
-                        Some(id.clone()),
+                        "assistant",
+                        &assistant,
                         None,
+                        None,
+                        Some(serde_json::json!(tool_calls)),
                     );
-                    self.display.push(render::DisplayMessage::new(
-                        "tool",
-                        &format!("tool result: {}\n{}", name, result),
-                    ));
-                    self.status = format!("tool result: {}", name);
+                    self.messages.push(Message {
+                        role: "assistant".to_string(),
+                        content: MessageContent::text(assistant.clone()),
+                        name: None,
+                        tool_call_id: None,
+                        tool_calls: Some(serde_json::from_value(serde_json::json!(tool_calls)).unwrap_or_default()),
+                    });
+                    self.display.push(render::DisplayMessage::new("assistant", &assistant));
+                    self.assistant_preview.clear();
+                    if self.thinking_mode == ThinkingMode::Show && !self.thinking_preview.trim().is_empty() {
+                        self.display.push(render::DisplayMessage::new("thinking", &self.thinking_preview));
+                    }
+                    self.thinking_preview.clear();
+                    for item in &results {
+                        self.persist_message_detail(
+                            "tool",
+                            &item.result,
+                            Some(item.name.clone()),
+                            Some(item.id.clone()),
+                            None,
+                        );
+                        self.messages.push(Message {
+                            role: "tool".to_string(),
+                            content: MessageContent::text(item.result.clone()),
+                            name: Some(item.name.clone()),
+                            tool_call_id: Some(item.id.clone()),
+                            tool_calls: None,
+                        });
+                        self.display.push(render::DisplayMessage::new_collapsed(
+                            "tool",
+                            &format!("{}:\n{}", item.name, item.result),
+                        ));
+                    }
+                    self.status = format!("tool results: {} tools", results.len());
                     needs_render = true;
                 }
                 PromptEvent::Finish => {
@@ -756,7 +827,7 @@ impl SessionView {
                     if !assistant.is_empty() {
                         self.messages.push(Message {
                             role: "assistant".to_string(),
-                            content: assistant.clone(),
+                            content: MessageContent::text(assistant.clone()),
                             name: None,
                             tool_call_id: None,
                             tool_calls: None,
@@ -770,18 +841,25 @@ impl SessionView {
                     self.status = "Ready".to_string();
                     self.prompt_job = None;
                     self.assistant_preview.clear();
+                    if self.thinking_mode == ThinkingMode::Show && !self.thinking_preview.trim().is_empty() {
+                        self.display.push(render::DisplayMessage::new("thinking", &self.thinking_preview));
+                    }
                     self.thinking_preview.clear();
                     needs_render = true;
                     finished = true;
+                    self.generate_summary();
                 }
                 PromptEvent::Error(err) => {
                     self.note(format!("provider error: {}", err));
+                    self.input = err.clone();
+                    self.cursor_index = self.input.len();
                     self.ai_running = false;
                     self.prompt_job = None;
                     self.assistant_preview.clear();
                     self.thinking_preview.clear();
                     needs_render = true;
                     finished = true;
+                    self.generate_summary();
                 }
             }
             if finished {
@@ -804,20 +882,25 @@ impl SessionView {
         self.ensure_runtime_ready()?;
         self.messages.push(Message {
             role: "user".to_string(),
-            content: prompt.to_string(),
+            content: MessageContent::text(prompt),
             name: None,
             tool_call_id: None,
             tool_calls: None,
         });
         self.persist_message("user", prompt);
+        self.generate_title();
         self.display
             .push(render::DisplayMessage::new("user", prompt));
         self.status = "Connecting model...".to_string();
         self.ai_running = true;
         self.render_terminal(terminal)?;
 
+        let Some(llm) = &self.llm else {
+            self.note("LLM not initialized".to_string());
+            return Ok(());
+        };
         self.prompt_job = Some(spawn_prompt_worker(
-            Arc::clone(self.llm.as_ref().expect("llm ensured above")),
+            Arc::clone(llm),
             self.messages.clone(),
             self.model.clone(),
             self.effective_system(),
@@ -827,6 +910,9 @@ impl SessionView {
             Some(self.session_id.clone()),
             self.store.clone(),
             true,
+            self.current_agent_max_steps(),
+            self.current_agent_mode(),
+            self.current_context_window(),
         ));
         Ok(())
     }
@@ -916,13 +1002,16 @@ impl SessionView {
             }
             _ => {
                 let Some(store) = self.store.clone() else {
+                    tracing::warn!("open_session_dialog: store is None");
                     self.note("session store unavailable".to_string());
                     return;
                 };
                 let Ok(sessions) = store.list_sessions() else {
+                    tracing::error!("open_session_dialog: list_sessions failed");
                     self.note("failed to list sessions".to_string());
                     return;
                 };
+                tracing::info!(count = sessions.len(), "open_session_dialog");
                 let mut options = vec![DialogOption::new(
                     "__new__",
                     "New session",
@@ -941,12 +1030,15 @@ impl SessionView {
                             } else {
                                 ""
                             };
+                            let summary_preview = session.summary.as_deref()
+                                .map(|s| format!(" · {}", &s[..s.len().min(60)]))
+                                .unwrap_or_default();
                             DialogOption::new(
                                 session.id.clone(),
                                 format!("{}{}. {}", marker, index + 1, title),
                                 format!(
-                                    "{} messages · {} · agent: {}",
-                                    session.message_count, session.id, agent
+                                    "{} messages · {} · agent: {}{}",
+                                    session.message_count, session.id, agent, summary_preview
                                 ),
                             )
                         }),
@@ -1466,6 +1558,23 @@ impl SessionView {
         self.diff_visible = !self.diff_visible;
     }
 
+    fn toggle_tool_collapse(&mut self) {
+        let mut any_tool = false;
+        let new_state = self.display.iter().any(|m| m.role == "tool" && m.collapsed);
+        for msg in &mut self.display {
+            if msg.role == "tool" {
+                msg.collapsed = !new_state;
+                any_tool = true;
+            }
+        }
+        if any_tool {
+            self.note(format!(
+                "tools {}",
+                if new_state { "expanded" } else { "collapsed" }
+            ));
+        }
+    }
+
     /// Capture the last edit/write as a diff for the `/diff` viewer.
     fn capture_diff(&mut self, name: &str, args: &str) {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(args) else {
@@ -1805,6 +1914,34 @@ impl SessionView {
         agent::builtin_agent_system(agent_id).map(str::to_string)
     }
 
+    fn current_agent_max_steps(&self) -> u32 {
+        let agent_id = self.current_session_agent();
+        if let Some(id) = agent_id {
+            if let Ok(agents) = agent::load_agents(&self.cwd) {
+                if let Some(info) = agents.iter().find(|item| item.id == id) {
+                    return info.max_steps;
+                }
+            }
+        }
+        50
+    }
+
+    fn current_agent_mode(&self) -> String {
+        let agent_id = self.current_session_agent();
+        if let Some(id) = agent_id {
+            if let Ok(agents) = agent::load_agents(&self.cwd) {
+                if let Some(info) = agents.iter().find(|item| item.id == id) {
+                    return info.mode.clone();
+                }
+            }
+        }
+        "all".to_string()
+    }
+
+    fn current_context_window(&self) -> u64 {
+        self.config.resolve_context_window()
+    }
+
     fn default_agent_id(&self) -> Option<String> {
         let agents = agent::load_agents(&self.cwd).ok()?;
         agent::default_agent_id(&agents)
@@ -1834,7 +1971,7 @@ impl SessionView {
             .and_then(|value| value.parse::<usize>().ok())
             .unwrap_or(4)
             .max(2);
-        let Some(store) = &self.store else {
+        let Some(store) = self.store.clone() else {
             self.note("session store unavailable".to_string());
             return;
         };
@@ -1850,52 +1987,196 @@ impl SessionView {
         let cutoff = history.len().saturating_sub(keep);
         let older = &history[..cutoff];
         let recent = &history[cutoff..];
-        let summary = older
+
+        if let Some(llm) = &self.llm {
+            let model = self.model.clone();
+            let llm_clone = Arc::clone(llm);
+            let session_id = self.session_id.clone();
+            let store_clone = store.clone();
+            let recent_text = recent
+                .iter()
+                .map(|m| format!("{}: {}", m.role, m.content))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let older_text = older
+                .iter()
+                .map(|m| format!("{}: {}", m.role, m.content))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let cwd = self.cwd.clone();
+            self.status = "compacting...".to_string();
+
+            std::thread::spawn(move || {
+                let rt = match tokio::runtime::Runtime::new() {
+                    Ok(rt) => rt,
+                    Err(_) => return,
+                };
+                let system = agent::builtin_agent_system("compaction")
+                    .unwrap_or("Summarize this conversation history. Be concise.")
+                    .to_string();
+                let prompt = format!(
+                    "Summarize the following conversation history, focusing on key decisions, \
+                    files modified, and remaining tasks. Be terse.\n\n{}",
+                    older_text
+                );
+                let result = rt.block_on(crate::tool::task::run_agent(
+                    llm_clone.as_ref(),
+                    &model,
+                    &system,
+                    "subagent",
+                    5,
+                    None,
+                    vec![provider::Message::user(prompt)],
+                    &crate::tool::ToolContext::new(cwd),
+                ));
+                match result {
+                    Ok(summary) if !summary.trim().is_empty() => {
+                        let _ = store_clone.append_compaction(
+                            &session_id,
+                            summary.trim().to_string(),
+                            recent_text,
+                        );
+                    }
+                    _ => {
+                        let _ = store_clone.append_compaction(
+                            &session_id,
+                            format!("compaction summary\n{}", older_text),
+                            recent_text,
+                        );
+                    }
+                }
+            });
+
+            self.messages = store
+                .effective_messages(&self.session_id)
+                .unwrap_or_default()
+                .iter()
+                .filter(|m| {
+                    m.role == "user"
+                        || m.role == "assistant"
+                        || m.role == "tool"
+                })
+                .map(|m| Message {
+                    role: m.role.clone(),
+                    content: MessageContent::text(m.content.clone()),
+                    name: m.name.clone(),
+                    tool_call_id: m.tool_call_id.clone(),
+                    tool_calls: m
+                        .tool_calls
+                        .as_ref()
+                        .and_then(|v| serde_json::from_value(v.clone()).ok()),
+                })
+                .collect();
+            self.display.push(render::DisplayMessage::new(
+                "system",
+                &format!("compacting {} message(s) into checkpoint...", older.len()),
+            ));
+            self.note(format!(
+                "compacting session history, keeping {} recent message(s)",
+                recent.len()
+            ));
+            return;
+        }
+
+        self.note("no LLM available for AI compaction".to_string());
+    }
+
+    fn generate_title(&self) {
+        let Some(store) = self.store.clone() else {
+            return;
+        };
+        let session_id = self.session_id.clone();
+        if store.get_session(&session_id).ok().flatten().and_then(|s| s.title).is_some() {
+            return;
+        }
+        let Some(llm) = &self.llm else {
+            return;
+        };
+        let model = self.model.clone();
+        let llm_clone = Arc::clone(llm);
+        let first_user = store
+            .get_messages(&session_id)
+            .ok()
+            .and_then(|msgs| msgs.into_iter().find(|m| m.role == "user"))
+            .map(|m| m.content);
+        let Some(user_text) = first_user else {
+            return;
+        };
+        let cwd = self.cwd.clone();
+
+        std::thread::spawn(move || {
+            let rt = match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt,
+                Err(_) => return,
+            };
+            let system = agent::builtin_agent_system("title")
+                .unwrap_or("Generate a concise title.")
+                .to_string();
+            let result = rt.block_on(crate::tool::task::run_agent(
+                llm_clone.as_ref(),
+                &model,
+                &system,
+                "subagent",
+                3,
+                None,
+                vec![provider::Message::user(user_text)],
+                &crate::tool::ToolContext::new(cwd),
+            ));
+            if let Ok(title) = result {
+                let title = title.trim().chars().take(50).collect::<String>();
+                if !title.is_empty() {
+                    let _ = store.set_title(&session_id, title);
+                }
+            }
+        });
+    }
+
+    fn generate_summary(&self) {
+        let Some(store) = self.store.clone() else {
+            return;
+        };
+        let session_id = self.session_id.clone();
+        let Some(llm) = &self.llm else {
+            return;
+        };
+        let model = self.model.clone();
+        let llm_clone = Arc::clone(llm);
+        let history = store.get_messages(&session_id).unwrap_or_default();
+        if history.len() < 2 {
+            return;
+        }
+        let conversation = history
             .iter()
-            .map(|message| format!("{}: {}", message.role, message.content))
+            .map(|m| format!("{}: {}", m.role, m.content))
             .collect::<Vec<_>>()
             .join("\n");
-        match store.append_compaction(
-            &self.session_id,
-            format!("compaction summary\n{}", summary),
-            recent
-                .iter()
-                .map(|message| format!("{}: {}", message.role, message.content))
-                .collect::<Vec<_>>()
-                .join("\n"),
-        ) {
-            Ok(_) => {
-                self.messages = store
-                    .effective_messages(&self.session_id)
-                    .unwrap_or_default()
-                    .iter()
-                    .filter(|message| {
-                        message.role == "user"
-                            || message.role == "assistant"
-                            || message.role == "tool"
-                    })
-                    .map(|message| Message {
-                        role: message.role.clone(),
-                        content: message.content.clone(),
-                        name: message.name.clone(),
-                        tool_call_id: message.tool_call_id.clone(),
-                        tool_calls: message
-                            .tool_calls
-                            .as_ref()
-                            .and_then(|value| serde_json::from_value(value.clone()).ok()),
-                    })
-                    .collect();
-                self.display.push(render::DisplayMessage::new(
-                    "system",
-                    &format!("compacted {} message(s) into checkpoint", older.len()),
-                ));
-                self.note(format!(
-                    "compacted session history, kept {} recent message(s)",
-                    recent.len()
-                ));
+        let cwd = self.cwd.clone();
+
+        std::thread::spawn(move || {
+            let rt = match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt,
+                Err(_) => return,
+            };
+            let system = agent::builtin_agent_system("summary")
+                .unwrap_or("Summarize what was done.")
+                .to_string();
+            let result = rt.block_on(crate::tool::task::run_agent(
+                llm_clone.as_ref(),
+                &model,
+                &system,
+                "subagent",
+                3,
+                None,
+                vec![provider::Message::user(conversation)],
+                &crate::tool::ToolContext::new(cwd),
+            ));
+            if let Ok(summary) = result {
+                let summary = summary.trim().to_string();
+                if !summary.is_empty() {
+                    let _ = store.set_summary(&session_id, summary);
+                }
             }
-            Err(err) => self.note(format!("failed to compact session: {}", err)),
-        }
+        });
     }
 
     fn switch_session(&mut self, target: &str) {
@@ -1932,7 +2213,7 @@ impl SessionView {
             })
             .map(|message| Message {
                 role: message.role.clone(),
-                content: message.content.clone(),
+                content: MessageContent::text(message.content.clone()),
                 name: message.name.clone(),
                 tool_call_id: message.tool_call_id.clone(),
                 tool_calls: message
@@ -2190,7 +2471,7 @@ impl SessionView {
                     .chat(
                         vec![Message {
                             role: "user".to_string(),
-                            content: "reply ok".to_string(),
+                            content: MessageContent::text("reply ok"),
                             name: None,
                             tool_call_id: None,
                             tool_calls: None,
@@ -2202,6 +2483,7 @@ impl SessionView {
                             max_tokens: Some(16),
                             system: None,
                             reasoning_effort: self.reasoning_effort.clone(),
+                            tool_choice: None,
                         },
                     )
                     .await?;
@@ -2292,7 +2574,11 @@ impl SessionView {
 
     fn persist_message(&self, role: &str, content: &str) {
         if let Some(store) = &self.store {
-            let _ = store.append_message_detail(&self.session_id, role, content, None, None, None);
+            if let Err(e) = store.append_message_detail(&self.session_id, role, content, None, None, None) {
+                tracing::error!(err = %e, "persist_message failed");
+            }
+        } else {
+            tracing::warn!("persist_message skipped: store is None");
         }
     }
 
@@ -2305,21 +2591,20 @@ impl SessionView {
         tool_calls: Option<serde_json::Value>,
     ) {
         if let Some(store) = &self.store {
-            let _ = store.append_message_detail(
-                &self.session_id,
-                role,
-                content,
-                name,
-                tool_call_id,
-                tool_calls,
-            );
+            if let Err(e) = store.append_message_detail(
+                &self.session_id, role, content, name, tool_call_id, tool_calls,
+            ) {
+                tracing::error!(err = %e, "persist_message_detail failed");
+            }
+        } else {
+            tracing::warn!("persist_message_detail skipped: store is None");
         }
     }
 
     fn note(&mut self, message: String) {
         self.status = message.lines().next().unwrap_or("Ready").to_string();
-        self.display
-            .push(render::DisplayMessage::new("system", &message));
+        self.toast = Some(message);
+        self.toast_deadline = Some(Instant::now() + Duration::from_secs(4));
     }
 
     fn sync_slash_help(&mut self) {
@@ -2444,7 +2729,11 @@ impl SessionView {
             .wrap(Wrap { trim: false });
         frame.render_widget(input, regions.input);
 
-        if self.interactive && !self.modal_active() {
+        if self.interactive
+            && self.pending_permission.is_none()
+            && self.pending_question.is_none()
+            && self.pending_text_input.is_none()
+        {
             let x = regions
                 .input
                 .x
@@ -2525,7 +2814,11 @@ impl SessionView {
             .wrap(Wrap { trim: false });
         frame.render_widget(status, sections[4]);
 
-        if self.interactive && !self.modal_active() {
+        if self.interactive
+            && self.pending_permission.is_none()
+            && self.pending_question.is_none()
+            && self.pending_text_input.is_none()
+        {
             let x = sections[2]
                 .x
                 .saturating_add(1)
@@ -2536,6 +2829,21 @@ impl SessionView {
 
         let footer = Paragraph::new(self.status_line()).style(self.theme.footer_style());
         frame.render_widget(footer, status_area);
+
+        if let Some(toast) = &self.toast {
+            let toast_area = render::toast_rect(frame.area());
+            let widget = Paragraph::new(toast.as_str())
+                .style(self.theme.system_style())
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(self.theme.border_style())
+                        .style(self.theme.panel_style()),
+                )
+                .wrap(Wrap { trim: false });
+            frame.render_widget(Clear, toast_area);
+            frame.render_widget(widget, toast_area);
+        }
 
         self.render_modal_layer(frame, frame.area());
     }
@@ -2622,7 +2930,8 @@ impl SessionView {
             .wrap(Wrap { trim: false });
         frame.render_widget(description, inner[1]);
 
-        let options = Paragraph::new(dialog.option_lines(&self.theme))
+        let max_visible = ((inner[2].height as usize + 2) / 3).max(1);
+        let options = Paragraph::new(dialog.option_lines(&self.theme, max_visible))
             .style(self.theme.dialog_style())
             .wrap(Wrap { trim: false });
         frame.render_widget(options, inner[2]);
@@ -2641,7 +2950,7 @@ impl SessionView {
             DialogKind::Thinking | DialogKind::ReasoningEffort => {
                 render::modal_rect(52, 12, 4, area)
             }
-            DialogKind::Session => render::modal_rect(58, 14, 4, area),
+            DialogKind::Session => render::modal_rect(58, 24, 4, area),
         }
     }
 
@@ -2682,55 +2991,63 @@ impl SessionView {
                     self.status = "AI thinking".to_string();
                     self.render_terminal(terminal)?;
                 }
-                PromptEvent::ToolCall { id, name } => {
-                    self.display.push(render::DisplayMessage::new(
-                        "tool",
-                        &format!("tool call: {} ({})", name, id),
-                    ));
+                PromptEvent::ToolCall { name, .. } => {
                     self.status = format!("tool call: {}", name);
                     self.render_terminal(terminal)?;
                 }
-                PromptEvent::ToolComplete {
-                    id,
-                    name,
+                PromptEvent::ToolBatch {
                     assistant,
-                    args,
-                    result,
+                    tool_calls,
+                    results,
                 } => {
-                    if !assistant.trim().is_empty() {
-                        self.persist_message_detail(
-                            "assistant",
-                            &assistant,
-                            None,
-                            None,
-                            Some(serde_json::json!([{
-                                "id": id,
-                                "type": "function",
-                                "function": { "name": name, "arguments": args }
-                            }])),
-                        );
-                    }
-                    self.capture_diff(&name, &args);
                     self.persist_message_detail(
-                        "tool",
-                        &result,
-                        Some(name.clone()),
-                        Some(id.clone()),
+                        "assistant",
+                        &assistant,
                         None,
+                        None,
+                        Some(serde_json::json!(tool_calls)),
                     );
-                    let display_text = match (name.as_str(), &self.last_diff) {
-                        ("edit" | "write", Some((_, before, after))) => {
-                            format!(
-                                "tool result: {}\n{}",
-                                name,
-                                diff::unified_diff(before, after)
-                            )
-                        }
-                        _ => format!("tool result: {}\n{}", name, result),
-                    };
-                    self.display
-                        .push(render::DisplayMessage::new("tool", &display_text));
-                    self.status = format!("tool result: {}", name);
+                    self.messages.push(Message {
+                        role: "assistant".to_string(),
+                        content: MessageContent::text(assistant.clone()),
+                        name: None,
+                        tool_call_id: None,
+                        tool_calls: Some(serde_json::from_value(serde_json::json!(tool_calls)).unwrap_or_default()),
+                    });
+                    self.display.push(render::DisplayMessage::new("assistant", &assistant));
+                    self.assistant_preview.clear();
+                    if self.thinking_mode == ThinkingMode::Show && !self.thinking_preview.trim().is_empty() {
+                        self.display.push(render::DisplayMessage::new("thinking", &self.thinking_preview));
+                    }
+                    self.thinking_preview.clear();
+                    for item in &results {
+                        self.capture_diff(&item.name, &item.args);
+                        self.persist_message_detail(
+                            "tool",
+                            &item.result,
+                            Some(item.name.clone()),
+                            Some(item.id.clone()),
+                            None,
+                        );
+                        self.messages.push(Message {
+                            role: "tool".to_string(),
+                            content: MessageContent::text(item.result.clone()),
+                            name: Some(item.name.clone()),
+                            tool_call_id: Some(item.id.clone()),
+                            tool_calls: None,
+                        });
+                        let display_text = match (item.name.as_str(), &self.last_diff) {
+                            ("edit" | "write", Some((_, before, after))) => {
+                                format!("{}:\n{}", item.name, diff::unified_diff(before, after))
+                            }
+                            _ => format!("{}:\n{}", item.name, item.result),
+                        };
+                        self.display.push(render::DisplayMessage::new_collapsed(
+                            "tool",
+                            &display_text,
+                        ));
+                    }
+                    self.status = format!("tool results: {} tools", results.len());
                     self.render_terminal(terminal)?;
                 }
                 PromptEvent::Finish => {
@@ -2738,7 +3055,7 @@ impl SessionView {
                     if !assistant.is_empty() {
                         self.messages.push(Message {
                             role: "assistant".to_string(),
-                            content: assistant.clone(),
+                            content: MessageContent::text(assistant.clone()),
                             name: None,
                             tool_call_id: None,
                             tool_calls: None,
@@ -2752,18 +3069,26 @@ impl SessionView {
                     self.status = "Ready".to_string();
                     self.prompt_job = None;
                     self.assistant_preview.clear();
+                    if self.thinking_mode == ThinkingMode::Show && !self.thinking_preview.trim().is_empty() {
+                        self.display.push(render::DisplayMessage::new("thinking", &self.thinking_preview));
+                    }
                     self.thinking_preview.clear();
                     self.render_terminal(terminal)?;
                     finished = true;
+                    self.generate_summary();
                 }
                 PromptEvent::Error(err) => {
+                    tracing::error!(error = %err, "prompt worker error");
                     self.note(format!("provider error: {}", err));
+                    self.input = err.clone();
+                    self.cursor_index = self.input.len();
                     self.ai_running = false;
                     self.prompt_job = None;
                     self.assistant_preview.clear();
                     self.thinking_preview.clear();
                     self.render_terminal(terminal)?;
                     finished = true;
+                    self.generate_summary();
                 }
             }
             if finished {
@@ -2827,18 +3152,20 @@ impl SessionView {
         match key.code {
             KeyCode::Enter => {
                 let input = self.input.trim().to_string();
-                self.input.clear();
-                self.cursor_index = 0;
                 if input.is_empty() {
+                    self.input.clear();
+                    self.cursor_index = 0;
                     return Ok(true);
                 }
                 if is_exit_command(&input) {
                     return Ok(false);
                 }
-                self.create_session();
+                self.input.clear();
+                self.cursor_index = 0;
                 if self.handle_slash_command(&input) {
                     return Ok(true);
                 }
+                self.create_session();
                 self.enqueue_or_run_prompt(terminal, input)?;
                 Ok(true)
             }
@@ -2878,7 +3205,14 @@ impl SessionView {
         } else {
             format!("cache: {}%", self.cache_hits * 100 / self.cache_total)
         };
-        let context = format!("context: {} msgs", self.messages.len());
+        let used = token::estimate_messages(&self.messages);
+        let window = self.current_context_window();
+        let context = format!(
+            "context: {} / {} tokens ({:.0}%)",
+            used,
+            window,
+            used as f64 / window as f64 * 100.0
+        );
         let task_count = self
             .store
             .as_ref()
@@ -3004,7 +3338,7 @@ mod tests {
 
     #[test]
     fn exit_keys_are_detected() {
-        assert!(should_exit(&crossterm::event::KeyEvent::new(
+        assert!(!should_exit(&crossterm::event::KeyEvent::new(
             KeyCode::Esc,
             KeyModifiers::NONE
         )));

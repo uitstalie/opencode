@@ -37,14 +37,14 @@ pub fn shell_tool_prompt(kind: ShellKind) -> &'static str {
 - Keep commands safe and scoped to the requested task."#
         }
         ShellKind::Pwsh => {
-            r#"Use `pwsh` on modern Windows shells.
-- Prefer PowerShell Core command syntax and cmdlets.
+            r#"Use `pwsh` on modern Windows (PowerShell Core).
+- Prefer PowerShell Core cmdlets and syntax.
 - Use `Get-ChildItem`, `Select-String`, `Set-Content`, `Get-Content`, `Test-Path`.
 - Prefer `pwsh -NoLogo -NoProfile -Command` execution.
-- Keep commands explicit and avoid shell-specific assumptions from Unix."#
+- Keep commands explicit; avoid shell-specific assumptions from Unix."#
         }
         ShellKind::Powershell => {
-            r#"Use `powershell` on legacy Windows PowerShell.
+            r#"Use `powershell` (Windows PowerShell 5.1).
 - Prefer Windows PowerShell cmdlets and syntax.
 - Use `Get-ChildItem`, `Select-String`, `Set-Content`, `Get-Content`, `Test-Path`.
 - Prefer `powershell -NoLogo -NoProfile -Command` execution.

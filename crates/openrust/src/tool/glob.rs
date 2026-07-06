@@ -30,13 +30,13 @@ impl Tool for GlobTool {
         let cwd_str = ctx.cwd.to_string_lossy().to_string();
         let base = p.opt_str("path").unwrap_or(&cwd_str);
 
-        let full = if pattern.starts_with('/') {
+        let full = if std::path::Path::new(pattern).is_absolute() {
             pattern.to_string()
         } else {
             format!(
                 "{}/{}",
-                base.trim_end_matches('/'),
-                pattern.trim_start_matches('/')
+                crate::core::paths::trim_trailing(base),
+                crate::core::paths::trim_leading(pattern),
             )
         };
 

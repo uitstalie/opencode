@@ -163,6 +163,55 @@ impl Config {
         Some((provider_name.to_string(), wire_model.to_string()))
     }
 
+    /// Validate config at startup, returning a list of errors for missing keys/models.
+    pub fn validate(&self) -> Vec<String> {
+        let mut errors = Vec::new();
+        let Some(model_spec) = self.model.as_deref() else {
+            errors.push("No model configured. Set `model` in config to e.g. \"deepseek/deepseek-v4-pro\".".to_string());
+            return errors;
+        };
+        let (provider_name, model_name, _) = parse_model_spec(model_spec);
+        let Some(provider) = self.provider.get(provider_name) else {
+            errors.push(format!(
+                "Provider '{}' not found in config. Add it under `provider.{}`.",
+                provider_name, provider_name
+            ));
+            return errors;
+        };
+        // Check API key — either in vault or config
+        let vault = crate::core::vault::Vault::load();
+        let has_key = vault.get(provider_name).is_some() || provider.api_key.is_some();
+        if !has_key {
+            let vault_path = crate::core::vault::Vault::path().display().to_string();
+            errors.push(format!(
+                "No API key for provider '{}'. Set `provider.{}.api_key` in config, \
+                 or store it encrypted with: openrust debug vault set {} <key> \
+                 (vault: {})",
+                provider_name, provider_name, provider_name, vault_path
+            ));
+        }
+        if !provider.models.contains_key(model_name) {
+            errors.push(format!(
+                "Model '{}' not found in provider '{}'. Check `provider.{}.models`.",
+                model_name, provider_name, provider_name
+            ));
+        }
+        errors
+    }
+
+    /// Resolve the model's context window size from config, falling back to
+    /// an aggressive default for well-known models.
+    pub fn resolve_context_window(&self) -> u64 {
+        let model_spec = self.model.as_deref().unwrap_or("");
+        let (provider_name, model_name, _) = parse_model_spec(model_spec);
+        self.provider
+            .get(provider_name)
+            .and_then(|p| p.models.get(model_name))
+            .and_then(|m| m.limit.as_ref())
+            .and_then(|l| l.context)
+            .unwrap_or_else(|| default_context_window(model_name))
+    }
+
     /// Get provider config by name, resolving API key from:
     ///   1. Encrypted vault (credentials.enc)
     ///   2. Config file `api_key` field
@@ -218,6 +267,21 @@ pub fn parse_model_spec(spec: &str) -> (&str, &str, Option<&str>) {
         2 => (parts[0], parts[1], None),
         _ => (parts[0], parts[1], Some(parts[2])),
     }
+}
+
+/// Default context window sizes for well-known models when config is absent.
+pub fn default_context_window(model: &str) -> u64 {
+    let lower = model.to_lowercase();
+    if lower.contains("gpt-4") || lower.contains("gpt-4o") { return 128_000 }
+    if lower.contains("claude-3") || lower.contains("claude-4") || lower.contains("sonnet") || lower.contains("opus") { return 200_000 }
+    if lower.contains("deepseek-v3") || lower.contains("deepseek-v4") { return 128_000 }
+    if lower.contains("deepseek-r1") || lower.contains("deepseek-reasoner") { return 128_000 }
+    if lower.contains("gemini-2") { return 1_000_000 }
+    if lower.contains("gemini") { return 32_000 }
+    if lower.contains("qwen") { return 32_000 }
+    if lower.contains("llama-3") || lower.contains("llama3") { return 128_000 }
+    if lower.contains("mixtral") { return 32_000 }
+    128_000 // default
 }
 
 /// Strip // line comments and /* */ block comments from JSONC

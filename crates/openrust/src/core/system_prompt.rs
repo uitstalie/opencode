@@ -15,6 +15,8 @@ pub struct SystemPrompt {
 impl SystemPrompt {
     pub fn render(&self) -> String {
         let shell_kind = crate::tool::shell::detect_shell_kind();
+        let cwd = std::path::Path::new(&self.cwd);
+        let skills = crate::tool::skill::list_skills_for_cwd(cwd);
         let mut sections = Vec::new();
         sections.push(render_section("constraint", &render_constraint()));
         sections.push(render_section(
@@ -28,14 +30,9 @@ impl SystemPrompt {
         ));
         sections.push(render_section(
             "capabilities",
-            &render_capabilities(shell_kind),
+            &render_capabilities(shell_kind, &skills),
         ));
         sections.push(render_section("style", &render_style()));
-        sections.push(render_section("memory", &render_memory()));
-        sections.push(render_section(
-            "nudge",
-            "[CONSTRAINT NUDGE] memory_read(决策前) → compact_check",
-        ));
         sections.join("\n\n")
     }
 
@@ -77,13 +74,10 @@ fn render_section(name: &str, content: &str) -> String {
 
 fn render_constraint() -> String {
     [
-        "## Tool Invocation Rules",
-        "- [Memory] memory_record and memory_review must stay ordered.",
-        "- [Compact] honor compact_check when requested.",
-        "",
         "## Concrete Discipline",
         "- Keep changes scoped to the requested task.",
         "- Do not overwrite unrelated work.",
+        "- Do not preemptively add documentation for changes.",
     ]
     .join("\n")
 }
@@ -119,27 +113,39 @@ fn render_instructions(path: &str) -> String {
     .join("\n\n")
 }
 
-fn render_capabilities(shell_kind: crate::tool::shell::ShellKind) -> String {
-    let mut lines = vec![
-        "## Skills".to_string(),
-        "- customize-opencode: opencode 自身配置参考".to_string(),
-        "- write-skills: SKILL.md 格式与陷阱".to_string(),
-        String::new(),
-        "## Agents".to_string(),
+fn render_capabilities(
+    shell_kind: crate::tool::shell::ShellKind,
+    skills: &[crate::tool::skill::SkillEntry],
+) -> String {
+    let mut lines = Vec::new();
+
+    if !skills.is_empty() {
+        lines.push("## Skills".to_string());
+        for skill in skills {
+            lines.push(format!("- {}: loaded from {}", skill.name, skill.path.display()));
+        }
+        lines.push(String::new());
+    }
+
+    lines.push("## Agents".to_string());
+    lines.push(
         "- agents are loaded from local markdown directories such as agents/, agent/, and modes/"
             .to_string(),
-        String::new(),
-        "## Tasks".to_string(),
+    );
+    lines.push(String::new());
+    lines.push("## Tasks".to_string());
+    lines.push(
         "- task and todo state are session-scoped and persisted in the session database"
             .to_string(),
-        String::new(),
-        "## Tools".to_string(),
-        "- debug: provider / tool / config / vault / session / prompt".to_string(),
+    );
+    lines.push(String::new());
+    lines.push("## Tools".to_string());
+    lines.push(
         format!(
             "- shell: {}",
             crate::tool::shell::shell_environment_hint(shell_kind)
         ),
-    ];
+    );
 
     lines.extend(crate::tool::catalog::TOOL_CATALOG.iter().map(|tool| {
         format!(
@@ -172,15 +178,6 @@ fn render_style() -> String {
     .join("\n")
 }
 
-fn render_memory() -> String {
-    [
-        "## Dreaming Guide".to_string(),
-        "- memory_record 写入前先 memory_review。".to_string(),
-        "- 避免记录流水账和临时调试过程。".to_string(),
-    ]
-    .join("\n")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,10 +201,7 @@ mod tests {
         assert!(prompt.contains("<instructions>"));
         assert!(prompt.contains("<capabilities>"));
         assert!(prompt.contains("<style>"));
-        assert!(prompt.contains("<memory>"));
-        assert!(prompt.contains("<nudge>"));
         assert!(prompt.contains("mode=build"));
-        assert!(prompt.contains("[CONSTRAINT NUDGE] memory_read(决策前) → compact_check"));
     }
 
     #[test]

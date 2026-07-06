@@ -68,10 +68,7 @@ fn init_logging() -> anyhow::Result<WorkerGuard> {
         .with_writer(file_writer);
 
     tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "openrust=info".into()),
-        )
+        .with(tracing_subscriber::EnvFilter::new("openrust=info"))
         .with(stderr_layer)
         .with(file_layer)
         .init();
