@@ -1,227 +1,175 @@
-# fake_opencode — opencode 源码开发与部署
+# fake_opencode — openencode 的完整 Rust 重写
 
-基于 [uitstalie/opencode](https://github.com/uitstalie/opencode.git) fork，进行定制开发和本地运行。
-插件系统已废弃，全部通过源码编译二进制运行。
+基于 [uitstalie/opencode](https://github.com/uitstalie/opencode.git) fork，进行完整 Rust 重写。
+原 TypeScript 实现已全部移除，单一 Rust 二进制 `openrust`，零 TS/Node/Bun 依赖，无 gRPC sidecar。
 
-- **默认分支**：`dev`
-- **工作区**：本仓库即为可直接编辑的源码
+- **默认分支**：`dev`（当前 Rust TUI 工作分支：`opencode-rust-tui`）
+- **工作区**：本仓库即为可直接编辑的源码，Rust 代码在 `crates/openrust/`
 - 修改源码后需 编译 → 替换二进制 → 重启 opencode
 
 ---
 
 ## Deploy & Update (AI Operations Guide)
 
-This section covers how to build, deploy, replace, and update the opencode binary on this machine.
+This section covers how to build, deploy, replace, and update the openrust binary on this machine.
 Follow these steps exactly and in order.
 
 ### Platform
 
 - OS: Linux, Arch: x64
-- Install path: `~/.opencode/bin/opencode`
-- Build tool: Bun (in `packages/opencode/`)
+- Install path: `~/.opencode/bin/openrust`
+- Build tool: cargo (in `crates/openrust/`)
+- Binary name: `openrust`
 
 ### Quick Build (current platform only)
 
 ```bash
-cd packages/opencode && bun run build --single
+cd crates/openrust && cargo build --release
 ```
 
-Output: `dist/opencode-linux-x64/bin/opencode`
+Output: `crates/openrust/target/release/openrust`
 
 ### Quick Build + Replace (compile & hot-swap)
 
 ```bash
-cd packages/opencode && bun run build --single --skip-embed-web-ui && \
-  cp ~/.opencode/bin/opencode ~/.opencode/bin/opencode.bak && \
-  cp dist/opencode-linux-x64/bin/opencode ~/.opencode/bin/opencode
+cd crates/openrust && cargo build --release && \
+  cp ~/.opencode/bin/openrust ~/.opencode/bin/openrust.bak && \
+  cp target/release/openrust ~/.opencode/bin/openrust
 ```
 
 After replacement, the user must **restart opencode** for the new binary to take effect.
 
-⚠️ **Always backup before replacing**: copy `~/.opencode/bin/opencode` to `~/.opencode/bin/opencode.bak` first. If the new binary fails, restore with `cp ~/.opencode/bin/opencode.bak ~/.opencode/bin/opencode`.
+⚠️ **Always backup before replacing**: copy `~/.opencode/bin/openrust` to `~/.opencode/bin/openrust.bak` first. If the new binary fails, restore with `cp ~/.opencode/bin/openrust.bak ~/.opencode/bin/openrust`.
 
 ### Full Update Workflow
 
 When user says "update opencode" or "pull latest and rebuild":
 
-1. `git pull origin dev` (or the current branch)
-2. `cd packages/opencode && bun run build --single --skip-embed-web-ui`
-3. `cp ~/.opencode/bin/opencode ~/.opencode/bin/opencode.bak`
-4. `cp dist/opencode-linux-x64/bin/opencode ~/.opencode/bin/opencode`
+1. `git pull origin <branch>` (the current working branch)
+2. `cd crates/openrust && cargo build --release`
+3. `cp ~/.opencode/bin/openrust ~/.opencode/bin/openrust.bak`
+4. `cp crates/openrust/target/release/openrust ~/.opencode/bin/openrust`
 5. Tell user to restart opencode
 
 ### Build Flags
 
 | Flag | Effect |
 |------|--------|
-| `--single` | Build only for current platform (much faster) |
-| `--baseline` | Also build baseline (no AVX2) variant |
-| `--skip-install` | Skip `bun install` step |
-| `--sourcemaps` | Include sourcemaps in output |
+| `--release` | Optimized production build (LTO + codegen-units=1) |
+| `--target <triple>` | Cross-compile for a specific target |
+| `--no-default-features` | Build without default features (if added later) |
 
 ### Troubleshooting
 
-- **typecheck fails on push**: pre-push hook runs `turbo typecheck`. Only fix errors in changed packages. If errors are pre-existing and unrelated, use `git push --no-verify` with user confirmation.
-- **build fails with missing deps**: run `bun install` in repo root first.
-- **binary doesn't start**: check `~/.opencode/bin/opencode --version`, verify arch matches.
+- **build fails**: run `cd crates/openrust && cargo check` for detailed errors. Dependencies are fetched automatically by cargo; no separate install step.
+- **clippy warnings**: run `cd crates/openrust && cargo clippy` and fix before committing.
+- **binary doesn't start**: check `~/.opencode/bin/openrust --version`, verify arch matches (`uname -m` should be x86_64).
+- **push blocked by hooks**: pre-push hooks were removed with the TS toolchain. If a hook is re-added later and fails on unrelated errors, use `git push --no-verify` with user confirmation.
 
 ---
 
-- To regenerate the JavaScript SDK, run `./packages/sdk/js/script/build.ts`.
-- The default branch in this repo is `dev`.
+- The default branch in this repo is `dev`; the Rust TUI work currently lives on `opencode-rust-tui` (and is mirrored to `origin/rust`).
 - Local `main` ref may not exist; use `dev` or `origin/dev` for diffs.
 
 ## Branch Names
 
 Use a short branch name of at most three words, separated by hyphens. Do not use slashes or type prefixes such as `feat/` or `fix/`.
 
-Examples: `session-recovery`, `fix-scroll-state`, `regenerate-sdk`.
+Examples: `session-recovery`, `fix-scroll-state`, `provider-auth`.
 
 ## Commits and PR Titles
 
 Use conventional commit-style messages and PR titles: `type(scope): summary`.
 
-Valid types are `feat`, `fix`, `docs`, `chore`, `refactor`, and `test`. Scopes are optional; use the affected package or area when helpful, e.g. `core`, `opencode`, `tui`, `app`, `desktop`, `sdk`, or `plugin`.
+Valid types are `feat`, `fix`, `docs`, `chore`, `refactor`, and `test`. Scopes are optional; use the affected Rust module or area when helpful, e.g. `core`, `tui`, `cli`, `tool`, `provider`, `openrust`, or `config`.
 
-Examples: `fix(tui): simplify thinking toggle styling`, `docs: update contributing guide`, `chore(sdk): regenerate types`.
+Examples: `fix(tui): simplify thinking toggle rendering`, `docs: update build guide`, `chore(openrust): bump deps`.
 
 ## Style Guide
 
 ### General Principles
 
-- Keep things in one function unless composable or reusable
+- Keep things in one function unless composable or reusable.
 - Do not extract single-use helpers preemptively. Inline the logic at the call site unless the helper is reused, hides a genuinely complex boundary, or has a clear independent name that improves the caller.
-- Avoid `try`/`catch` where possible
-- Avoid using the `any` type
-- Use Bun APIs when possible, like `Bun.file()`
-- Rely on type inference when possible; avoid explicit type annotations or interfaces unless necessary for exports or clarity
-- Prefer functional array methods (flatMap, filter, map) over for loops; use type guards on filter to maintain type inference downstream
-- In `src/config`, follow the existing self-export pattern at the top of the file (for example `export * as ConfigAgent from "./agent"`) when adding a new config module.
+- Prefer `Result` propagation (`?`) over `unwrap()`/`expect()`/`panic!` in non-test code.
+- Prefer iterators and combinators (`map`, `filter`, `flat_map`, `collect`) over explicit `for` loops when it reads cleanly; use type-aware patterns (`Option::map`, `Result::map_err`).
+- Prefer `&str` / `&[T]` over owned `String` / `Vec<T>` in function parameters when ownership isn't needed.
+- Avoid unnecessary `.clone()`; prefer borrows, `Cow`, or restructure to move. Clone only when a copy is genuinely needed.
+- Rely on type inference where obvious; annotate function signatures (params and return types) for clarity and to enforce contracts.
+- Prefer `const` bindings; use `let mut` only when mutation is required. Use `if let` / `match` / early returns instead of mut reassignment.
+- Add comments for non-obvious constraints and surprising behavior, not for obvious assignments or control flow.
+- Keep helpers close to the code they support, below the main export when that improves readability. Extract only when it names a real concept like `resolve_config` or `read_metadata`.
 
 Reduce total variable count by inlining when a value is only used once.
 
-```ts
+```rust
 // Good
-const journal = await Bun.file(path.join(dir, "journal.json")).json()
+let journal: Journal = read_json(&path.join("journal.json")).await?;
 
 // Bad
-const journalPath = path.join(dir, "journal.json")
-const journal = await Bun.file(journalPath).json()
+let journal_path = path.join("journal.json");
+let journal: Journal = read_json(&journal_path).await?;
 ```
 
-### Destructuring
+### Error Handling
 
-Avoid unnecessary destructuring. Use dot notation to preserve context.
-
-```ts
-// Good
-obj.a
-obj.b
-
-// Bad
-const { a, b } = obj
-```
-
-### Imports
-
-- Never alias imports. Do not use `import { foo as bar } from "..."` or renamed imports like `resolve as pathResolve`.
-- Never use star imports. Do not use `import * as Foo from "..."` or `import type * as Foo from "..."`.
-- If a namespace-style value is needed, import the module's own exported namespace by name, for example `import { Project } from "@opencode-ai/core/project"`, then reference `Project.ID`.
-- Prefer dynamic imports for heavy modules that are only needed in selected code paths, especially in startup-sensitive entrypoints. Destructure dynamic import bindings near the top of the narrowest scope that needs them so they read like normal imports. Avoid inline chains such as `await import("./module").then((mod) => mod.value())` or `(await import("./module")).value()`. Keep branch-specific imports inside the branch that needs them to preserve lazy loading.
-
-### Variables
-
-Prefer `const` over `let`. Use ternaries or early returns instead of reassignment.
-
-```ts
-// Good
-const foo = condition ? 1 : 2
-
-// Bad
-let foo
-if (condition) foo = 1
-else foo = 2
-```
+- Use `thiserror` for library error enums with context-rich variants; use `anyhow` for application-level glue where the specific error type isn't important.
+- Propagate errors with `?`; convert at boundaries with `.map_err(|e| MyError::Inner(e.to_string()))` or `From` impls.
+- Never `unwrap()`/`expect()` on fallible operations in production code; tests may use them freely.
+- Avoid `unwrap_or_default()` when a missing value is a real error; prefer explicit handling.
 
 ### Control Flow
 
 Avoid `else` statements. Prefer early returns.
 
-```ts
+```rust
 // Good
-function foo() {
-  if (condition) return 1
-  return 2
+fn foo(cond: bool) -> u32 {
+    if cond { return 1; }
+    2
 }
 
 // Bad
-function foo() {
-  if (condition) return 1
-  else return 2
+fn foo(cond: bool) -> u32 {
+    if cond { 1 } else { 2 }
 }
 ```
 
-### Complex Logic
+### Async
 
-When a function has several validation branches or supporting details, make the main function read as the happy path and move supporting details into small helpers below it.
+- Use `tokio` as the runtime. Heavy/sync work (file IO that isn't tokio-aware, CPU loops) belongs in `tokio::task::spawn_blocking`, not on the async executor.
+- Keep async functions `Send` when they may run on a multi-threaded runtime; avoid holding `!Send` guards across `.await`.
+- One provider stream per turn; do not spawn nested tool loops that escape the worker.
 
-```ts
-// Good
-export function loadThing(input: unknown) {
-  const config = requireConfig(input)
-  const metadata = readMetadata(input)
-  return createThing({ config, metadata })
-}
+### Naming
 
-function requireConfig(input: unknown) {
-  ...
-}
-```
+- `snake_case` for functions, methods, variables, modules, crates.
+- `PascalCase` for types, traits, enum variants.
+- `SCREAMING_SNAKE_CASE` for constants.
+- Module file names are `snake_case.rs`.
 
-- Keep helpers close to the code they support, below the main export when that improves readability.
-- Do not over-abstract simple expressions into many single-use helpers; extract only when it names a real concept like `requireConfig` or `readMetadata`.
-- Do not return `Effect` from helpers unless they actually perform effectful work. Synchronous parsing, validation, and option building should stay synchronous.
-- Prefer Effect schema helpers such as `Schema.UnknownFromJsonString` and `Schema.decodeUnknownOption` over manual `JSON.parse` wrapped in `Effect.try` when parsing untrusted JSON strings.
-- Add comments for non-obvious constraints and surprising behavior, not for obvious assignments or control flow.
+### Module Layout
 
-### Schema Definitions (Drizzle)
+The crate follows a flat module tree under `crates/openrust/src/`:
 
-Use snake_case for field names so column names don't need to be redefined as strings.
+- `cli/` — CLI entrypoint and `debug` subcommands (debug-first strategy: core logic is verified via `opencode debug <subcommand>` before TUI integration).
+- `core/` — session, config, provider, vault, compaction, permission, paths.
+- `tool/` — tool registry and individual tools.
+- `tui/` — ratatui/crossterm terminal UI, worker, rendering.
+- `provider/` — LLM provider trait and OpenAI-compatible adapter.
+- `system_prompt.rs` — system prompt assembly (kept out of `core/` to avoid layering violations into `tool/`).
 
-```ts
-// Good
-const table = sqliteTable("session", {
-  id: text().primaryKey(),
-  project_id: text().notNull(),
-  created_at: integer().notNull(),
-})
-
-// Bad
-const table = sqliteTable("session", {
-  id: text("id").primaryKey(),
-  projectID: text("project_id").notNull(),
-  createdAt: integer("created_at").notNull(),
-})
-```
+When adding a module, follow the existing `mod.rs` + sibling-file pattern. Keep `tool/` and `tui/` Location-scoped; do not let model resolution or tool registry leak into the UI layer.
 
 ## Testing
 
-- Avoid mocks as much as possible
-- Test actual implementation, do not duplicate logic into tests
-- Tests cannot run from repo root (guard: `do-not-run-tests-from-root`); run from package dirs like `packages/opencode`.
+- Avoid mocks as much as possible; test actual implementations.
+- Do not duplicate logic into tests.
+- Run tests from the crate directory: `cd crates/openrust && cargo test`.
+- Tests may use `unwrap()`/`expect()` freely.
 
-## Type Checking
+## Type Checking & Linting
 
-- Always run `bun typecheck` from package directories (e.g., `packages/opencode`), never `tsc` directly.
-
-## V2 Session Core
-
-- Keep durable prompt admission separate from model execution. `SessionV2.prompt(...)` admits one durable `session_input` row before scheduling advisory `SessionExecution.wake(sessionID)` unless `resume: false` requests admit-only behavior. The serialized runner promotes admitted inputs into visible user messages at safe boundaries.
-- Reusing a Session ID adopts the existing Session. Reusing a prompt message ID reconciles an exact retry only when Session, prompt, and delivery mode match; conflicting reuse fails. Historical projected prompts lazily synthesize promoted inbox records during exact retry.
-- Keep `SessionExecution` process-global and Session-ID based. Its local implementation owns the process-local Session coordinator and discovers placement through `SessionStore` plus `LocationServiceMap.get(session.location)` only when a drain starts; no layer should take a Session ID. V2 interruption targets the active process-local ownership chain for that Session; idle or missing interruption is a no-op.
-- Keep `SessionRunner`, model resolution, tool registry, permissions, and filesystem Location-scoped. Omitted `Location.workspaceID` means implicit-local placement; explicit workspace identity remains reserved for future placement semantics.
-- Preserve one explicit `llm.stream(request)` call per provider turn and reload projected history before durable continuation. Do not bridge through legacy `SessionPrompt.loop(...)` or delegate orchestration to an in-memory tool loop.
-- Keep local Session drains process-local until clustering is implemented. `SessionRunCoordinator` joins explicit same-Session resumes, coalesces prompt wakeups, and allows different Sessions to run concurrently. Advisory wakes drain eligible durable inbox rows only; post-crash activity recovery requires a separate explicit design before it may retry provider work.
-- Keep delivery vocabulary explicit. Prompts steer by default and coalesce into the active activity at the next safe provider-turn boundary. Explicit `queue` inputs open FIFO future activities one at a time after the active activity settles.
-- Keep EventV2 replay owner claims separate from clustered Session execution ownership.
-- Keep the System Context algebra, registry, and built-ins in `src/system-context`; keep Context Source producers with their observed domains, and keep Session History selection plus Context Epoch persistence Session-owned.
+- Always run `cargo check` (and ideally `cargo clippy`) from `crates/openrust/` before pushing.
+- `cargo check` is the equivalent of the old `bun typecheck`; `clippy` enforces idiomatic Rust.
+- Never leave `clippy` warnings in committed code.
