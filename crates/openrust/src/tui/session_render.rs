@@ -80,12 +80,12 @@ impl SessionView {
             regions.session
         };
         self.session_render_lines_for_area(session_area.height as usize, session_area.width as usize);
-        let rows = self.session_render_lines.borrow();
+        let rows = self.render.lines.borrow();
         let lines: Vec<Line<'static>> = rows
             .iter()
             .enumerate()
             .map(|(index, row)| {
-                if self.session_selection.is_some_and(|(start, end)| {
+                if self.render.selection.is_some_and(|(start, end)| {
                     let (from, to) = if start <= end { (start, end) } else { (end, start) };
                     index >= from && index <= to
                 }) {
@@ -98,8 +98,8 @@ impl SessionView {
                 }
             })
             .collect();
-        self.session_area_top.set(session_area.y);
-        self.session_area_height.set(session_area.height);
+        self.render.area_top.set(session_area.y);
+        self.render.area_height.set(session_area.height);
         let session = Paragraph::new(lines)
             .style(self.theme.panel_style())
             .block(

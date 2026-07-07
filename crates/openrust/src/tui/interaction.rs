@@ -44,27 +44,27 @@ impl SessionView {
                 if self.handle_session_mouse_down(mouse.column, mouse.row)? {
                     return Ok(());
                 }
-                self.mouse_down_row = None;
-                self.mouse_dragging = false;
+                self.render.mouse_down_row = None;
+                self.render.mouse_dragging = false;
             }
             MouseEventKind::Drag(MouseButton::Left) => {
                 if self.session_area_contains(mouse.row) {
-                    self.mouse_dragging = true;
+                    self.render.mouse_dragging = true;
                     self.update_session_selection(mouse.row, false)?;
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                if self.mouse_dragging {
+                if self.render.mouse_dragging {
                     self.update_session_selection(mouse.row, true)?;
-                    self.mouse_dragging = false;
-                    self.mouse_down_row = None;
+                    self.render.mouse_dragging = false;
+                    self.render.mouse_down_row = None;
                     return Ok(());
                 }
                 if self.handle_dialog_mouse(mouse.column, mouse.row)? {
                     return Ok(());
                 }
                 self.handle_session_click(mouse.column, mouse.row, terminal)?;
-                self.mouse_down_row = None;
+                self.render.mouse_down_row = None;
             }
             _ => {}
         }
@@ -90,10 +90,10 @@ impl SessionView {
     }
 
     fn copy_selected_session_text(&mut self) -> anyhow::Result<bool> {
-        let Some((start, end)) = self.session_selection else {
+        let Some((start, end)) = self.render.selection else {
             return Ok(false);
         };
-        let lines = self.session_render_lines.borrow();
+        let lines = self.render.lines.borrow();
         if lines.is_empty() {
             return Ok(false);
         }
@@ -122,7 +122,7 @@ impl SessionView {
         let Some(dialog) = &self.dialog else {
             return Ok(false);
         };
-        let Some(area) = self.dialog_area.get() else {
+        let Some(area) = self.render.dialog_area.get() else {
             return Ok(false);
         };
         if !area.contains((column, row).into()) {
@@ -154,8 +154,8 @@ impl SessionView {
         let Some(index) = self.session_row_index_at(row) else {
             return Ok(false);
         };
-        self.mouse_down_row = Some(index);
-        self.session_selection = Some((index, index));
+        self.render.mouse_down_row = Some(index);
+        self.render.selection = Some((index, index));
         if self.is_tool_row(index) {
             let _ = column;
         }
@@ -169,23 +169,23 @@ impl SessionView {
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     ) -> anyhow::Result<()> {
         let Some(index) = self.session_row_index_at(row) else {
-            self.session_selection = None;
+            self.render.selection = None;
             return Ok(());
         };
 
-        if self.mouse_dragging {
+        if self.render.mouse_dragging {
             return Ok(());
         }
 
         if self.is_tool_row(index) {
             self.toggle_tool_at_index(index);
-            self.session_selection = Some((index, index));
+            self.render.selection = Some((index, index));
             self.render_terminal(terminal)?;
             return Ok(());
         }
 
         let _ = column;
-        self.session_selection = Some((index, index));
+        self.render.selection = Some((index, index));
         self.render_terminal(terminal)?;
         Ok(())
     }
@@ -194,32 +194,32 @@ impl SessionView {
         let Some(index) = self.session_row_index_at(row) else {
             return Ok(());
         };
-        let anchor = self.mouse_down_row.unwrap_or(index);
-        self.session_selection = Some((anchor, index));
-        if finalize && self.mouse_down_row.is_none() {
-            self.session_selection = Some((index, index));
+        let anchor = self.render.mouse_down_row.unwrap_or(index);
+        self.render.selection = Some((anchor, index));
+        if finalize && self.render.mouse_down_row.is_none() {
+            self.render.selection = Some((index, index));
         }
         Ok(())
     }
 
     fn session_area_contains(&self, row: u16) -> bool {
-        let top = self.session_area_top.get();
-        let height = self.session_area_height.get();
+        let top = self.render.area_top.get();
+        let height = self.render.area_height.get();
         row >= top && row < top.saturating_add(height)
     }
 
     fn session_row_index_at(&self, row: u16) -> Option<usize> {
-        let top = self.session_area_top.get().saturating_add(1);
-        let height = self.session_area_height.get().saturating_sub(2);
+        let top = self.render.area_top.get().saturating_add(1);
+        let height = self.render.area_height.get().saturating_sub(2);
         if row < top || row >= top.saturating_add(height) {
             return None;
         }
         let index = row.saturating_sub(top) as usize;
-        self.session_render_lines.borrow().get(index).map(|_| index)
+        self.render.lines.borrow().get(index).map(|_| index)
     }
 
     fn is_tool_row(&self, index: usize) -> bool {
-        self.session_render_lines
+        self.render.lines
             .borrow()
             .get(index)
             .and_then(|row| row.tool_message_index)
@@ -228,7 +228,7 @@ impl SessionView {
 
     fn toggle_tool_at_index(&mut self, index: usize) {
         let tool_message_index = {
-            let rows = self.session_render_lines.borrow();
+            let rows = self.render.lines.borrow();
             rows.get(index).and_then(|row| row.tool_message_index)
         };
         let Some(tool_message_index) = tool_message_index else {
@@ -333,7 +333,7 @@ impl SessionView {
 
     pub(super) fn session_render_lines_for_area(&self, region_height: usize, region_width: usize) {
         let rows = self.session_render_rows(region_height, region_width);
-        *self.session_render_lines.borrow_mut() = rows;
+        *self.render.lines.borrow_mut() = rows;
     }
 
     fn flatten_line(line: &Line<'static>) -> String {

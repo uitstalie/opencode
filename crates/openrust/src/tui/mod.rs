@@ -115,9 +115,7 @@ struct SessionView {
     session_scroll: usize,
     status: String,
     ai_running: bool,
-    cache_hits: usize,
-    cache_total: usize,
-    prompt_count: usize,
+    cache: CacheStats,
     theme: Theme,
     thinking_mode: ThinkingMode,
     reasoning_effort: Option<String>,
@@ -136,13 +134,7 @@ struct SessionView {
     shutdown: Arc<AtomicBool>,
     assistant_preview: String,
     thinking_preview: String,
-    session_render_lines: RefCell<Vec<SessionRenderLine>>,
-    session_selection: Option<(usize, usize)>,
-    mouse_down_row: Option<usize>,
-    mouse_dragging: bool,
-    session_area_top: Cell<u16>,
-    session_area_height: Cell<u16>,
-    dialog_area: Cell<Option<ratatui::layout::Rect>>,
+    render: RenderState,
 }
 
 impl SessionView {
@@ -200,9 +192,7 @@ impl SessionView {
             session_scroll: 0,
             status,
             ai_running: false,
-            cache_hits: 0,
-            cache_total: 0,
-            prompt_count: 0,
+            cache: CacheStats { hits: 0, total: 0, prompt_count: 0 },
             theme: Theme::dark(),
             thinking_mode: ThinkingMode::Show,
             reasoning_effort: None,
@@ -221,13 +211,15 @@ impl SessionView {
             shutdown: Arc::new(AtomicBool::new(false)),
             assistant_preview: String::new(),
             thinking_preview: String::new(),
-            session_render_lines: RefCell::new(Vec::new()),
-            session_selection: None,
-            mouse_down_row: None,
-            mouse_dragging: false,
-            session_area_top: Cell::new(0),
-            session_area_height: Cell::new(24),
-            dialog_area: Cell::new(None),
+            render: RenderState {
+                lines: RefCell::new(Vec::new()),
+                selection: None,
+                mouse_down_row: None,
+                mouse_dragging: false,
+                area_top: Cell::new(0),
+                area_height: Cell::new(24),
+                dialog_area: Cell::new(None),
+            },
         }
     }
 
@@ -2284,27 +2276,27 @@ impl SessionView {
 
         if let Some(dialog) = &self.dialog {
             let dialog_area = self.dialog_area(dialog, area);
-            self.dialog_area.set(Some(dialog_area));
+            self.render.dialog_area.set(Some(dialog_area));
             frame.render_widget(Clear, dialog_area);
             self.render_dialog_panel(frame, dialog_area, dialog);
             return;
         }
         if let Some(question) = &self.pending_question {
-            self.dialog_area.set(Some(centered_rect(72, 60, area)));
+            self.render.dialog_area.set(Some(centered_rect(72, 60, area)));
             let dialog_area = centered_rect(72, 60, area);
             frame.render_widget(Clear, dialog_area);
             frame.render_widget(self.question_widget(question), dialog_area);
             return;
         }
         if let Some(permission) = &self.pending_permission {
-            self.dialog_area.set(Some(centered_rect(60, 32, area)));
+            self.render.dialog_area.set(Some(centered_rect(60, 32, area)));
             let dialog_area = centered_rect(60, 32, area);
             frame.render_widget(Clear, dialog_area);
             frame.render_widget(self.permission_widget(permission), dialog_area);
             return;
         }
         if let Some(input) = &self.pending_text_input {
-            self.dialog_area.set(Some(centered_rect(64, 28, area)));
+            self.render.dialog_area.set(Some(centered_rect(64, 28, area)));
             let dialog_area = centered_rect(64, 28, area);
             frame.render_widget(Clear, dialog_area);
             let inner = ratatui::layout::Layout::default()
@@ -2327,7 +2319,7 @@ impl SessionView {
         }
         if self.diff_visible {
             if let Some((title, before, after)) = &self.last_diff {
-                self.dialog_area.set(Some(centered_rect(80, 70, area)));
+                self.render.dialog_area.set(Some(centered_rect(80, 70, area)));
                 let dialog_area = centered_rect(80, 70, area);
                 frame.render_widget(Clear, dialog_area);
                 let widget = Paragraph::new(diff::render_diff(before, after, &self.theme))
@@ -2516,9 +2508,9 @@ impl SessionView {
                         self.display
                             .push(render::DisplayMessage::new("assistant", &assistant));
                     }
-                    self.prompt_count = self.prompt_count.saturating_add(1);
-                    self.cache_total = prompt_tokens as usize;
-                    self.cache_hits = cache_hit_tokens as usize;
+                    self.cache.prompt_count = self.cache.prompt_count.saturating_add(1);
+                    self.cache.total = prompt_tokens as usize;
+                    self.cache.hits = cache_hit_tokens as usize;
                     self.ai_running = false;
                     self.status = "Ready".to_string();
                     self.prompt_job = None;
@@ -2596,16 +2588,17 @@ impl SessionView {
         } else {
             "AI: idle"
         };
-        let cache_rate = if self.prompt_count <= 1 {
-            if self.prompt_count == 0 {
+        let cache_rate = if self.cache.prompt_count <= 1 {
+            if self.cache.prompt_count == 0 {
                 "cache: n/a".to_string()
             } else {
                 "cache: priming".to_string()
             }
-        } else if self.cache_total == 0 {
-            "cache: n/a".to_string()
         } else {
-            format!("cache: {}%", self.cache_hits * 100 / self.cache_total)
+            match self.cache.rate() {
+                Some(pct) => format!("cache: {pct}%"),
+                None => "cache: n/a".to_string(),
+            }
         };
         let used = token::estimate_messages(&self.messages);
         let window = self.current_context_window();

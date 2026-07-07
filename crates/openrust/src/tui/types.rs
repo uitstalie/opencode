@@ -3,6 +3,8 @@
 //! All types are `pub(super)` — visible within the `tui` module tree
 //! but not exposed to the rest of the crate.
 
+use std::cell::{Cell, RefCell};
+
 use tui_textarea::TextArea;
 
 use crate::tool::AskRequest;
@@ -255,4 +257,29 @@ pub(super) enum SlashCommand {
     Models(Vec<String>),
     Files,
     Diff,
+}
+
+pub(super) struct CacheStats {
+    pub(super) hits: usize,
+    pub(super) total: usize,
+    pub(super) prompt_count: usize,
+}
+
+impl CacheStats {
+    pub(super) fn rate(&self) -> Option<usize> {
+        if self.total == 0 {
+            return None;
+        }
+        Some(self.hits * 100 / self.total)
+    }
+}
+
+pub(super) struct RenderState {
+    pub(super) lines: RefCell<Vec<SessionRenderLine>>,
+    pub(super) selection: Option<(usize, usize)>,
+    pub(super) mouse_down_row: Option<usize>,
+    pub(super) mouse_dragging: bool,
+    pub(super) area_top: Cell<u16>,
+    pub(super) area_height: Cell<u16>,
+    pub(super) dialog_area: Cell<Option<ratatui::layout::Rect>>,
 }

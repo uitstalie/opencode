@@ -194,9 +194,9 @@ impl SessionView {
                         self.persist_message("assistant", &assistant);
                         self.display.push(render::DisplayMessage::new("assistant", &assistant));
                     }
-                    self.prompt_count = self.prompt_count.saturating_add(1);
-                    self.cache_total = prompt_tokens as usize;
-                    self.cache_hits = cache_hit_tokens as usize;
+                    self.cache.prompt_count = self.cache.prompt_count.saturating_add(1);
+                    self.cache.total = prompt_tokens as usize;
+                    self.cache.hits = cache_hit_tokens as usize;
                     self.ai_running = false;
                     self.status = "Ready".to_string();
                     self.prompt_job = None;
