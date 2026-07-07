@@ -10,7 +10,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
-use super::{SessionView, centered_rect, home_input_hint, input_width, main_layout, render};
+use super::{SessionView, centered_rect, main_layout, render};
 
 impl SessionView {
     pub(super) fn render(&self, stdout: &mut io::Stdout, status: Option<&str>) -> anyhow::Result<()> {
@@ -30,7 +30,7 @@ impl SessionView {
         }
         writeln!(stdout, "")?;
         if self.interactive {
-            writeln!(stdout, "input: {}", self.input)?;
+            writeln!(stdout, "input: {}", self.input_editor.lines().join("\n"))?;
             writeln!(stdout, "")?;
         }
         writeln!(stdout, "history:")?;
@@ -112,31 +112,8 @@ impl SessionView {
             .wrap(Wrap { trim: false });
         frame.render_widget(session, session_area);
 
-        let input = Paragraph::new(self.input.as_str())
-            .style(self.theme.input_style())
-            .block(
-                Block::default()
-                    .title(" Input ")
-                    .title_style(self.theme.title_style())
-                    .borders(Borders::ALL)
-                    .border_style(self.theme.input_border_style(self.ai_running)),
-            )
-            .wrap(Wrap { trim: false });
-        frame.render_widget(input, regions.input);
-
-        if self.interactive
-            && self.pending_permission.is_none()
-            && self.pending_question.is_none()
-            && self.pending_text_input.is_none()
-        {
-            let x = regions
-                .input
-                .x
-                .saturating_add(1)
-                .saturating_add(input_width(&self.input[..self.cursor_index]));
-            let y = regions.input.y.saturating_add(1);
-            frame.set_cursor_position((x, y));
-        }
+        let input = self.input_widget("Input");
+        frame.render_widget(&input, regions.input);
 
         let footer = Paragraph::new(self.status_line()).style(self.theme.footer_style());
         frame.render_widget(footer, regions.status);
@@ -200,19 +177,10 @@ impl SessionView {
         .style(self.theme.panel_style());
         frame.render_widget(header, sections[1]);
 
-        let prompt = Paragraph::new(self.input.as_str())
-            .style(self.theme.input_style())
-            .block(
-                Block::default()
-                    .title(" Prompt ")
-                    .title_style(self.theme.title_style())
-                    .borders(Borders::ALL)
-                    .border_style(self.theme.input_border_style(self.ai_running)),
-            )
-            .wrap(Wrap { trim: false });
-        frame.render_widget(prompt, sections[2]);
+        let prompt = self.input_widget("Prompt");
+        frame.render_widget(&prompt, sections[2]);
 
-        let hint = Paragraph::new(home_input_hint())
+        let hint = Paragraph::new("输入消息后 Enter 开始 · /connect 配置 provider · /models 选择模型 · Esc 退出")
             .style(self.theme.muted_style())
             .alignment(ratatui::layout::Alignment::Center)
             .wrap(Wrap { trim: false });
@@ -223,19 +191,6 @@ impl SessionView {
             .alignment(ratatui::layout::Alignment::Center)
             .wrap(Wrap { trim: false });
         frame.render_widget(status, sections[4]);
-
-        if self.interactive
-            && self.pending_permission.is_none()
-            && self.pending_question.is_none()
-            && self.pending_text_input.is_none()
-        {
-            let x = sections[2]
-                .x
-                .saturating_add(1)
-                .saturating_add(input_width(&self.input[..self.cursor_index]));
-            let y = sections[2].y.saturating_add(1);
-            frame.set_cursor_position((x, y));
-        }
 
         let footer = Paragraph::new(self.status_line()).style(self.theme.footer_style());
         frame.render_widget(footer, status_area);

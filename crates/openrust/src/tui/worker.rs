@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
-use crossterm::{cursor, event::DisableMouseCapture, execute, terminal};
+use crossterm::{cursor, event::{DisableBracketedPaste, DisableMouseCapture}, execute, terminal};
 use futures::StreamExt;
 use ratatui::{Terminal, backend::CrosstermBackend};
 
@@ -72,6 +72,7 @@ impl Drop for SessionRuntimeGuard {
                 terminal.backend_mut(),
                 terminal::LeaveAlternateScreen,
                 cursor::Show,
+                DisableBracketedPaste,
                 DisableMouseCapture
             );
         }

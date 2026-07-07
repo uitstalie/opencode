@@ -12,12 +12,13 @@ use std::time::{Duration, Instant};
 
 use crossterm::{
     cursor,
-    event::{self, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers},
+    event::{self, EnableBracketedPaste, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
     terminal,
 };
 use futures::StreamExt;
 use ratatui::{Frame, Terminal, backend::CrosstermBackend, style::Modifier, text::{Line, Span}, widgets::{Block, Borders, Clear, Paragraph, Wrap}};
+use tui_textarea::{Input as TextAreaInput, Key as TextAreaKey, TextArea};
 
 use crate::core::{
     agent,
@@ -42,7 +43,7 @@ mod sidebar;
 mod worker;
 
 use dialog::{Dialog, DialogKind, DialogOption, slash_options};
-use input::{input_width, is_exit_command, load_script, next_char_boundary, prev_char_boundary, should_exit};
+use input::{is_exit_command, load_script, should_exit};
 use render::{DisplayMessage, Theme, centered_rect, display_message_lines, main_layout};
 use worker::{PromptEvent, PromptJob, SessionRuntimeGuard, spawn_prompt_worker};
 
@@ -268,7 +269,7 @@ struct PendingTextInput {
     title: String,
     description: String,
     value: String,
-    secret: bool,
+    editor: TextArea<'static>,
     submit: fn(&mut SessionView, &str),
 }
 
@@ -309,6 +310,7 @@ struct SessionView {
     interactive: bool,
     view_mode: ViewMode,
     input: String,
+    input_editor: TextArea<'static>,
     cursor_index: usize,
     session_scroll: usize,
     status: String,
@@ -392,6 +394,7 @@ impl SessionView {
             interactive,
             view_mode: ViewMode::Home,
             input: String::new(),
+            input_editor: single_line_textarea("", false),
             cursor_index: 0,
             session_scroll: 0,
             status,
@@ -458,6 +461,7 @@ impl SessionView {
             stdout,
             terminal::EnterAlternateScreen,
             cursor::Hide,
+            EnableBracketedPaste,
             EnableMouseCapture
         )?;
         let backend = CrosstermBackend::new(stdout);
@@ -492,8 +496,8 @@ impl SessionView {
 
         loop {
             let mut needs_render = self.pump_prompt_job()?;
-            self.poll_ask_request();
-            self.poll_permission_request();
+            needs_render |= self.poll_ask_request();
+            needs_render |= self.poll_permission_request();
             if self.sidebar_visible {
                 if let Some(tree) = &mut self.sidebar {
                     needs_render |= tree.poll_refresh();
@@ -521,158 +525,182 @@ impl SessionView {
             }
 
             let mut handled_input = false;
-            let event = event::read()?;
-            match event {
-                Event::Key(key) => {
-                    if key.kind != KeyEventKind::Press {
-                        if needs_render {
-                            self.render_terminal(terminal)?;
+            let mut should_break = false;
+            let mut events = vec![event::read()?];
+            while event::poll(Duration::from_millis(0))? {
+                events.push(event::read()?);
+            }
+
+            for event in events {
+                match event {
+                    Event::Key(key) => {
+                        if key.kind != KeyEventKind::Press {
+                            continue;
                         }
-                        continue;
-                    }
-                    if self.pending_permission.is_some() {
-                        self.handle_permission_key(key);
-                        handled_input = true;
-                    } else if self.pending_question.is_some() {
-                        self.handle_question_key(key);
-                        handled_input = true;
-                    } else if self.pending_text_input.is_some() {
-                        self.handle_text_input_key(key);
-                        handled_input = true;
-                    } else if self.handle_global_copy_key(key)? {
-                        handled_input = true;
-                    } else if should_exit(&key) {
-                        break;
-                    } else if self.view_mode == ViewMode::Home
-                        && self.dialog.is_none()
-                        && self.handle_home_key(terminal, key)?
-                    {
-                        handled_input = true;
-                    } else {
-                        match key.code {
-                            KeyCode::Esc if self.dialog.is_some() => {
-                                self.dialog = None;
-                                handled_input = true;
-                            }
-                            KeyCode::Up if self.dialog.is_some() => {
-                                if let Some(dialog) = &mut self.dialog {
-                                    dialog.previous();
-                                }
-                                handled_input = true;
-                            }
-                            KeyCode::Down if self.dialog.is_some() => {
-                                if let Some(dialog) = &mut self.dialog {
-                                    dialog.next();
-                                }
-                                handled_input = true;
-                            }
-                            KeyCode::Up if self.view_mode == ViewMode::Session => {
-                                self.scroll_session_up(3);
-                                handled_input = true;
-                            }
-                            KeyCode::Down if self.view_mode == ViewMode::Session => {
-                                self.scroll_session_down(3);
-                                handled_input = true;
-                            }
-                            KeyCode::Enter => {
-                                let mut skip_input = false;
-                                if self.dialog.is_some() {
-                                    let is_slash = matches!(
-                                        self.dialog.as_ref().map(|d| &d.kind),
-                                        Some(DialogKind::SlashHelp)
-                                    );
-                                    self.submit_dialog_selection();
-                                    handled_input = true;
-                                    skip_input = !is_slash;
-                                }
-                                if !skip_input {
-                                    let input = self.input.trim().to_string();
-                                    self.input.clear();
-                                    self.cursor_index = 0;
-                                    handled_input = true;
-                                    if input.is_empty() {
-                                        continue;
-                                    }
-                                    if is_exit_command(&input) {
-                                        return Ok(());
-                                    }
-                                    if self.handle_slash_command(&input) {
-                                        continue;
-                                    }
-                                    self.enqueue_or_run_prompt(terminal, input)?;
-                                }
-                            }
-                            KeyCode::Backspace => {
-                                if self.cursor_index > 0 {
-                                    let index = prev_char_boundary(&self.input, self.cursor_index);
-                                    self.input.drain(index..self.cursor_index);
-                                    self.cursor_index = index;
-                                }
-                                self.sync_slash_help();
-                                handled_input = true;
-                            }
-                            KeyCode::Delete => {
-                                if self.cursor_index < self.input.len() {
-                                    let next = next_char_boundary(&self.input, self.cursor_index);
-                                    self.input.drain(self.cursor_index..next);
-                                }
-                                self.sync_slash_help();
-                                handled_input = true;
-                            }
-                            KeyCode::Left => {
-                                self.cursor_index = prev_char_boundary(&self.input, self.cursor_index);
-                                handled_input = true;
-                            }
-                            KeyCode::Right => {
-                                self.cursor_index = next_char_boundary(&self.input, self.cursor_index);
-                                handled_input = true;
-                            }
-                            KeyCode::Home => {
-                                self.cursor_index = 0;
-                                handled_input = true;
-                            }
-                            KeyCode::End => {
-                                self.cursor_index = self.input.len();
-                                handled_input = true;
-                            }
-                            KeyCode::PageUp => {
-                                self.scroll_session_up(8);
-                                handled_input = true;
-                            }
-                            KeyCode::PageDown => {
-                                self.scroll_session_down(8);
-                                handled_input = true;
-                            }
-                            KeyCode::Char('e')
-                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                            {
-                                self.toggle_tool_collapse();
-                                handled_input = true;
-                            }
-                            KeyCode::Char(ch) => {
-                                if !key.modifiers.contains(KeyModifiers::CONTROL) {
-                                    self.input.insert(self.cursor_index, ch);
-                                    self.cursor_index += ch.len_utf8();
-                                    self.sync_slash_help();
+                        if self.pending_permission.is_some() {
+                            self.handle_permission_key(key);
+                            handled_input = true;
+                        } else if self.pending_question.is_some() {
+                            self.handle_question_key(key);
+                            handled_input = true;
+                        } else if self.pending_text_input.is_some() {
+                            self.handle_text_input_key(key);
+                            handled_input = true;
+                        } else if self.handle_global_copy_key(key)? {
+                            handled_input = true;
+                        } else if should_exit(&key) {
+                            should_break = true;
+                            break;
+                        } else if self.view_mode == ViewMode::Home
+                            && self.dialog.is_none()
+                            && self.handle_home_key(terminal, key)?
+                        {
+                            handled_input = true;
+                        } else {
+                            match key.code {
+                                KeyCode::Esc if self.dialog.is_some() => {
+                                    self.dialog = None;
                                     handled_input = true;
                                 }
+                                KeyCode::Up if self.dialog.is_some() => {
+                                    if let Some(dialog) = &mut self.dialog {
+                                        dialog.previous();
+                                    }
+                                    handled_input = true;
+                                }
+                                KeyCode::Down if self.dialog.is_some() => {
+                                    if let Some(dialog) = &mut self.dialog {
+                                        dialog.next();
+                                    }
+                                    handled_input = true;
+                                }
+                                KeyCode::Up if self.view_mode == ViewMode::Session => {
+                                    self.scroll_session_up(3);
+                                    handled_input = true;
+                                }
+                                KeyCode::Down if self.view_mode == ViewMode::Session => {
+                                    self.scroll_session_down(3);
+                                    handled_input = true;
+                                }
+                                KeyCode::Enter => {
+                                    let mut skip_input = false;
+                                    if self.dialog.is_some() {
+                                        let is_slash = matches!(
+                                            self.dialog.as_ref().map(|d| &d.kind),
+                                            Some(DialogKind::SlashHelp)
+                                        );
+                                        self.submit_dialog_selection();
+                                        handled_input = true;
+                                        skip_input = !is_slash;
+                                    }
+                                    if !skip_input {
+                                        let input = self.input.trim().to_string();
+                                        self.clear_input();
+                                        handled_input = true;
+                                        if input.is_empty() {
+                                            skip_input = true;
+                                        }
+                                        if !skip_input && is_exit_command(&input) {
+                                            return Ok(());
+                                        }
+                                        if !skip_input && self.handle_slash_command(&input) {
+                                            skip_input = true;
+                                        }
+                                        if !skip_input {
+                                            self.enqueue_or_run_prompt(terminal, input)?;
+                                        }
+                                    }
+                                }
+                                KeyCode::Backspace => {
+                                    if self.input_editor.input(textarea_input_from_key_event(key)) {
+                                        self.sync_input_state();
+                                        self.sync_slash_help();
+                                        handled_input = true;
+                                    }
+                                }
+                                KeyCode::Delete => {
+                                    if self.input_editor.input(textarea_input_from_key_event(key)) {
+                                        self.sync_input_state();
+                                        self.sync_slash_help();
+                                        handled_input = true;
+                                    }
+                                }
+                                KeyCode::Left => {
+                                    if self.input_editor.input(textarea_input_from_key_event(key)) {
+                                        self.sync_input_state();
+                                        handled_input = true;
+                                    }
+                                }
+                                KeyCode::Right => {
+                                    if self.input_editor.input(textarea_input_from_key_event(key)) {
+                                        self.sync_input_state();
+                                        handled_input = true;
+                                    }
+                                }
+                                KeyCode::Home => {
+                                    if self.input_editor.input(textarea_input_from_key_event(key)) {
+                                        self.sync_input_state();
+                                        handled_input = true;
+                                    }
+                                }
+                                KeyCode::End => {
+                                    if self.input_editor.input(textarea_input_from_key_event(key)) {
+                                        self.sync_input_state();
+                                        handled_input = true;
+                                    }
+                                }
+                                KeyCode::PageUp => {
+                                    self.scroll_session_up(8);
+                                    handled_input = true;
+                                }
+                                KeyCode::PageDown => {
+                                    self.scroll_session_down(8);
+                                    handled_input = true;
+                                }
+                                KeyCode::Char('e')
+                                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                {
+                                    self.toggle_tool_collapse();
+                                    handled_input = true;
+                                }
+                                KeyCode::Char(_) => {
+                                    if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                                        if self.input_editor.input(textarea_input_from_key_event(key)) {
+                                            self.sync_input_state();
+                                            self.sync_slash_help();
+                                            handled_input = true;
+                                        }
+                                    }
+                                }
+                                KeyCode::Tab => {
+                                    self.cycle_agent();
+                                    handled_input = true;
+                                }
+                                _ => {}
                             }
-                            KeyCode::Tab => {
-                                self.cycle_agent();
-                                handled_input = true;
-                            }
-                            _ => {}
                         }
                     }
-                }
-                Event::Mouse(mouse) => {
-                    if matches!(mouse.kind, crossterm::event::MouseEventKind::Moved) {
-                        continue;
+                    Event::Mouse(mouse) => {
+                        if matches!(mouse.kind, crossterm::event::MouseEventKind::Moved) {
+                            continue;
+                        }
+                        self.handle_mouse_event(mouse, terminal)?;
+                        handled_input = true;
                     }
-                    self.handle_mouse_event(mouse, terminal)?;
-                    handled_input = true;
+                    Event::Paste(text) => {
+                        if self.pending_text_input.is_some() {
+                            self.insert_pending_text_input(&text);
+                        } else {
+                            self.insert_input_text(&text);
+                        }
+                        handled_input = true;
+                    }
+                    _ => {}
                 }
-                _ => {}
+            }
+
+            if should_break {
+                break;
             }
 
             if handled_input || needs_render {
@@ -1100,25 +1128,24 @@ impl SessionView {
             }
             DialogKind::SlashHelp => {
                 if let Some(value) = dialog.selected_value() {
-                    self.input = value.to_string();
-                    self.cursor_index = self.input.len();
+                    self.set_input_text(value);
                     self.dialog = None;
                 }
             }
         }
     }
 
-    fn poll_permission_request(&mut self) {
+    fn poll_permission_request(&mut self) -> bool {
         if self.pending_permission.is_some() {
-            return;
+            return false;
         }
         let request = {
             let Some(job) = &self.prompt_job else {
-                return;
+                return false;
             };
             match job.permission_receiver.try_recv() {
                 Ok(request) => request,
-                Err(_) => return,
+                Err(_) => return false,
             }
         };
         self.pending_permission = Some(PendingPermission {
@@ -1128,6 +1155,7 @@ impl SessionView {
             allow: false,
         });
         self.status = "permission: awaiting your decision".to_string();
+        true
     }
 
     fn handle_permission_key(&mut self, key: event::KeyEvent) {
@@ -1172,15 +1200,12 @@ impl SessionView {
             match key.code {
                 KeyCode::Esc => Outcome::Cancel,
                 KeyCode::Enter => Outcome::Submit(input.value.clone(), input.submit),
-                KeyCode::Backspace => {
-                    input.value.pop();
+                _ => {
+                    if input.editor.input(textarea_input_from_key_event(key)) {
+                        sync_pending_text_input(input);
+                    }
                     Outcome::None
                 }
-                KeyCode::Char(ch) => {
-                    input.value.push(ch);
-                    Outcome::None
-                }
-                _ => Outcome::None,
             }
         };
 
@@ -1195,6 +1220,35 @@ impl SessionView {
                 submit(self, &value);
             }
         }
+    }
+
+    fn insert_pending_text_input(&mut self, text: &str) {
+        let Some(input) = self.pending_text_input.as_mut() else {
+            return;
+        };
+        input.editor.insert_str(normalize_single_line_text(text));
+        sync_pending_text_input(input);
+    }
+
+    fn insert_input_text(&mut self, text: &str) {
+        self.input_editor.insert_str(normalize_single_line_text(text));
+        self.sync_input_state();
+        self.sync_slash_help();
+    }
+
+    fn clear_input(&mut self) {
+        self.input_editor = single_line_textarea("", false);
+        self.sync_input_state();
+    }
+
+    fn set_input_text(&mut self, value: &str) {
+        self.input_editor = single_line_textarea(value, false);
+        self.sync_input_state();
+    }
+
+    fn sync_input_state(&mut self) {
+        self.input = self.input_editor.lines().join("\n");
+        self.cursor_index = char_column_to_byte_index(&self.input, self.input_editor.cursor().1);
     }
 
     fn permission_widget(&self, permission: &PendingPermission) -> Paragraph<'static> {
@@ -1238,37 +1292,41 @@ impl SessionView {
             .wrap(Wrap { trim: false })
     }
 
-    fn text_input_widget(&self, input: &PendingTextInput) -> Paragraph<'static> {
-        let theme = &self.theme;
-        let value = if input.secret {
-            "*".repeat(input.value.chars().count())
+    fn text_input_widget(&self, input: &PendingTextInput) -> TextArea<'static> {
+        let mut textarea = input.editor.clone();
+        textarea.set_style(self.theme.dialog_selected_style());
+        textarea.set_cursor_line_style(ratatui::style::Style::default());
+        textarea.set_placeholder_text("输入后 Enter 保存 · Esc 取消");
+        textarea.set_placeholder_style(self.theme.muted_style());
+        textarea.set_block(
+            Block::default()
+                .title(format!(" {} ", input.title))
+                .title_alignment(ratatui::layout::Alignment::Center)
+                .title_style(self.theme.title_style())
+                .borders(Borders::ALL)
+                .border_style(self.theme.dialog_border_style()),
+        );
+        textarea
+    }
+
+    fn input_widget(&self, title: &str) -> TextArea<'static> {
+        let mut textarea = self.input_editor.clone();
+        textarea.set_style(self.theme.input_style());
+        textarea.set_cursor_line_style(ratatui::style::Style::default());
+        textarea.set_placeholder_text(if self.view_mode == ViewMode::Home {
+            home_input_hint()
         } else {
-            input.value.clone()
-        };
-        let lines = vec![
-            Line::from(Span::styled(input.description.clone(), theme.muted_style())),
-            Line::from(""),
-            Line::from(Span::styled(
-                format!("> {}", value),
-                theme.dialog_selected_style(),
-            )),
-            Line::from(""),
-            Line::from(Span::styled(
-                "输入后 Enter 保存 · Esc 取消",
-                theme.muted_style(),
-            )),
-        ];
-        Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .title(format!(" {} ", input.title))
-                    .title_alignment(ratatui::layout::Alignment::Center)
-                    .title_style(theme.title_style())
-                    .borders(Borders::ALL)
-                    .border_style(theme.dialog_border_style()),
-            )
-            .style(theme.dialog_style())
-            .wrap(Wrap { trim: false })
+            "输入消息后 Enter 发送"
+        });
+        textarea.set_placeholder_style(self.theme.muted_style());
+        textarea.set_block(
+            Block::default()
+                .title(format!(" {} ", title))
+                .title_style(self.theme.title_style())
+                .borders(Borders::ALL)
+                .border_style(self.theme.input_border_style(self.ai_running)),
+        );
+        textarea
     }
 
     fn toggle_sidebar(&mut self) {
@@ -1334,23 +1392,25 @@ impl SessionView {
         }
     }
 
-    fn poll_ask_request(&mut self) {
+    fn poll_ask_request(&mut self) -> bool {
         if self.pending_question.is_some() {
-            return;
+            return false;
         }
         let request = {
             let Some(job) = &self.prompt_job else {
-                return;
+                return false;
             };
             match job.ask_receiver.try_recv() {
                 Ok(request) => request,
-                Err(_) => return,
+                Err(_) => return false,
             }
         };
         self.pending_question = PendingQuestion::from_request(request);
         if self.pending_question.is_some() {
             self.status = "question: awaiting your answer".to_string();
+            return true;
         }
+        false
     }
 
     fn handle_question_key(&mut self, key: event::KeyEvent) {
@@ -2031,7 +2091,7 @@ impl SessionView {
             title: "Connect · provider".to_string(),
             description: "输入 provider 名称，例如 deepseek、openai、one_route。".to_string(),
             value: String::new(),
-            secret: false,
+            editor: single_line_textarea("", false),
             submit: SessionView::save_connect_provider_name,
         });
         self.status = "connect: provider name".to_string();
@@ -2050,7 +2110,7 @@ impl SessionView {
             description: "输入 OpenAI-compatible base URL，例如 https://api.deepseek.com/v1 。"
                 .to_string(),
             value: String::new(),
-            secret: false,
+            editor: single_line_textarea("", false),
             submit: SessionView::save_connect_base_url,
         });
         self.status = format!("connect: base URL for {}", provider);
@@ -2071,7 +2131,7 @@ impl SessionView {
             title: format!("Connect · {} model", draft.provider),
             description: "输入配置中的 model 名称，例如 deepseek-chat。".to_string(),
             value: String::new(),
-            secret: false,
+            editor: single_line_textarea("", false),
             submit: SessionView::save_connect_model,
         });
         self.status = format!("connect: model for {}", draft.provider);
@@ -2092,7 +2152,7 @@ impl SessionView {
             title: format!("Connect · {} wire model", draft.provider),
             description: "输入实际发给 API 的模型名；若与上一步相同可直接回车留空。".to_string(),
             value: String::new(),
-            secret: false,
+            editor: single_line_textarea("", false),
             submit: SessionView::save_connect_wire_model,
         });
         self.status = format!("connect: wire model for {}", draft.provider);
@@ -2115,7 +2175,7 @@ impl SessionView {
                 "输入 API key；若暂时没有可直接回车跳过，之后再用 /connect key <provider> <api-key>。"
                     .to_string(),
             value: String::new(),
-            secret: true,
+            editor: single_line_textarea("", true),
             submit: SessionView::save_connect_api_key,
         });
         self.status = format!("connect: API key for {}", draft.provider);
@@ -2440,7 +2500,22 @@ impl SessionView {
             self.dialog_area.set(Some(centered_rect(64, 28, area)));
             let dialog_area = centered_rect(64, 28, area);
             frame.render_widget(Clear, dialog_area);
-            frame.render_widget(self.text_input_widget(input), dialog_area);
+            let inner = ratatui::layout::Layout::default()
+                .direction(ratatui::layout::Direction::Vertical)
+                .constraints([
+                    ratatui::layout::Constraint::Length(3),
+                    ratatui::layout::Constraint::Min(3),
+                ])
+                .margin(1)
+                .split(dialog_area);
+            frame.render_widget(
+                Paragraph::new(input.description.as_str())
+                    .style(self.theme.muted_style())
+                    .wrap(Wrap { trim: false }),
+                inner[0],
+            );
+            let textarea = self.text_input_widget(input);
+            frame.render_widget(&textarea, inner[1]);
             return;
         }
         if self.diff_visible {
@@ -2665,15 +2740,13 @@ impl SessionView {
             KeyCode::Enter => {
                 let input = self.input.trim().to_string();
                 if input.is_empty() {
-                    self.input.clear();
-                    self.cursor_index = 0;
+                    self.clear_input();
                     return Ok(true);
                 }
                 if is_exit_command(&input) {
                     return Ok(false);
                 }
-                self.input.clear();
-                self.cursor_index = 0;
+                self.clear_input();
                 if self.handle_slash_command(&input) {
                     return Ok(true);
                 }
@@ -2828,6 +2901,60 @@ fn now_micros() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_micros()
+}
+
+fn single_line_textarea(value: &str, secret: bool) -> TextArea<'static> {
+    let mut textarea = TextArea::default();
+    textarea.set_cursor_line_style(ratatui::style::Style::default());
+    if !value.is_empty() {
+        textarea.insert_str(normalize_single_line_text(value));
+    }
+    if secret {
+        textarea.set_mask_char('*');
+    }
+    textarea
+}
+
+fn normalize_single_line_text(text: &str) -> String {
+    text.replace(['\r', '\n'], " ")
+}
+
+fn textarea_input_from_key_event(key: event::KeyEvent) -> TextAreaInput {
+    let input_key = match key.code {
+        KeyCode::Char(ch) => TextAreaKey::Char(ch),
+        KeyCode::Backspace => TextAreaKey::Backspace,
+        KeyCode::Enter => TextAreaKey::Enter,
+        KeyCode::Left => TextAreaKey::Left,
+        KeyCode::Right => TextAreaKey::Right,
+        KeyCode::Up => TextAreaKey::Up,
+        KeyCode::Down => TextAreaKey::Down,
+        KeyCode::Tab => TextAreaKey::Tab,
+        KeyCode::Delete => TextAreaKey::Delete,
+        KeyCode::Home => TextAreaKey::Home,
+        KeyCode::End => TextAreaKey::End,
+        KeyCode::PageUp => TextAreaKey::PageUp,
+        KeyCode::PageDown => TextAreaKey::PageDown,
+        KeyCode::Esc => TextAreaKey::Esc,
+        KeyCode::F(number) => TextAreaKey::F(number),
+        _ => TextAreaKey::Null,
+    };
+    TextAreaInput {
+        key: input_key,
+        ctrl: key.modifiers.contains(KeyModifiers::CONTROL),
+        alt: key.modifiers.contains(KeyModifiers::ALT),
+        shift: key.modifiers.contains(KeyModifiers::SHIFT),
+    }
+}
+
+fn sync_pending_text_input(input: &mut PendingTextInput) {
+    input.value = input.editor.lines().join("\n");
+}
+
+fn char_column_to_byte_index(text: &str, column: usize) -> usize {
+    text.char_indices()
+        .nth(column)
+        .map(|(index, _)| index)
+        .unwrap_or(text.len())
 }
 
 fn home_input_hint() -> &'static str {

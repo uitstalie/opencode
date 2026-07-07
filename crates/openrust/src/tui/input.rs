@@ -1,8 +1,6 @@
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyModifiers};
-use unicode_width::UnicodeWidthStr;
-
 use super::{SlashCommand, ThinkingModeCommand};
 
 pub(super) fn load_script(path: &PathBuf) -> anyhow::Result<Vec<String>> {
@@ -13,26 +11,6 @@ pub(super) fn load_script(path: &PathBuf) -> anyhow::Result<Vec<String>> {
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .map(|line| line.to_string())
         .collect())
-}
-
-pub(super) fn input_width(input: &str) -> u16 {
-    UnicodeWidthStr::width(input) as u16
-}
-
-pub(super) fn prev_char_boundary(input: &str, index: usize) -> usize {
-    input[..index]
-        .char_indices()
-        .last()
-        .map(|(boundary, _)| boundary)
-        .unwrap_or(0)
-}
-
-pub(super) fn next_char_boundary(input: &str, index: usize) -> usize {
-    input[index..]
-        .char_indices()
-        .nth(1)
-        .map(|(offset, _)| index + offset)
-        .unwrap_or(input.len())
 }
 
 pub(super) fn should_exit(key: &crossterm::event::KeyEvent) -> bool {
