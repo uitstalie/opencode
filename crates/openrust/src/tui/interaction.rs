@@ -239,7 +239,7 @@ impl SessionView {
         }
     }
 
-    fn session_render_rows(&self, region_height: usize) -> Vec<SessionRenderLine> {
+    fn session_render_rows(&self, region_height: usize, region_width: usize) -> Vec<SessionRenderLine> {
         let visible_height = region_height.saturating_sub(2).max(1);
         let mut all_rows = Vec::new();
 
@@ -308,14 +308,31 @@ impl SessionView {
             });
         }
 
+        let content_width = region_width.saturating_sub(2).max(1);
+        let all_rows: Vec<SessionRenderLine> = all_rows
+            .into_iter()
+            .flat_map(|row| {
+                Self::wrap_line_by_width(&row.line, content_width)
+                    .into_iter()
+                    .map(move |line| {
+                        let text = Self::flatten_line(&line);
+                        SessionRenderLine {
+                            line,
+                            text,
+                            tool_message_index: row.tool_message_index,
+                        }
+                    })
+            })
+            .collect();
+
         let max_scroll = all_rows.len().saturating_sub(visible_height);
         let scroll = self.session_scroll.min(max_scroll);
         let start = all_rows.len().saturating_sub(visible_height + scroll);
         all_rows.into_iter().skip(start).take(visible_height).collect()
     }
 
-    pub(super) fn session_render_lines_for_area(&self, region_height: usize) {
-        let rows = self.session_render_rows(region_height);
+    pub(super) fn session_render_lines_for_area(&self, region_height: usize, region_width: usize) {
+        let rows = self.session_render_rows(region_height, region_width);
         *self.session_render_lines.borrow_mut() = rows;
     }
 
@@ -325,5 +342,39 @@ impl SessionView {
             .map(|span| span.content.as_ref())
             .collect::<Vec<_>>()
             .join("")
+    }
+
+    fn wrap_line_by_width(line: &Line<'static>, width: usize) -> Vec<Line<'static>> {
+        if width == 0 || line.width() <= width {
+            return vec![line.clone()];
+        }
+        let mut result: Vec<Line<'static>> = Vec::new();
+        let mut current_spans: Vec<Span<'static>> = Vec::new();
+        let mut current_width = 0usize;
+        for span in &line.spans {
+            let span_style = span.style;
+            let mut buf = String::new();
+            for ch in span.content.chars() {
+                let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+                if current_width + w > width && !buf.is_empty() {
+                    current_spans.push(Span::styled(std::mem::take(&mut buf), span_style));
+                    result.push(Line::from(std::mem::take(&mut current_spans)));
+                    current_width = 0;
+                }
+                buf.push(ch);
+                current_width += w;
+            }
+            if !buf.is_empty() {
+                current_spans.push(Span::styled(buf, span_style));
+            }
+        }
+        if !current_spans.is_empty() {
+            result.push(Line::from(current_spans));
+        }
+        if result.is_empty() {
+            vec![line.clone()]
+        } else {
+            result
+        }
     }
 }

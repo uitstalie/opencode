@@ -79,7 +79,7 @@ impl SessionView {
         } else {
             regions.session
         };
-        self.session_render_lines_for_area(session_area.height as usize);
+        self.session_render_lines_for_area(session_area.height as usize, session_area.width as usize);
         let rows = self.session_render_lines.borrow();
         let lines: Vec<Line<'static>> = rows
             .iter()
