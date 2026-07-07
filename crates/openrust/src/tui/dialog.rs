@@ -17,6 +17,7 @@ pub(super) struct Dialog {
 pub(super) enum DialogKind {
     Thinking,
     Session,
+    SessionDelete,
     Agent,
     Task,
     Provider,

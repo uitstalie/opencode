@@ -49,7 +49,7 @@ impl SessionView {
                 if let Some(target) = args.get(1) {
                     self.delete_session(target);
                 } else {
-                    self.note("usage: /session delete <id|number>".to_string());
+                    self.open_session_delete_dialog();
                 }
             }
             _ => {
@@ -69,40 +69,12 @@ impl SessionView {
                     "New session",
                     "创建一个新的空会话。",
                 )];
-                options.extend(
-                    sessions
-                        .iter()
-                        .take(20)
-                        .enumerate()
-                        .map(|(index, session)| {
-                            let title = session.title.as_deref().unwrap_or(&session.id);
-                            let agent = session.agent.as_deref().unwrap_or("(no agent)");
-                            let marker = if session.id == self.session_id {
-                                "● "
-                            } else {
-                                ""
-                            };
-                            let summary_preview = session.summary.as_deref()
-                                .map(|s| {
-                                    let short = &s[..s.len().min(30)];
-                                    format!(" · {}", short)
-                                })
-                                .unwrap_or_default();
-                            let mut desc = format!(
-                                "{} msg · {} · {}",
-                                session.message_count, agent, summary_preview
-                            );
-                            if desc.len() > 60 {
-                                desc.truncate(57);
-                                desc.push_str("...");
-                            }
-                            DialogOption::new(
-                                session.id.clone(),
-                                format!("{}{}. {}", marker, index + 1, title),
-                                desc,
-                            )
-                        }),
-                );
+                options.extend(self.session_list_options(&sessions, false));
+                options.push(DialogOption::new(
+                    "__delete__",
+                    "Delete session",
+                    "选择一个会话删除（不可恢复）。",
+                ));
                 self.ui.dialog = Some(Dialog::new(
                     DialogKind::Session,
                     "Sessions",
@@ -113,6 +85,76 @@ impl SessionView {
                 self.status = "dialog: sessions".to_string();
             }
         }
+    }
+
+    fn open_session_delete_dialog(&mut self) {
+        let Some(store) = self.store.clone() else {
+            self.note("session store unavailable".to_string());
+            return;
+        };
+        if let Ok(n) = store.cleanup_old_sessions(30 * 24 * 60 * 60) {
+            if n > 0 {
+                self.note(format!("cleaned {n} sessions older than 30 days"));
+            }
+        }
+        let Ok(sessions) = store.list_sessions() else {
+            self.note("failed to list sessions".to_string());
+            return;
+        };
+        let options = self.session_list_options(&sessions, true);
+        if options.is_empty() {
+            self.note("no deletable sessions".to_string());
+            return;
+        }
+        self.ui.dialog = Some(Dialog::new(
+            DialogKind::SessionDelete,
+            "Delete Session",
+            "选择要删除的会话（Enter 确认 · Esc 取消）。",
+            options,
+            0,
+        ));
+        self.status = "dialog: delete session".to_string();
+    }
+
+    fn session_list_options(
+        &self,
+        sessions: &[crate::core::session::SessionSummary],
+        delete_mode: bool,
+    ) -> Vec<DialogOption> {
+        sessions
+            .iter()
+            .take(20)
+            .enumerate()
+            .filter_map(|(index, session)| {
+                if delete_mode && session.id == self.session_id {
+                    return None;
+                }
+                let title = session.title.as_deref().unwrap_or(&session.id);
+                let agent = session.agent.as_deref().unwrap_or("(no agent)");
+                let marker = if session.id == self.session_id { "● " } else { "" };
+                let summary_preview = session
+                    .summary
+                    .as_deref()
+                    .map(|s| {
+                        let short = &s[..s.len().min(30)];
+                        format!(" · {}", short)
+                    })
+                    .unwrap_or_default();
+                let mut desc = format!(
+                    "{} msg · {}{}",
+                    session.message_count, agent, summary_preview
+                );
+                if desc.len() > 60 {
+                    desc.truncate(57);
+                    desc.push_str("...");
+                }
+                Some(DialogOption::new(
+                    session.id.clone(),
+                    format!("{}{}. {}", marker, index + 1, title),
+                    desc,
+                ))
+            })
+            .collect()
     }
 
     pub(super) fn open_agent_dialog(&mut self, args: Vec<String>) {
@@ -394,7 +436,15 @@ impl SessionView {
             }
             DialogKind::Session => match dialog.selected_value() {
                 Some("__new__") => self.create_session(),
+                Some("__delete__") => self.open_session_delete_dialog(),
                 Some(value) => self.switch_session(value),
+                None => {}
+            },
+            DialogKind::SessionDelete => match dialog.selected_value() {
+                Some(value) => {
+                    self.delete_session(value);
+                    self.open_session_delete_dialog();
+                }
                 None => {}
             },
             DialogKind::Agent => match dialog.selected_value() {
@@ -734,7 +784,7 @@ impl SessionView {
             DialogKind::Thinking | DialogKind::ReasoningEffort => {
                 render::modal_rect(52, 12, 4, area)
             }
-            DialogKind::Session => render::modal_rect(58, 24, 4, area),
+            DialogKind::Session | DialogKind::SessionDelete => render::modal_rect(58, 24, 4, area),
         }
     }
 
