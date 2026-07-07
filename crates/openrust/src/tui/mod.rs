@@ -18,7 +18,7 @@ use crossterm::{
 };
 use futures::StreamExt;
 use ratatui::{Frame, Terminal, backend::CrosstermBackend, style::Modifier, text::{Line, Span}, widgets::{Block, Borders, Clear, Paragraph, Wrap}};
-use tui_textarea::{Input as TextAreaInput, Key as TextAreaKey, TextArea};
+use tui_textarea::TextArea;
 
 use crate::core::{
     agent,
@@ -28,7 +28,6 @@ use crate::core::{
     token,
     vault::Vault,
 };
-use crate::tool::AskRequest;
 
 mod dialog;
 mod diff;
@@ -42,7 +41,12 @@ mod interaction;
 mod prompt_flow;
 mod session_render;
 mod sidebar;
+mod types;
+mod util;
 mod worker;
+
+pub(in crate::tui) use types::*;
+use util::*;
 
 use dialog::{Dialog, DialogKind, DialogOption, slash_options};
 use input::{is_exit_command, load_script, should_exit};
@@ -88,212 +92,6 @@ pub fn run(script: Option<PathBuf>, prompt: Option<String>) -> anyhow::Result<()
     let mut session = SessionView::new(provider_name, model, system, llm, config, cwd);
     session.bootstrap(prompt, script_lines)?;
     session.run()
-}
-
-/// A single sub-question awaiting an answer in the interactive prompt.
-struct QuestionItem {
-    header: String,
-    question: String,
-    options: Vec<(String, String)>,
-    multiple: bool,
-}
-
-/// Interactive state for a pending `question` tool call. The worker thread is
-/// blocked on `responder` until every sub-question is answered (or cancelled).
-struct PendingQuestion {
-    responder: std::sync::mpsc::Sender<Vec<String>>,
-    items: Vec<QuestionItem>,
-    current: usize,
-    selected: usize,
-    picked: Vec<usize>,
-    answers: Vec<String>,
-    typing: Option<String>,
-}
-
-impl PendingQuestion {
-    /// Build from an `AskRequest`. Returns `None` if the payload has no valid questions.
-    fn from_request(request: AskRequest) -> Option<Self> {
-        let items: Vec<QuestionItem> = request
-            .questions
-            .as_array()?
-            .iter()
-            .filter_map(|value| {
-                let question = value.get("question").and_then(|v| v.as_str())?.to_string();
-                let header = value
-                    .get("header")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let options = value
-                    .get("options")
-                    .and_then(|v| v.as_array())
-                    .map(|options| {
-                        options
-                            .iter()
-                            .filter_map(|option| {
-                                let label =
-                                    option.get("label").and_then(|v| v.as_str())?.to_string();
-                                let description = option
-                                    .get("description")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                Some((label, description))
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let multiple = value
-                    .get("multiple")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                Some(QuestionItem {
-                    header,
-                    question,
-                    options,
-                    multiple,
-                })
-            })
-            .collect();
-        if items.is_empty() {
-            let _ = request.responder.send(Vec::new());
-            return None;
-        }
-        Some(Self {
-            responder: request.responder,
-            items,
-            current: 0,
-            selected: 0,
-            picked: Vec::new(),
-            answers: Vec::new(),
-            typing: None,
-        })
-    }
-
-    fn item(&self) -> &QuestionItem {
-        &self.items[self.current]
-    }
-
-    /// Total selectable rows: options plus the trailing "type your own" entry.
-    fn row_count(&self) -> usize {
-        self.item().options.len() + 1
-    }
-
-    fn custom_index(&self) -> usize {
-        self.item().options.len()
-    }
-
-    fn next(&mut self) {
-        let count = self.row_count();
-        self.selected = (self.selected + 1) % count;
-    }
-
-    fn previous(&mut self) {
-        let count = self.row_count();
-        self.selected = if self.selected == 0 {
-            count - 1
-        } else {
-            self.selected - 1
-        };
-    }
-
-    fn toggle_pick(&mut self) {
-        if !self.item().multiple || self.selected >= self.item().options.len() {
-            return;
-        }
-        match self.picked.iter().position(|&index| index == self.selected) {
-            Some(existing) => {
-                self.picked.remove(existing);
-            }
-            None => self.picked.push(self.selected),
-        }
-    }
-
-    /// Advance to the next sub-question, recording `answer`. Returns `true` when
-    /// all questions are answered (caller should send `answers` and clear state).
-    fn record(&mut self, answer: String) -> bool {
-        self.answers.push(answer);
-        self.current += 1;
-        self.selected = 0;
-        self.picked.clear();
-        self.typing = None;
-        self.current >= self.items.len()
-    }
-
-    /// Handle Enter on the current selection. Returns finalized answers when done.
-    fn confirm(&mut self) -> Option<Vec<String>> {
-        if self.selected == self.custom_index() {
-            self.typing = Some(String::new());
-            return None;
-        }
-        let item = self.item();
-        let answer = if item.multiple {
-            if self.picked.is_empty() {
-                item.options[self.selected].0.clone()
-            } else {
-                let mut picks = self.picked.clone();
-                picks.sort_unstable();
-                picks
-                    .iter()
-                    .map(|&index| item.options[index].0.clone())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            }
-        } else {
-            item.options[self.selected].0.clone()
-        };
-        if self.record(answer) {
-            return Some(std::mem::take(&mut self.answers));
-        }
-        None
-    }
-
-    /// Commit a typed custom answer. Returns finalized answers when done.
-    fn commit_custom(&mut self) -> Option<Vec<String>> {
-        let text = self.typing.take().unwrap_or_default();
-        if self.record(text) {
-            return Some(std::mem::take(&mut self.answers));
-        }
-        None
-    }
-}
-
-/// Interactive state for a pending permission confirmation. The worker thread is
-/// blocked on `responder` until the user chooses allow/deny.
-struct PendingPermission {
-    responder: std::sync::mpsc::Sender<bool>,
-    tool: String,
-    detail: String,
-    allow: bool,
-}
-
-struct PendingTextInput {
-    title: String,
-    description: String,
-    value: String,
-    editor: TextArea<'static>,
-    submit: fn(&mut SessionView, &str),
-}
-
-#[derive(Clone)]
-struct SessionRenderLine {
-    line: Line<'static>,
-    text: String,
-    tool_message_index: Option<usize>,
-}
-
-#[derive(Default)]
-struct ConnectDraft {
-    provider: String,
-    base_url: String,
-    model: String,
-    wire_model: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ViewMode {
-    Home,
-    Session,
 }
 
 struct SessionView {
@@ -1206,7 +1004,7 @@ impl SessionView {
                 KeyCode::Enter => Outcome::Submit(input.value.clone(), input.submit),
                 _ => {
                     if input.editor.input(textarea_input_from_key_event(key)) {
-                        sync_pending_text_input(input);
+                        input.sync_value();
                     }
                     Outcome::None
                 }
@@ -1231,7 +1029,7 @@ impl SessionView {
             return;
         };
         input.editor.insert_str(normalize_single_line_text(text));
-        sync_pending_text_input(input);
+        input.sync_value();
     }
 
     fn insert_input_text(&mut self, text: &str) {
@@ -2867,135 +2665,10 @@ impl SessionView {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ThinkingMode {
-    Show,
-    Hide,
-}
-
-impl ThinkingMode {
-    fn label(self) -> &'static str {
-        match self {
-            ThinkingMode::Show => "show",
-            ThinkingMode::Hide => "hide",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ThinkingModeCommand {
-    Show,
-    Hide,
-    Toggle,
-}
-
-impl ThinkingModeCommand {
-    fn apply(self, current: ThinkingMode) -> ThinkingMode {
-        match self {
-            ThinkingModeCommand::Show => ThinkingMode::Show,
-            ThinkingModeCommand::Hide => ThinkingMode::Hide,
-            ThinkingModeCommand::Toggle => match current {
-                ThinkingMode::Show => ThinkingMode::Hide,
-                ThinkingMode::Hide => ThinkingMode::Show,
-            },
-        }
-    }
-}
-
-#[derive(Debug)]
-enum SlashCommand {
-    Thinking(ThinkingModeCommand),
-    Session(Vec<String>),
-    Agent(Vec<String>),
-    Compact(Vec<String>),
-    Task(Vec<String>),
-    Connect(Vec<String>),
-    Models(Vec<String>),
-    Files,
-    Diff,
-}
-
-fn now_micros() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_micros()
-}
-
-fn single_line_textarea(value: &str, secret: bool) -> TextArea<'static> {
-    let mut textarea = TextArea::default();
-    textarea.set_cursor_line_style(ratatui::style::Style::default());
-    if !value.is_empty() {
-        textarea.insert_str(normalize_single_line_text(value));
-    }
-    if secret {
-        textarea.set_mask_char('*');
-    }
-    textarea
-}
-
-fn normalize_single_line_text(text: &str) -> String {
-    text.replace(['\r', '\n'], " ")
-}
-
-fn textarea_input_from_key_event(key: event::KeyEvent) -> TextAreaInput {
-    let input_key = match key.code {
-        KeyCode::Char(ch) => TextAreaKey::Char(ch),
-        KeyCode::Backspace => TextAreaKey::Backspace,
-        KeyCode::Enter => TextAreaKey::Enter,
-        KeyCode::Left => TextAreaKey::Left,
-        KeyCode::Right => TextAreaKey::Right,
-        KeyCode::Up => TextAreaKey::Up,
-        KeyCode::Down => TextAreaKey::Down,
-        KeyCode::Tab => TextAreaKey::Tab,
-        KeyCode::Delete => TextAreaKey::Delete,
-        KeyCode::Home => TextAreaKey::Home,
-        KeyCode::End => TextAreaKey::End,
-        KeyCode::PageUp => TextAreaKey::PageUp,
-        KeyCode::PageDown => TextAreaKey::PageDown,
-        KeyCode::Esc => TextAreaKey::Esc,
-        KeyCode::F(number) => TextAreaKey::F(number),
-        _ => TextAreaKey::Null,
-    };
-    TextAreaInput {
-        key: input_key,
-        ctrl: key.modifiers.contains(KeyModifiers::CONTROL),
-        alt: key.modifiers.contains(KeyModifiers::ALT),
-        shift: key.modifiers.contains(KeyModifiers::SHIFT),
-    }
-}
-
-fn sync_pending_text_input(input: &mut PendingTextInput) {
-    input.value = input.editor.lines().join("\n");
-}
-
-fn char_column_to_byte_index(text: &str, column: usize) -> usize {
-    text.char_indices()
-        .nth(column)
-        .map(|(index, _)| index)
-        .unwrap_or(text.len())
-}
-
-fn read_line_span(result: &str) -> Option<(usize, usize)> {
-    let mut numbers = result.lines().filter_map(|line| {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("...") {
-            return None;
-        }
-        let colon = trimmed.find(':')?;
-        trimmed[..colon].trim().parse::<usize>().ok()
-    });
-    let first = numbers.next()?;
-    Some((first, numbers.last().unwrap_or(first)))
-}
-
-fn home_input_hint() -> &'static str {
-    "输入消息后 Enter 开始 · /connect 配置 provider · /models 选择模型 · Esc 退出"
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::util::{home_input_hint, read_line_span};
 
     #[test]
     fn script_loader_ignores_comments_and_blanks() {
