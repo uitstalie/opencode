@@ -10,7 +10,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
-use super::{SessionView, centered_rect, main_layout, render};
+use super::render::{self, centered_rect, main_layout};
+use super::SessionView;
 
 impl SessionView {
     pub(super) fn render(&self, stdout: &mut io::Stdout, status: Option<&str>) -> anyhow::Result<()> {
