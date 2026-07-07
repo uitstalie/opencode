@@ -1,0 +1,78 @@
+//! Utility functions extracted from the TUI root module.
+
+use crossterm::event::{self, KeyCode, KeyModifiers};
+use tui_textarea::{Input as TextAreaInput, Key as TextAreaKey, TextArea};
+
+pub(super) fn now_micros() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros()
+}
+
+pub(super) fn single_line_textarea(value: &str, secret: bool) -> TextArea<'static> {
+    let mut textarea = TextArea::default();
+    textarea.set_cursor_line_style(ratatui::style::Style::default());
+    if !value.is_empty() {
+        textarea.insert_str(normalize_single_line_text(value));
+    }
+    if secret {
+        textarea.set_mask_char('*');
+    }
+    textarea
+}
+
+pub(super) fn normalize_single_line_text(text: &str) -> String {
+    text.replace(['\r', '\n'], " ")
+}
+
+pub(super) fn textarea_input_from_key_event(key: event::KeyEvent) -> TextAreaInput {
+    let input_key = match key.code {
+        KeyCode::Char(ch) => TextAreaKey::Char(ch),
+        KeyCode::Backspace => TextAreaKey::Backspace,
+        KeyCode::Enter => TextAreaKey::Enter,
+        KeyCode::Left => TextAreaKey::Left,
+        KeyCode::Right => TextAreaKey::Right,
+        KeyCode::Up => TextAreaKey::Up,
+        KeyCode::Down => TextAreaKey::Down,
+        KeyCode::Tab => TextAreaKey::Tab,
+        KeyCode::Delete => TextAreaKey::Delete,
+        KeyCode::Home => TextAreaKey::Home,
+        KeyCode::End => TextAreaKey::End,
+        KeyCode::PageUp => TextAreaKey::PageUp,
+        KeyCode::PageDown => TextAreaKey::PageDown,
+        KeyCode::Esc => TextAreaKey::Esc,
+        KeyCode::F(number) => TextAreaKey::F(number),
+        _ => TextAreaKey::Null,
+    };
+    TextAreaInput {
+        key: input_key,
+        ctrl: key.modifiers.contains(KeyModifiers::CONTROL),
+        alt: key.modifiers.contains(KeyModifiers::ALT),
+        shift: key.modifiers.contains(KeyModifiers::SHIFT),
+    }
+}
+
+pub(super) fn char_column_to_byte_index(text: &str, column: usize) -> usize {
+    text.char_indices()
+        .nth(column)
+        .map(|(index, _)| index)
+        .unwrap_or(text.len())
+}
+
+pub(super) fn read_line_span(result: &str) -> Option<(usize, usize)> {
+    let mut numbers = result.lines().filter_map(|line| {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("...") {
+            return None;
+        }
+        let colon = trimmed.find(':')?;
+        trimmed[..colon].trim().parse::<usize>().ok()
+    });
+    let first = numbers.next()?;
+    Some((first, numbers.last().unwrap_or(first)))
+}
+
+pub(super) fn home_input_hint() -> &'static str {
+    "输入消息后 Enter 开始 · /connect 配置 provider · /models 选择模型 · Esc 退出"
+}
