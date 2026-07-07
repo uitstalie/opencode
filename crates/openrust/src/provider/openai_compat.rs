@@ -60,6 +60,9 @@ impl LlmProvider for OpenAICompatProvider {
                 }
                 if let Some(tool_calls) = &m.tool_calls {
                     message["tool_calls"] = serde_json::json!(tool_calls);
+                    if m.role == "assistant" && m.content.as_text().is_empty() {
+                        message["content"] = serde_json::Value::Null;
+                    }
                 }
                 message
             }).collect::<Vec<_>>(),
@@ -141,6 +144,11 @@ impl LlmProvider for OpenAICompatProvider {
 
                     let data = &line[6..];
                     if data == "[DONE]" {
+                        if let Some(prev_id) = tool_call_id.take() {
+                            yield Ok(StreamChunk::ToolCallEnd {
+                                id: prev_id,
+                            });
+                        }
                         yield Ok(StreamChunk::Finish { usage: None });
                         break;
                     }
