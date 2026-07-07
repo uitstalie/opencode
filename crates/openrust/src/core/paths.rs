@@ -61,7 +61,8 @@ pub fn is_protected_path(canonical: &Path) -> Option<&'static str> {
     }
 
     // Windows: drive root (e.g. C:\) or Windows system directory
-    if cfg!(windows) {
+    #[cfg(windows)]
+    {
         if is_drive_root(s) || s.eq_ignore_ascii_case("C:\\Windows") {
             return Some("protected system path");
         }
