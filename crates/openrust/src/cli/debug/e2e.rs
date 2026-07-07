@@ -2,7 +2,7 @@ use clap::Subcommand;
 
 use crate::core::config::Config;
 use crate::core::provider::{self, Message};
-use crate::core::system_prompt::SystemPrompt;
+use crate::system_prompt::SystemPrompt;
 use crate::tool::ToolContext;
 use crate::tool::task::run_agent;
 

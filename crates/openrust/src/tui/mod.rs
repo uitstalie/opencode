@@ -69,7 +69,7 @@ pub fn run(script: Option<PathBuf>, prompt: Option<String>) -> anyhow::Result<()
         .get_provider(&provider_name)
         .and_then(|resolved| {
             provider::create_provider(&resolved).map(|llm| {
-                let system = crate::core::system_prompt::SystemPrompt::from_config(
+                let system = crate::system_prompt::SystemPrompt::from_config(
                     &config,
                     &resolved,
                     config.mode.clone(),
@@ -1464,7 +1464,7 @@ impl SessionView {
             .ok_or_else(|| anyhow::anyhow!("Provider '{}' not found", provider_name))?;
         let llm = provider::create_provider(&resolved)
             .ok_or_else(|| anyhow::anyhow!("Failed to create provider '{}'", provider_name))?;
-        let system = crate::core::system_prompt::SystemPrompt::from_config(
+        let system = crate::system_prompt::SystemPrompt::from_config(
             &self.config,
             &resolved,
             self.config.mode.clone(),
@@ -2146,7 +2146,7 @@ impl SessionView {
                     if let Some(llm) = provider::create_provider(&resolved) {
                         self.provider_name = provider_name;
                         self.model = model;
-                        if let Ok(system) = crate::core::system_prompt::SystemPrompt::from_config(
+                        if let Ok(system) = crate::system_prompt::SystemPrompt::from_config(
                             &config,
                             &resolved,
                             config.mode.clone(),

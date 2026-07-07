@@ -1,6 +1,7 @@
 use clap::Subcommand;
 
-use crate::core::{config::Config, system_prompt::SystemPrompt};
+use crate::core::config::Config;
+use crate::system_prompt::SystemPrompt;
 
 #[derive(Subcommand)]
 pub enum Cmd {

@@ -5,5 +5,6 @@
 pub mod cli;
 pub mod core;
 pub mod provider;
+pub mod system_prompt;
 pub mod tool;
 pub mod tui;
