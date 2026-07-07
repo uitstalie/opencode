@@ -4,10 +4,12 @@
 //! but not exposed to the rest of the crate.
 
 use std::cell::{Cell, RefCell};
+use std::time::Instant;
 
 use tui_textarea::TextArea;
 
 use crate::tool::AskRequest;
+use super::dialog::Dialog;
 
 pub(super) struct QuestionItem {
     pub(super) header: String,
@@ -282,4 +284,14 @@ pub(super) struct RenderState {
     pub(super) area_top: Cell<u16>,
     pub(super) area_height: Cell<u16>,
     pub(super) dialog_area: Cell<Option<ratatui::layout::Rect>>,
+}
+
+pub(super) struct DialogState {
+    pub(super) dialog: Option<Dialog>,
+    pub(super) toast: Option<String>,
+    pub(super) toast_deadline: Option<Instant>,
+    pub(super) pending_question: Option<PendingQuestion>,
+    pub(super) pending_permission: Option<PendingPermission>,
+    pub(super) pending_text_input: Option<PendingTextInput>,
+    pub(super) connect_draft: Option<ConnectDraft>,
 }

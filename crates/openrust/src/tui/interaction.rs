@@ -72,7 +72,7 @@ impl SessionView {
     }
 
     fn copy_current_input(&mut self) -> anyhow::Result<bool> {
-        let text = if let Some(input) = &self.pending_text_input {
+        let text = if let Some(input) = &self.ui.pending_text_input {
             input.value.clone()
         } else if !self.input.is_empty() {
             self.input.clone()
@@ -119,7 +119,7 @@ impl SessionView {
     }
 
     fn handle_dialog_mouse(&mut self, column: u16, row: u16) -> anyhow::Result<bool> {
-        let Some(dialog) = &self.dialog else {
+        let Some(dialog) = &self.ui.dialog else {
             return Ok(false);
         };
         let Some(area) = self.render.dialog_area.get() else {
@@ -138,7 +138,7 @@ impl SessionView {
         let max_visible = ((area.height.saturating_sub(6)) as usize / 3).max(1);
         let index = dialog.option_index_at(relative_row as usize, max_visible);
         if let Some(index) = index {
-            if let Some(dialog) = &mut self.dialog {
+            if let Some(dialog) = &mut self.ui.dialog {
                 dialog.set_selected(index);
             }
             self.submit_dialog_selection();

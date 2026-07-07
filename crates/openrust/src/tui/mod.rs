@@ -119,13 +119,7 @@ struct SessionView {
     theme: Theme,
     thinking_mode: ThinkingMode,
     reasoning_effort: Option<String>,
-    dialog: Option<Dialog>,
-    toast: Option<String>,
-    toast_deadline: Option<Instant>,
-    pending_question: Option<PendingQuestion>,
-    pending_permission: Option<PendingPermission>,
-    pending_text_input: Option<PendingTextInput>,
-    connect_draft: Option<ConnectDraft>,
+    ui: DialogState,
     sidebar: Option<sidebar::FileTree>,
     sidebar_visible: bool,
     diff_visible: bool,
@@ -196,13 +190,15 @@ impl SessionView {
             theme: Theme::dark(),
             thinking_mode: ThinkingMode::Show,
             reasoning_effort: None,
-            dialog: None,
-            toast: None,
-            toast_deadline: None,
-            pending_question: None,
-            pending_permission: None,
-            pending_text_input: None,
-            connect_draft: None,
+            ui: DialogState {
+                dialog: None,
+                toast: None,
+                toast_deadline: None,
+                pending_question: None,
+                pending_permission: None,
+                pending_text_input: None,
+                connect_draft: None,
+            },
             sidebar: None,
             sidebar_visible: false,
             diff_visible: false,
@@ -299,10 +295,10 @@ impl SessionView {
             }
             self.maybe_start_next_prompt(terminal)?;
             self.status = self.default_status_message();
-            if let Some(deadline) = self.toast_deadline {
+            if let Some(deadline) = self.ui.toast_deadline {
                 if Instant::now() >= deadline {
-                    self.toast = None;
-                    self.toast_deadline = None;
+                    self.ui.toast = None;
+                    self.ui.toast_deadline = None;
                     needs_render = true;
                 }
             }
@@ -331,13 +327,13 @@ impl SessionView {
                         if key.kind != KeyEventKind::Press {
                             continue;
                         }
-                        if self.pending_permission.is_some() {
+                        if self.ui.pending_permission.is_some() {
                             self.handle_permission_key(key);
                             handled_input = true;
-                        } else if self.pending_question.is_some() {
+                        } else if self.ui.pending_question.is_some() {
                             self.handle_question_key(key);
                             handled_input = true;
-                        } else if self.pending_text_input.is_some() {
+                        } else if self.ui.pending_text_input.is_some() {
                             self.handle_text_input_key(key);
                             handled_input = true;
                         } else if self.handle_global_copy_key(key)? {
@@ -346,24 +342,24 @@ impl SessionView {
                             should_break = true;
                             break;
                         } else if self.view_mode == ViewMode::Home
-                            && self.dialog.is_none()
+                            && self.ui.dialog.is_none()
                             && self.handle_home_key(terminal, key)?
                         {
                             handled_input = true;
                         } else {
                             match key.code {
-                                KeyCode::Esc if self.dialog.is_some() => {
-                                    self.dialog = None;
+                                KeyCode::Esc if self.ui.dialog.is_some() => {
+                                    self.ui.dialog = None;
                                     handled_input = true;
                                 }
-                                KeyCode::Up if self.dialog.is_some() => {
-                                    if let Some(dialog) = &mut self.dialog {
+                                KeyCode::Up if self.ui.dialog.is_some() => {
+                                    if let Some(dialog) = &mut self.ui.dialog {
                                         dialog.previous();
                                     }
                                     handled_input = true;
                                 }
-                                KeyCode::Down if self.dialog.is_some() => {
-                                    if let Some(dialog) = &mut self.dialog {
+                                KeyCode::Down if self.ui.dialog.is_some() => {
+                                    if let Some(dialog) = &mut self.ui.dialog {
                                         dialog.next();
                                     }
                                     handled_input = true;
@@ -378,9 +374,9 @@ impl SessionView {
                                 }
                                 KeyCode::Enter => {
                                     let mut skip_input = false;
-                                    if self.dialog.is_some() {
+                                    if self.ui.dialog.is_some() {
                                         let is_slash = matches!(
-                                            self.dialog.as_ref().map(|d| &d.kind),
+                                            self.ui.dialog.as_ref().map(|d| &d.kind),
                                             Some(DialogKind::SlashHelp)
                                         );
                                         self.submit_dialog_selection();
@@ -482,7 +478,7 @@ impl SessionView {
                         handled_input = true;
                     }
                     Event::Paste(text) => {
-                        if self.pending_text_input.is_some() {
+                        if self.ui.pending_text_input.is_some() {
                             self.insert_pending_text_input(&text);
                         } else {
                             self.insert_input_text(&text);
@@ -506,7 +502,7 @@ impl SessionView {
     }
 
     fn open_thinking_dialog(&mut self, mode: ThinkingModeCommand) {
-        self.dialog = Some(Dialog::new(
+        self.ui.dialog = Some(Dialog::new(
             DialogKind::Thinking,
             "Thinking",
             "选择 thinking 内容是否显示在会话流中。",
@@ -598,7 +594,7 @@ impl SessionView {
                             )
                         }),
                 );
-                self.dialog = Some(Dialog::new(
+                self.ui.dialog = Some(Dialog::new(
                     DialogKind::Session,
                     "Sessions",
                     "选择要切换的会话。",
@@ -642,7 +638,7 @@ impl SessionView {
                         info.description.clone(),
                     )
                 }));
-                self.dialog = Some(Dialog::new(
+                self.ui.dialog = Some(Dialog::new(
                     DialogKind::Agent,
                     "Agents",
                     "选择当前会话使用的 agent。",
@@ -714,7 +710,7 @@ impl SessionView {
                         format!("{} · agent: {}", task.status, agent),
                     )
                 }));
-                self.dialog = Some(Dialog::new(
+                self.ui.dialog = Some(Dialog::new(
                     DialogKind::Task,
                     "Tasks",
                     "查看或更新当前会话的任务。",
@@ -786,7 +782,7 @@ impl SessionView {
                     "Verify current provider",
                     "验证当前 provider、API key 和模型通路。",
                 ));
-                self.dialog = Some(Dialog::new(
+                self.ui.dialog = Some(Dialog::new(
                     DialogKind::Provider,
                     "Connect",
                     "选择 provider，或验证当前通路。自定义 provider 使用 /connect add。",
@@ -839,7 +835,7 @@ impl SessionView {
                     "Thinking effort",
                     "设置模型 reasoning_effort：low / medium / high / off。",
                 ));
-                self.dialog = Some(Dialog::new(
+                self.ui.dialog = Some(Dialog::new(
                     DialogKind::Model,
                     "Models",
                     "选择已注册模型，或进入 thinking effort 设置。",
@@ -858,7 +854,7 @@ impl SessionView {
             Some("high") => 2,
             _ => 3,
         };
-        self.dialog = Some(Dialog::new(
+        self.ui.dialog = Some(Dialog::new(
             DialogKind::ReasoningEffort,
             "Thinking Effort",
             "选择发送给模型的 reasoning_effort。",
@@ -874,7 +870,7 @@ impl SessionView {
     }
 
     fn submit_dialog_selection(&mut self) {
-        let Some(dialog) = self.dialog.take() else {
+        let Some(dialog) = self.ui.dialog.take() else {
             return;
         };
         match dialog.kind {
@@ -923,14 +919,14 @@ impl SessionView {
             DialogKind::SlashHelp => {
                 if let Some(value) = dialog.selected_value() {
                     self.set_input_text(value);
-                    self.dialog = None;
+                    self.ui.dialog = None;
                 }
             }
         }
     }
 
     fn poll_permission_request(&mut self) -> bool {
-        if self.pending_permission.is_some() {
+        if self.ui.pending_permission.is_some() {
             return false;
         }
         let request = {
@@ -942,7 +938,7 @@ impl SessionView {
                 Err(_) => return false,
             }
         };
-        self.pending_permission = Some(PendingPermission {
+        self.ui.pending_permission = Some(PendingPermission {
             responder: request.responder,
             tool: request.tool,
             detail: request.detail,
@@ -954,7 +950,7 @@ impl SessionView {
 
     fn handle_permission_key(&mut self, key: event::KeyEvent) {
         let decision = {
-            let Some(permission) = self.pending_permission.as_mut() else {
+            let Some(permission) = self.ui.pending_permission.as_mut() else {
                 return;
             };
             match key.code {
@@ -969,7 +965,7 @@ impl SessionView {
             }
         };
         if let Some(allow) = decision {
-            if let Some(permission) = self.pending_permission.take() {
+            if let Some(permission) = self.ui.pending_permission.take() {
                 let _ = permission.responder.send(allow);
             }
             self.status = if allow {
@@ -988,7 +984,7 @@ impl SessionView {
         }
 
         let outcome = {
-            let Some(input) = self.pending_text_input.as_mut() else {
+            let Some(input) = self.ui.pending_text_input.as_mut() else {
                 return;
             };
             match key.code {
@@ -1006,18 +1002,18 @@ impl SessionView {
         match outcome {
             Outcome::None => {}
             Outcome::Cancel => {
-                self.pending_text_input = None;
+                self.ui.pending_text_input = None;
                 self.note("input cancelled".to_string());
             }
             Outcome::Submit(value, submit) => {
-                self.pending_text_input = None;
+                self.ui.pending_text_input = None;
                 submit(self, &value);
             }
         }
     }
 
     fn insert_pending_text_input(&mut self, text: &str) {
-        let Some(input) = self.pending_text_input.as_mut() else {
+        let Some(input) = self.ui.pending_text_input.as_mut() else {
             return;
         };
         input.editor.insert_str(normalize_single_line_text(text));
@@ -1187,7 +1183,7 @@ impl SessionView {
     }
 
     fn poll_ask_request(&mut self) -> bool {
-        if self.pending_question.is_some() {
+        if self.ui.pending_question.is_some() {
             return false;
         }
         let request = {
@@ -1199,8 +1195,8 @@ impl SessionView {
                 Err(_) => return false,
             }
         };
-        self.pending_question = PendingQuestion::from_request(request);
-        if self.pending_question.is_some() {
+        self.ui.pending_question = PendingQuestion::from_request(request);
+        if self.ui.pending_question.is_some() {
             self.status = "question: awaiting your answer".to_string();
             return true;
         }
@@ -1214,7 +1210,7 @@ impl SessionView {
             Done(Vec<String>),
         }
         let outcome = {
-            let Some(q) = self.pending_question.as_mut() else {
+            let Some(q) = self.ui.pending_question.as_mut() else {
                 return;
             };
             if q.typing.is_some() {
@@ -1267,13 +1263,13 @@ impl SessionView {
         match outcome {
             Outcome::None => {}
             Outcome::Cancel => {
-                if let Some(q) = self.pending_question.take() {
+                if let Some(q) = self.ui.pending_question.take() {
                     let _ = q.responder.send(vec!["(cancelled)".to_string()]);
                 }
                 self.note("question cancelled".to_string());
             }
             Outcome::Done(answers) => {
-                if let Some(q) = self.pending_question.take() {
+                if let Some(q) = self.ui.pending_question.take() {
                     let _ = q.responder.send(answers);
                 }
                 self.status = "answer sent".to_string();
@@ -1880,8 +1876,8 @@ impl SessionView {
     }
 
     fn start_connect_wizard(&mut self) {
-        self.connect_draft = Some(ConnectDraft::default());
-        self.pending_text_input = Some(PendingTextInput {
+        self.ui.connect_draft = Some(ConnectDraft::default());
+        self.ui.pending_text_input = Some(PendingTextInput {
             title: "Connect · provider".to_string(),
             description: "输入 provider 名称，例如 deepseek、openai、one_route。".to_string(),
             value: String::new(),
@@ -1897,9 +1893,9 @@ impl SessionView {
             self.note("provider name cannot be empty".to_string());
             return;
         }
-        let draft = self.connect_draft.get_or_insert_with(ConnectDraft::default);
+        let draft = self.ui.connect_draft.get_or_insert_with(ConnectDraft::default);
         draft.provider = provider.to_string();
-        self.pending_text_input = Some(PendingTextInput {
+        self.ui.pending_text_input = Some(PendingTextInput {
             title: format!("Connect · {} base URL", provider),
             description: "输入 OpenAI-compatible base URL，例如 https://api.deepseek.com/v1 。"
                 .to_string(),
@@ -1916,12 +1912,12 @@ impl SessionView {
             self.note("base URL cannot be empty".to_string());
             return;
         }
-        let Some(draft) = self.connect_draft.as_mut() else {
+        let Some(draft) = self.ui.connect_draft.as_mut() else {
             self.note("connect wizard state missing".to_string());
             return;
         };
         draft.base_url = base_url.to_string();
-        self.pending_text_input = Some(PendingTextInput {
+        self.ui.pending_text_input = Some(PendingTextInput {
             title: format!("Connect · {} model", draft.provider),
             description: "输入配置中的 model 名称，例如 deepseek-chat。".to_string(),
             value: String::new(),
@@ -1937,12 +1933,12 @@ impl SessionView {
             self.note("model cannot be empty".to_string());
             return;
         }
-        let Some(draft) = self.connect_draft.as_mut() else {
+        let Some(draft) = self.ui.connect_draft.as_mut() else {
             self.note("connect wizard state missing".to_string());
             return;
         };
         draft.model = model.to_string();
-        self.pending_text_input = Some(PendingTextInput {
+        self.ui.pending_text_input = Some(PendingTextInput {
             title: format!("Connect · {} wire model", draft.provider),
             description: "输入实际发给 API 的模型名；若与上一步相同可直接回车留空。".to_string(),
             value: String::new(),
@@ -1953,7 +1949,7 @@ impl SessionView {
     }
 
     fn save_connect_wire_model(&mut self, value: &str) {
-        let Some(draft) = self.connect_draft.as_mut() else {
+        let Some(draft) = self.ui.connect_draft.as_mut() else {
             self.note("connect wizard state missing".to_string());
             return;
         };
@@ -1963,7 +1959,7 @@ impl SessionView {
         } else {
             Some(wire_model.to_string())
         };
-        self.pending_text_input = Some(PendingTextInput {
+        self.ui.pending_text_input = Some(PendingTextInput {
             title: format!("Connect · {} API key", draft.provider),
             description:
                 "输入 API key；若暂时没有可直接回车跳过，之后再用 /connect key <provider> <api-key>。"
@@ -1976,7 +1972,7 @@ impl SessionView {
     }
 
     fn save_connect_api_key(&mut self, value: &str) {
-        let Some(draft) = self.connect_draft.take() else {
+        let Some(draft) = self.ui.connect_draft.take() else {
             self.note("connect wizard state missing".to_string());
             return;
         };
@@ -2232,24 +2228,24 @@ impl SessionView {
 
     fn note(&mut self, message: String) {
         self.status = message.lines().next().unwrap_or("Ready").to_string();
-        self.toast = Some(message);
-        self.toast_deadline = Some(Instant::now() + Duration::from_secs(4));
+        self.ui.toast = Some(message);
+        self.ui.toast_deadline = Some(Instant::now() + Duration::from_secs(4));
     }
 
     fn sync_slash_help(&mut self) {
         if !self.input.starts_with('/') {
             if matches!(
-                self.dialog.as_ref().map(|dialog| dialog.kind),
+                self.ui.dialog.as_ref().map(|dialog| dialog.kind),
                 Some(DialogKind::SlashHelp)
             ) {
-                self.dialog = None;
+                self.ui.dialog = None;
             }
             return;
         }
 
         let options = slash_options(&self.input);
         if options.is_empty() {
-            self.dialog = None;
+            self.ui.dialog = None;
             return;
         }
 
@@ -2258,7 +2254,7 @@ impl SessionView {
             .position(|option| option.value().starts_with(&self.input))
             .unwrap_or(0);
 
-        self.dialog = Some(Dialog::new(
+        self.ui.dialog = Some(Dialog::new(
             DialogKind::SlashHelp,
             "Slash Commands",
             "输入 / 时显示可用命令提示，Enter 可补全当前命令。",
@@ -2274,28 +2270,28 @@ impl SessionView {
 
         frame.render_widget(Block::default().style(self.theme.overlay_style()), area);
 
-        if let Some(dialog) = &self.dialog {
+        if let Some(dialog) = &self.ui.dialog {
             let dialog_area = self.dialog_area(dialog, area);
             self.render.dialog_area.set(Some(dialog_area));
             frame.render_widget(Clear, dialog_area);
             self.render_dialog_panel(frame, dialog_area, dialog);
             return;
         }
-        if let Some(question) = &self.pending_question {
+        if let Some(question) = &self.ui.pending_question {
             self.render.dialog_area.set(Some(centered_rect(72, 60, area)));
             let dialog_area = centered_rect(72, 60, area);
             frame.render_widget(Clear, dialog_area);
             frame.render_widget(self.question_widget(question), dialog_area);
             return;
         }
-        if let Some(permission) = &self.pending_permission {
+        if let Some(permission) = &self.ui.pending_permission {
             self.render.dialog_area.set(Some(centered_rect(60, 32, area)));
             let dialog_area = centered_rect(60, 32, area);
             frame.render_widget(Clear, dialog_area);
             frame.render_widget(self.permission_widget(permission), dialog_area);
             return;
         }
-        if let Some(input) = &self.pending_text_input {
+        if let Some(input) = &self.ui.pending_text_input {
             self.render.dialog_area.set(Some(centered_rect(64, 28, area)));
             let dialog_area = centered_rect(64, 28, area);
             frame.render_widget(Clear, dialog_area);
@@ -2394,10 +2390,10 @@ impl SessionView {
     }
 
     fn modal_active(&self) -> bool {
-        self.dialog.is_some()
-            || self.pending_question.is_some()
-            || self.pending_permission.is_some()
-            || self.pending_text_input.is_some()
+        self.ui.dialog.is_some()
+            || self.ui.pending_question.is_some()
+            || self.ui.pending_permission.is_some()
+            || self.ui.pending_text_input.is_some()
     }
 
     fn pump_prompt_job(
@@ -2642,10 +2638,10 @@ impl SessionView {
     }
 
     fn default_status_message(&self) -> String {
-        if self.pending_permission.is_some()
-            || self.pending_question.is_some()
-            || self.pending_text_input.is_some()
-            || self.dialog.is_some()
+        if self.ui.pending_permission.is_some()
+            || self.ui.pending_question.is_some()
+            || self.ui.pending_text_input.is_some()
+            || self.ui.dialog.is_some()
             || self.ai_running
             || self.prompt_job.is_some()
         {
@@ -2729,8 +2725,8 @@ mod tests {
 
         view.open_connect_dialog(vec!["add".to_string()]);
 
-        assert!(view.pending_text_input.is_some());
-        assert!(view.connect_draft.is_some());
+        assert!(view.ui.pending_text_input.is_some());
+        assert!(view.ui.connect_draft.is_some());
     }
 
     #[test]

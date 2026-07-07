@@ -118,7 +118,7 @@ impl SessionView {
         let footer = Paragraph::new(self.status_line()).style(self.theme.footer_style());
         frame.render_widget(footer, regions.status);
 
-        if let Some(toast) = &self.toast {
+        if let Some(toast) = &self.ui.toast {
             let toast_area = render::toast_rect(frame.area());
             let widget = Paragraph::new(toast.as_str())
                 .style(self.theme.system_style())
@@ -195,7 +195,7 @@ impl SessionView {
         let footer = Paragraph::new(self.status_line()).style(self.theme.footer_style());
         frame.render_widget(footer, status_area);
 
-        if let Some(toast) = &self.toast {
+        if let Some(toast) = &self.ui.toast {
             let toast_area = render::toast_rect(frame.area());
             let widget = Paragraph::new(toast.as_str())
                 .style(self.theme.system_style())
