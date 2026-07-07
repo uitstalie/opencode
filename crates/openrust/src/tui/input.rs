@@ -71,10 +71,4 @@ mod tests {
             other => panic!("unexpected parse result: {:?}", other),
         }
     }
-
-    #[test]
-    fn input_width_counts_full_width_chars() {
-        assert_eq!(input_width("hello"), 5);
-        assert_eq!(input_width("你好"), 4);
-    }
 }

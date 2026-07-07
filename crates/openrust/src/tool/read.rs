@@ -32,7 +32,7 @@ impl Tool for ReadTool {
         "read"
     }
     fn description(&self) -> &'static str {
-        "Read a file or directory. Binary files are rejected (use bash tools for those). Supports offset/limit for large files, line-numbered output."
+        "Read a file or part of it with line numbers. Use offset/limit to read a slice of a large file; directories list their entries. Binary files are rejected."
     }
     fn parameters(&self) -> Value {
         serde_json::json!({

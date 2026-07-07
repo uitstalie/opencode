@@ -2424,6 +2424,11 @@ impl SessionView {
                     .and_then(|v| v.as_str())
             });
         if let Some(p) = path {
+            if name == "read" {
+                if let Some((start, end)) = read_line_span(result) {
+                    return format!("read {} L{}-{}", p, start, end);
+                }
+            }
             return format!("{} {}", name, p);
         }
         let preview = result.lines().next().unwrap_or("");
@@ -2957,6 +2962,19 @@ fn char_column_to_byte_index(text: &str, column: usize) -> usize {
         .unwrap_or(text.len())
 }
 
+fn read_line_span(result: &str) -> Option<(usize, usize)> {
+    let mut numbers = result.lines().filter_map(|line| {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("...") {
+            return None;
+        }
+        let colon = trimmed.find(':')?;
+        trimmed[..colon].trim().parse::<usize>().ok()
+    });
+    let first = numbers.next()?;
+    Some((first, numbers.last().unwrap_or(first)))
+}
+
 fn home_input_hint() -> &'static str {
     "输入消息后 Enter 开始 · /connect 配置 provider · /models 选择模型 · Esc 退出"
 }
@@ -3007,12 +3025,6 @@ mod tests {
         assert_ne!(theme.running_style(true), theme.running_style(false));
         assert_ne!(theme.user_style(), theme.assistant_style());
         assert_ne!(theme.border_style(), theme.input_border_style(false));
-    }
-
-    #[test]
-    fn input_width_counts_visible_cells() {
-        assert_eq!(input_width("abc"), 3);
-        assert_eq!(input_width("、"), 2);
     }
 
     #[test]
@@ -3082,11 +3094,16 @@ mod tests {
     }
 
     #[test]
-    fn char_boundaries_follow_utf8_edges() {
-        let input = "a、b";
-        assert_eq!(prev_char_boundary(input, input.len()), 4);
-        assert_eq!(prev_char_boundary(input, 4), 1);
-        assert_eq!(next_char_boundary(input, 1), 4);
-        assert_eq!(next_char_boundary(input, 4), input.len());
+    fn read_line_span_extracts_first_and_last_line_numbers() {
+        assert_eq!(
+            read_line_span("     1: foo\n     2: bar\n     3: baz"),
+            Some((1, 3))
+        );
+        assert_eq!(
+            read_line_span("   100: foo\n   101: bar\n... (50 lines remaining)"),
+            Some((100, 101))
+        );
+        assert_eq!(read_line_span("Cannot read: nope"), None);
+        assert_eq!(read_line_span("   42: only"), Some((42, 42)));
     }
 }

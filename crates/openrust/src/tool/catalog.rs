@@ -30,8 +30,8 @@ pub const TOOL_CATALOG: &[ToolMeta] = &[
     ToolMeta {
         name: "read",
         category: ToolCategory::Filesystem,
-        description: "Read a file from the filesystem.",
-        prompt_hint: "Use for inspection and line-accurate reads.",
+        description: "Read a file or a slice of it, with line numbers.",
+        prompt_hint: "Use offset/limit to read only the part you need.",
     },
     ToolMeta {
         name: "write",
