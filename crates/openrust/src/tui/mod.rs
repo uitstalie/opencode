@@ -317,6 +317,7 @@ struct SessionView {
     ai_running: bool,
     cache_hits: usize,
     cache_total: usize,
+    prompt_count: usize,
     theme: Theme,
     thinking_mode: ThinkingMode,
     reasoning_effort: Option<String>,
@@ -401,6 +402,7 @@ impl SessionView {
             ai_running: false,
             cache_hits: 0,
             cache_total: 0,
+            prompt_count: 0,
             theme: Theme::dark(),
             thinking_mode: ThinkingMode::Show,
             reasoning_effort: None,
@@ -2658,12 +2660,14 @@ impl SessionView {
                         tool_call_id: None,
                         tool_calls: Some(serde_json::from_value(serde_json::json!(tool_calls)).unwrap_or_default()),
                     });
-                    self.display.push(render::DisplayMessage::new("assistant", &assistant));
-                    self.assistant_preview.clear();
                     if self.thinking_mode == ThinkingMode::Show && !self.thinking_preview.trim().is_empty() {
                         self.display.push(render::DisplayMessage::new("thinking", &self.thinking_preview));
                     }
                     self.thinking_preview.clear();
+                    if !assistant.is_empty() {
+                        self.display.push(render::DisplayMessage::new("assistant", &assistant));
+                    }
+                    self.assistant_preview.clear();
                     for item in &results {
                         self.capture_diff(&item.name, &item.args);
                         self.persist_message_detail(
@@ -2695,6 +2699,10 @@ impl SessionView {
                     needs_render = true;
                 }
                 PromptEvent::Finish { prompt_tokens, cache_hit_tokens } => {
+                    if self.thinking_mode == ThinkingMode::Show && !self.thinking_preview.trim().is_empty() {
+                        self.display.push(render::DisplayMessage::new("thinking", &self.thinking_preview));
+                    }
+                    self.thinking_preview.clear();
                     let assistant = self.assistant_preview.trim().to_string();
                     if !assistant.is_empty() {
                         self.messages.push(Message {
@@ -2708,16 +2716,13 @@ impl SessionView {
                         self.display
                             .push(render::DisplayMessage::new("assistant", &assistant));
                     }
-                    self.cache_total = self.cache_total.saturating_add(prompt_tokens as usize);
-                    self.cache_hits = self.cache_hits.saturating_add(cache_hit_tokens as usize);
+                    self.prompt_count = self.prompt_count.saturating_add(1);
+                    self.cache_total = prompt_tokens as usize;
+                    self.cache_hits = cache_hit_tokens as usize;
                     self.ai_running = false;
                     self.status = "Ready".to_string();
                     self.prompt_job = None;
                     self.assistant_preview.clear();
-                    if self.thinking_mode == ThinkingMode::Show && !self.thinking_preview.trim().is_empty() {
-                        self.display.push(render::DisplayMessage::new("thinking", &self.thinking_preview));
-                    }
-                    self.thinking_preview.clear();
                     needs_render = true;
                     self.generate_summary();
                 }
@@ -2791,7 +2796,13 @@ impl SessionView {
         } else {
             "AI: idle"
         };
-        let cache_rate = if self.cache_total == 0 {
+        let cache_rate = if self.prompt_count <= 1 {
+            if self.prompt_count == 0 {
+                "cache: n/a".to_string()
+            } else {
+                "cache: priming".to_string()
+            }
+        } else if self.cache_total == 0 {
             "cache: n/a".to_string()
         } else {
             format!("cache: {}%", self.cache_hits * 100 / self.cache_total)

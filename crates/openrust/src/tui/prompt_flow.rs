@@ -142,12 +142,14 @@ impl SessionView {
                         tool_call_id: None,
                         tool_calls: Some(serde_json::from_value(serde_json::json!(tool_calls)).unwrap_or_default()),
                     });
-                    self.display.push(render::DisplayMessage::new("assistant", &assistant));
-                    self.assistant_preview.clear();
                     if self.thinking_mode == ThinkingMode::Show && !self.thinking_preview.trim().is_empty() {
                         self.display.push(render::DisplayMessage::new("thinking", &self.thinking_preview));
                     }
                     self.thinking_preview.clear();
+                    if !assistant.is_empty() {
+                        self.display.push(render::DisplayMessage::new("assistant", &assistant));
+                    }
+                    self.assistant_preview.clear();
                     for item in &results {
                         self.persist_message_detail(
                             "tool",
@@ -176,6 +178,10 @@ impl SessionView {
                     needs_render = true;
                 }
                 super::PromptEvent::Finish { prompt_tokens, cache_hit_tokens } => {
+                    if self.thinking_mode == ThinkingMode::Show && !self.thinking_preview.trim().is_empty() {
+                        self.display.push(render::DisplayMessage::new("thinking", &self.thinking_preview));
+                    }
+                    self.thinking_preview.clear();
                     let assistant = self.assistant_preview.trim().to_string();
                     if !assistant.is_empty() {
                         self.messages.push(super::Message {
@@ -188,16 +194,13 @@ impl SessionView {
                         self.persist_message("assistant", &assistant);
                         self.display.push(render::DisplayMessage::new("assistant", &assistant));
                     }
-                    self.cache_total = self.cache_total.saturating_add(prompt_tokens as usize);
-                    self.cache_hits = self.cache_hits.saturating_add(cache_hit_tokens as usize);
+                    self.prompt_count = self.prompt_count.saturating_add(1);
+                    self.cache_total = prompt_tokens as usize;
+                    self.cache_hits = cache_hit_tokens as usize;
                     self.ai_running = false;
                     self.status = "Ready".to_string();
                     self.prompt_job = None;
                     self.assistant_preview.clear();
-                    if self.thinking_mode == ThinkingMode::Show && !self.thinking_preview.trim().is_empty() {
-                        self.display.push(render::DisplayMessage::new("thinking", &self.thinking_preview));
-                    }
-                    self.thinking_preview.clear();
                     needs_render = true;
                     finished = true;
                     self.generate_summary();
