@@ -175,7 +175,7 @@ impl SessionView {
                     self.status = format!("tool results: {} tools", results.len());
                     needs_render = true;
                 }
-                super::PromptEvent::Finish => {
+                super::PromptEvent::Finish { prompt_tokens, cache_hit_tokens } => {
                     let assistant = self.assistant_preview.trim().to_string();
                     if !assistant.is_empty() {
                         self.messages.push(super::Message {
@@ -188,7 +188,8 @@ impl SessionView {
                         self.persist_message("assistant", &assistant);
                         self.display.push(render::DisplayMessage::new("assistant", &assistant));
                     }
-                    self.cache_total = self.cache_total.saturating_add(1);
+                    self.cache_total = self.cache_total.saturating_add(prompt_tokens as usize);
+                    self.cache_hits = self.cache_hits.saturating_add(cache_hit_tokens as usize);
                     self.ai_running = false;
                     self.status = "Ready".to_string();
                     self.prompt_job = None;

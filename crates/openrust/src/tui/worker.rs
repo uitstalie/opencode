@@ -33,7 +33,7 @@ pub(super) enum PromptEvent {
         tool_calls: Vec<serde_json::Value>,
         results: Vec<ToolBatchItem>,
     },
-    Finish,
+    Finish { prompt_tokens: u64, cache_hit_tokens: u64 },
     Error(String),
 }
 
@@ -146,6 +146,8 @@ pub(super) fn spawn_prompt_worker(
 
             let mut step_count: u32 = 0;
             let mut current_total_tokens: u64 = 0;
+            let mut total_prompt_tokens: u64 = 0;
+            let mut total_cache_hit_tokens: u64 = 0;
             let compaction_settings = compaction::CompactionSettings::default();
 
             loop {
@@ -308,8 +310,10 @@ pub(super) fn spawn_prompt_worker(
                         }
                         StreamChunk::Finish { usage } => {
                             finish_seen = true;
-                            if let Some(u) = usage {
+                            if let Some(u) = &usage {
                                 current_total_tokens = u.total_tokens;
+                                total_prompt_tokens = total_prompt_tokens.saturating_add(u.prompt_tokens);
+                                total_cache_hit_tokens = total_cache_hit_tokens.saturating_add(u.prompt_cache_hit_tokens);
                             }
                         }
                     }
@@ -384,12 +388,18 @@ pub(super) fn spawn_prompt_worker(
                 }
 
                 if is_last_step {
-                    let _ = tx.send(PromptEvent::Finish);
+                    let _ = tx.send(PromptEvent::Finish {
+                        prompt_tokens: total_prompt_tokens,
+                        cache_hit_tokens: total_cache_hit_tokens,
+                    });
                     return Ok(());
                 }
 
                 if pending_tools.is_empty() && finish_seen {
-                    let _ = tx.send(PromptEvent::Finish);
+                    let _ = tx.send(PromptEvent::Finish {
+                        prompt_tokens: total_prompt_tokens,
+                        cache_hit_tokens: total_cache_hit_tokens,
+                    });
                     return Ok(());
                 }
 

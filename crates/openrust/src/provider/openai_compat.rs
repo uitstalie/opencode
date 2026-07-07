@@ -204,10 +204,22 @@ impl LlmProvider for OpenAICompatProvider {
 
                         // Finish reason
                         if choice["finish_reason"].as_str().is_some() {
-                            let usage = parsed["usage"].as_object().map(|u| Usage {
-                                prompt_tokens: u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                                completion_tokens: u.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                                total_tokens: u.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                            let usage = parsed["usage"].as_object().map(|u| {
+                                let cache_hit = u
+                                    .get("prompt_cache_hit_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or_else(|| {
+                                        u.get("prompt_tokens_details")
+                                            .and_then(|d| d.get("cached_tokens"))
+                                            .and_then(|v| v.as_u64())
+                                            .unwrap_or(0)
+                                    });
+                                Usage {
+                                    prompt_tokens: u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                                    completion_tokens: u.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                                    total_tokens: u.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                                    prompt_cache_hit_tokens: cache_hit,
+                                }
                             });
                             if let Some(prev_id) = tool_call_id.take() {
                                 yield Ok(StreamChunk::ToolCallEnd {
