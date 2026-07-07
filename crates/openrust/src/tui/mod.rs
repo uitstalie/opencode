@@ -16,14 +16,13 @@ use crossterm::{
     execute,
     terminal,
 };
-use ratatui::{Terminal, backend::CrosstermBackend, style::Modifier, text::{Line, Span}};
+use ratatui::{Terminal, backend::CrosstermBackend};
 use tui_textarea::TextArea;
 
 use crate::core::{
     config::Config,
     provider::{self, Message, MessageContent},
     session::SessionStore,
-    token,
 };
 
 mod dialog;
@@ -37,6 +36,7 @@ mod markdown;
 mod render;
 mod interaction;
 mod pending;
+mod persist;
 mod prompt_flow;
 mod provider_ops;
 mod session_ops;
@@ -44,6 +44,7 @@ mod session_render;
 mod sidebar;
 mod types;
 mod util;
+mod widgets;
 mod worker;
 
 pub(in crate::tui) use types::*;
@@ -529,99 +530,6 @@ impl SessionView {
         }
     }
 
-    /// Capture the last edit/write as a diff for the `/diff` viewer.
-    fn capture_diff(&mut self, name: &str, args: &str) {
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(args) else {
-            return;
-        };
-        let path = value
-            .get("filePath")
-            .or_else(|| value.get("path"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        match name {
-            "edit" => {
-                let before = value
-                    .get("oldString")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let after = value
-                    .get("newString")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                self.last_diff = Some((format!("edit {}", path), before, after));
-            }
-            "write" => {
-                let after = value
-                    .get("content")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                self.last_diff = Some((format!("write {}", path), String::new(), after));
-            }
-            _ => {}
-        }
-    }
-
-    fn persist_message(&self, role: &str, content: &str) {
-        if let Some(store) = &self.store {
-            if let Err(e) = store.append_message_detail(&self.session_id, role, content, None, None, None) {
-                tracing::error!(err = %e, "persist_message failed");
-            }
-        } else {
-            tracing::warn!("persist_message skipped: store is None");
-        }
-    }
-
-    fn persist_message_detail(
-        &self,
-        role: &str,
-        content: &str,
-        name: Option<String>,
-        tool_call_id: Option<String>,
-        tool_calls: Option<serde_json::Value>,
-    ) {
-        if let Some(store) = &self.store {
-            if let Err(e) = store.append_message_detail(
-                &self.session_id, role, content, name, tool_call_id, tool_calls,
-            ) {
-                tracing::error!(err = %e, "persist_message_detail failed");
-            }
-        } else {
-            tracing::warn!("persist_message_detail skipped: store is None");
-        }
-    }
-
-    fn tool_display_preview(name: &str, args: &str, result: &str) -> String {
-        let args_val = serde_json::from_str::<serde_json::Value>(args).ok();
-        let path = args_val
-            .as_ref()
-            .and_then(|v| {
-                v.get("path")
-                    .or_else(|| v.get("file_path"))
-                    .or_else(|| v.get("filePath"))
-                    .or_else(|| v.get("url"))
-                    .or_else(|| v.get("pattern"))
-                    .or_else(|| v.get("query"))
-                    .or_else(|| v.get("message"))
-                    .and_then(|v| v.as_str())
-            });
-        if let Some(p) = path {
-            if name == "read" {
-                if let Some((start, end)) = read_line_span(result) {
-                    return format!("read {} L{}-{}", p, start, end);
-                }
-            }
-            return format!("{} {}", name, p);
-        }
-        let preview = result.lines().next().unwrap_or("");
-        let preview = &preview[..preview.len().min(60)];
-        format!("{}: {}", name, preview)
-    }
-
     fn note(&mut self, message: String) {
         self.status = message.lines().next().unwrap_or("Ready").to_string();
         self.ui.toast = Some(message);
@@ -819,101 +727,6 @@ impl SessionView {
             KeyCode::Esc => Ok(false),
             _ => Ok(false),
         }
-    }
-
-    fn home_provider_ready(&self) -> bool {
-        self.config
-            .get_provider(&self.provider_name)
-            .and_then(|provider| provider.api_key)
-            .is_some()
-    }
-
-    fn home_status_message(&self) -> &'static str {
-        if self.config.provider.is_empty() {
-            return "Setup required: no provider configured. Type /connect to add one.";
-        }
-        if self.config.model.is_none() {
-            return "Setup required: no model selected. Type /models to choose one.";
-        }
-        if !self.home_provider_ready() {
-            return "Setup required: API key missing. Type /connect to configure it.";
-        }
-        "Home: type a prompt and press Enter. Esc exits."
-    }
-
-    fn status_line(&self) -> Line<'static> {
-        let running = if self.ai_running {
-            "AI: running"
-        } else {
-            "AI: idle"
-        };
-        let cache_rate = if self.cache.prompt_count <= 1 {
-            if self.cache.prompt_count == 0 {
-                "cache: n/a".to_string()
-            } else {
-                "cache: priming".to_string()
-            }
-        } else {
-            match self.cache.rate() {
-                Some(pct) => format!("cache: {pct}%"),
-                None => "cache: n/a".to_string(),
-            }
-        };
-        let used = token::estimate_messages(&self.messages);
-        let window = self.current_context_window();
-        let context = format!(
-            "context: {} / {} tokens ({:.0}%)",
-            used,
-            window,
-            used as f64 / window as f64 * 100.0
-        );
-        let task_count = self
-            .store
-            .as_ref()
-            .and_then(|store| store.list_tasks(&self.session_id).ok())
-            .map(|tasks| format!("tasks: {}", tasks.len()))
-            .unwrap_or_else(|| "tasks: n/a".to_string());
-        Line::from(vec![
-            Span::styled(
-                "OpenRust",
-                self.theme.brand_style().add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("  "),
-            Span::raw(format!("model: {}/{}", self.provider_name, self.model)),
-            Span::raw("  |  "),
-            Span::raw(format!(
-                "agent: {}",
-                self.current_session_agent().as_deref().unwrap_or("default")
-            )),
-            Span::raw("  |  "),
-            Span::raw(task_count),
-            Span::raw("  |  "),
-            Span::raw(context),
-            Span::raw("  |  "),
-            Span::raw(cache_rate),
-            Span::raw("  |  "),
-            Span::raw(format!("thinking: {}", self.thinking_mode.label())),
-            Span::raw("  |  "),
-            Span::styled(running, self.theme.running_style(self.ai_running)),
-            Span::raw("  |  "),
-            Span::raw(self.status.clone()),
-        ])
-    }
-
-    fn default_status_message(&self) -> String {
-        if self.ui.pending_permission.is_some()
-            || self.ui.pending_question.is_some()
-            || self.ui.pending_text_input.is_some()
-            || self.ui.dialog.is_some()
-            || self.ai_running
-            || self.prompt_job.is_some()
-        {
-            return self.status.clone();
-        }
-        if self.view_mode == ViewMode::Home {
-            return self.home_status_message().to_string();
-        }
-        "Enter 发送 · /exit /q /quit 退出".to_string()
     }
 }
 
