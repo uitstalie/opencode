@@ -247,13 +247,25 @@ pub fn resolve_path(ctx: &ToolContext, path: &str) -> PathBuf {
 use crate::core::permission::Decision;
 
 /// Check if a tool is allowed. Delegates to the core permission policy.
-/// For multi-path tools (apply_patch, bash), checks every target — the first
-/// out-of-scope path triggers Ask/Deny.
+/// For bash, routes through `evaluate_bash` (dangerous check + scope).
+/// For multi-path tools (apply_patch), checks every target.
 pub fn check_permission(
     tool_name: &str,
     params: &serde_json::Value,
     ctx: &ToolContext,
 ) -> Decision {
+    // bash: dedicated flow — dangerous command check + path scope check
+    if tool_name == "bash" {
+        if let Some(cmd) = params["command"].as_str() {
+            return crate::core::permission::evaluate_bash(
+                cmd,
+                ctx.project_root(),
+                ctx.interactive,
+            );
+        }
+    }
+
+    // Other tools: extract paths and scope-check each
     let targets = crate::core::permission::target_paths(params);
     for target in &targets {
         match crate::core::permission::evaluate(

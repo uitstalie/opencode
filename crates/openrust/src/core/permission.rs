@@ -1,9 +1,10 @@
 //! Permission evaluation — project-scope enforcement with `$PROJECT` expansion.
 //!
-//! Config-driven allow/deny rules are not yet part of the schema, so this module
-//! centralizes the project-boundary policy: tools that can write, delete, or
-//! execute outside the project must stay within the project root unless the user
-//! confirms interactively.
+//! Two-tier bash permission model:
+//! - **Dangerous** commands (dd, mkfs, shutdown, …) always require explicit
+//!   `Ask` per invocation. No config override possible.
+//! - **Normal** commands go through scope-based path evaluation. Future config
+//!   rules will add allow/deny/ask for specific command patterns.
 
 use std::path::Path;
 
@@ -17,6 +18,78 @@ pub enum Decision {
 /// Tools that can mutate the filesystem or run commands outside the project.
 pub fn is_scope_restricted(tool: &str) -> bool {
     matches!(tool, "rm" | "write" | "edit" | "bash" | "apply_patch" | "undo_edit")
+}
+
+/// Commands that are inherently destructive — ALWAYS require `Ask`, even in
+/// interactive mode, even if a future config rule tries to allow them.
+///
+/// These are commands where the action itself is dangerous regardless of
+/// arguments (disk wipe, system power, firewall rules, etc.).
+const DANGEROUS_COMMANDS: &[&str] = &[
+    // System power / control
+    "shutdown", "reboot", "halt", "poweroff", "init", "telinit",
+    // Disk / partition destruction
+    "dd", "mkfs", "fdisk", "parted", "format",
+    // Bootloader
+    "grub-install", "update-grub",
+    // Firewall / network security
+    "iptables", "ip6tables", "ufw", "firewall-cmd", "nft",
+    // System service control (can stop critical services)
+    "systemctl", "service",
+    // User / privilege escalation
+    "useradd", "userdel", "usermod", "passwd", "chage",
+    "visudo", "sudoedit",
+];
+
+/// Check if a bash command starts with a dangerous command (after sudo strip).
+fn is_dangerous_command(command: &str) -> bool {
+    let tokens = tokenize_command(command);
+    let mut i = 0;
+    // Skip sudo / env assignments
+    while i < tokens.len() && (tokens[i] == "sudo" || tokens[i].contains('=')) {
+        i += 1;
+    }
+    if i >= tokens.len() {
+        return false;
+    }
+    let cmd = &tokens[i];
+    let cmd_lower = cmd.to_ascii_lowercase();
+    // Exact match (case-insensitive)
+    if DANGEROUS_COMMANDS.iter().any(|c| c.eq_ignore_ascii_case(cmd)) {
+        return true;
+    }
+    // mkfs.* family (mkfs.ext4, mkfs.ntfs, mkfs.vfat, …)
+    if cmd_lower.starts_with("mkfs.") {
+        return true;
+    }
+    false
+}
+
+/// Evaluate a bash command for permission.
+///
+/// Flow:
+/// 1. Dangerous command → always `Ask` (interactive) or `Deny` (non-interactive)
+/// 2. Extracted paths out of project scope → `Ask` / `Deny`
+/// 3. Everything else → `Allow`
+pub fn evaluate_bash(command: &str, project_root: &Path, interactive: bool) -> Decision {
+    if is_dangerous_command(command) {
+        return if interactive {
+            Decision::Ask(format!("dangerous command: {}", command))
+        } else {
+            Decision::Deny(format!(
+                "dangerous command denied (non-interactive): {}",
+                command
+            ))
+        };
+    }
+    // Scope-check extracted file paths
+    for path in extract_command_paths(command) {
+        match evaluate("bash", &path, project_root, interactive) {
+            Decision::Allow => continue,
+            other => return other,
+        }
+    }
+    Decision::Allow
 }
 
 /// Expand a leading `$PROJECT` / `${PROJECT}` token to the project root.
@@ -369,5 +442,93 @@ mod tests {
         let params = serde_json::json!({"command": "cargo test"});
         let paths = target_paths(&params);
         assert!(paths.is_empty());
+    }
+
+    // ── dangerous command detection ──────────────────
+
+    #[test]
+    fn dangerous_dd_always_asks() {
+        assert!(matches!(
+            evaluate_bash("dd if=/dev/zero of=/dev/sda", &root(), true),
+            Decision::Ask(_)
+        ));
+    }
+
+    #[test]
+    fn dangerous_dd_denies_non_interactive() {
+        assert!(matches!(
+            evaluate_bash("dd if=/dev/zero of=/dev/sda", &root(), false),
+            Decision::Deny(_)
+        ));
+    }
+
+    #[test]
+    fn dangerous_shutdown_asks() {
+        assert!(matches!(
+            evaluate_bash("shutdown -h now", &root(), true),
+            Decision::Ask(_)
+        ));
+    }
+
+    #[test]
+    fn dangerous_mkfs_family_asks() {
+        assert!(matches!(
+            evaluate_bash("mkfs.ext4 /dev/sda1", &root(), true),
+            Decision::Ask(_)
+        ));
+    }
+
+    #[test]
+    fn dangerous_sudo_prefix_still_dangerous() {
+        assert!(matches!(
+            evaluate_bash("sudo reboot", &root(), true),
+            Decision::Ask(_)
+        ));
+    }
+
+    #[test]
+    fn dangerous_iptables_asks() {
+        assert!(matches!(
+            evaluate_bash("iptables -F", &root(), true),
+            Decision::Ask(_)
+        ));
+    }
+
+    #[test]
+    fn normal_command_allowed_in_project() {
+        // cargo build — no dangerous command, no paths → Allow
+        assert_eq!(
+            evaluate_bash("cargo build --release", &root(), true),
+            Decision::Allow
+        );
+    }
+
+    #[test]
+    fn normal_rm_in_project_allowed() {
+        // rm of a project file — not dangerous, path in project → Allow
+        assert_eq!(
+            evaluate_bash("rm target/debug/test", &root(), true),
+            Decision::Allow
+        );
+    }
+
+    #[test]
+    fn normal_rm_outside_project_asks() {
+        assert!(matches!(
+            evaluate_bash("rm /tmp/external_file", &root(), true),
+            Decision::Ask(_)
+        ));
+    }
+
+    #[test]
+    fn is_dangerous_detects_systemctl() {
+        assert!(is_dangerous_command("systemctl stop nginx"));
+    }
+
+    #[test]
+    fn is_dangerous_not_triggered_by_normal_commands() {
+        assert!(!is_dangerous_command("git commit -m msg"));
+        assert!(!is_dangerous_command("cargo test"));
+        assert!(!is_dangerous_command("rm -rf target/"));
     }
 }
