@@ -10,7 +10,9 @@ pub struct SystemPrompt {
     pub home: String,
     pub platform: String,
     pub config_path: String,
+    pub global_rules: String,
     pub agents_md: String,
+    pub project_rules: String,
 }
 
 impl SystemPrompt {
@@ -27,7 +29,12 @@ impl SystemPrompt {
         sections.push(render_section("environment", &render_environment(self)));
         sections.push(render_section(
             "instructions",
-            &render_instructions(&self.config_path, &self.agents_md),
+            &render_instructions(
+                &self.config_path,
+                &self.global_rules,
+                &self.agents_md,
+                &self.project_rules,
+            ),
         ));
         sections.push(render_section(
             "capabilities",
@@ -65,7 +72,9 @@ impl SystemPrompt {
             home,
             platform,
             config_path: Config::global_config_path().display().to_string(),
+            global_rules: load_global_rules(),
             agents_md: load_agents_md(&std::env::current_dir().unwrap_or_default()),
+            project_rules: load_project_rules(&std::env::current_dir().unwrap_or_default()),
         })
     }
 }
@@ -106,8 +115,19 @@ fn render_environment(prompt: &SystemPrompt) -> String {
     .join("\n")
 }
 
-fn render_instructions(path: &str, agents_md: &str) -> String {
+fn render_instructions(
+    path: &str,
+    global_rules: &str,
+    agents_md: &str,
+    project_rules: &str,
+) -> String {
     let mut parts = vec![format!("<!-- source: {} -->", path)];
+
+    if !global_rules.trim().is_empty() {
+        parts.push("<global-rules>".to_string());
+        parts.push(global_rules.trim().to_string());
+        parts.push("</global-rules>".to_string());
+    }
 
     if !agents_md.trim().is_empty() {
         parts.push("<project-instructions>".to_string());
@@ -115,13 +135,32 @@ fn render_instructions(path: &str, agents_md: &str) -> String {
         parts.push("</project-instructions>".to_string());
     }
 
+    if !project_rules.trim().is_empty() {
+        parts.push("<project-rules>".to_string());
+        parts.push(project_rules.trim().to_string());
+        parts.push("</project-rules>".to_string());
+    }
+
     parts.join("\n\n")
 }
 
 /// Load AGENTS.md from the project root.
-/// Returns empty string if not found.
 fn load_agents_md(cwd: &std::path::Path) -> String {
     let path = cwd.join("AGENTS.md");
+    std::fs::read_to_string(&path).unwrap_or_default()
+}
+
+/// Load global rules from `~/.config/openrust/rules.md`.
+fn load_global_rules() -> String {
+    let path = crate::core::platform::PlatformPaths::detect()
+        .config_dir()
+        .join("rules.md");
+    std::fs::read_to_string(&path).unwrap_or_default()
+}
+
+/// Load project rules from `.openrust/rules.md`.
+fn load_project_rules(cwd: &std::path::Path) -> String {
+    let path = cwd.join(".openrust").join("rules.md");
     std::fs::read_to_string(&path).unwrap_or_default()
 }
 
@@ -205,7 +244,9 @@ mod tests {
             home: "/home/test".to_string(),
             platform: "linux-x86_64".to_string(),
             config_path: "/home/test/.config/openrust/config.json".to_string(),
+            global_rules: String::new(),
             agents_md: String::new(),
+            project_rules: String::new(),
         }
         .render();
 
@@ -272,20 +313,65 @@ mod tests {
     }
 
     #[test]
-    fn instructions_empty_when_no_agents_md() {
-        let rendered = render_instructions("/path/to/config.json", "");
+    fn instructions_empty_when_no_content() {
+        let rendered = render_instructions("/path/to/config.json", "", "", "");
         assert!(rendered.contains("source:"));
+        assert!(!rendered.contains("<global-rules>"));
         assert!(!rendered.contains("<project-instructions>"));
+        assert!(!rendered.contains("<project-rules>"));
     }
 
     #[test]
     fn instructions_includes_agents_md() {
         let rendered = render_instructions(
             "/path/to/config.json",
+            "",
             "# My Project\nBuild with cargo.\n",
+            "",
         );
         assert!(rendered.contains("<project-instructions>"));
         assert!(rendered.contains("Build with cargo."));
         assert!(rendered.contains("</project-instructions>"));
+    }
+
+    #[test]
+    fn instructions_includes_global_rules() {
+        let rendered = render_instructions(
+            "/path/to/config.json",
+            "Always use tabs.\nNever commit secrets.",
+            "",
+            "",
+        );
+        assert!(rendered.contains("<global-rules>"));
+        assert!(rendered.contains("Always use tabs."));
+        assert!(rendered.contains("</global-rules>"));
+    }
+
+    #[test]
+    fn instructions_includes_project_rules() {
+        let rendered = render_instructions(
+            "/path/to/config.json",
+            "",
+            "",
+            "Use 4-space indent.\nPrefer iterators.",
+        );
+        assert!(rendered.contains("<project-rules>"));
+        assert!(rendered.contains("Use 4-space indent."));
+        assert!(rendered.contains("</project-rules>"));
+    }
+
+    #[test]
+    fn instructions_layers_in_priority_order() {
+        let rendered = render_instructions(
+            "/path/to/config.json",
+            "global rule",
+            "agents md",
+            "project rule",
+        );
+        let global_pos = rendered.find("<global-rules>").unwrap();
+        let agents_pos = rendered.find("<project-instructions>").unwrap();
+        let project_pos = rendered.find("<project-rules>").unwrap();
+        assert!(global_pos < agents_pos);
+        assert!(agents_pos < project_pos);
     }
 }

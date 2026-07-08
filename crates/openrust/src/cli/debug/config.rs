@@ -189,13 +189,21 @@ fn show_paths() {
 fn render_paths(
     cwd: &std::path::Path,
     paths: &crate::core::platform::PlatformPaths,
-) -> [String; 5] {
+) -> [String; 7] {
     [
         format!(
             "Project config:  {}",
             cwd.join(".openrust").join("config.jsonc").display()
         ),
         format!("Global config:   {}", paths.global_config_path().display()),
+        format!(
+            "Global rules:    {}",
+            paths.config_dir().join("rules.md").display()
+        ),
+        format!(
+            "Project rules:   {}",
+            cwd.join(".openrust").join("rules.md").display()
+        ),
         format!("Vault (enc):     {}", paths.credentials_path().display()),
         format!("Undo store:      {}", paths.undo_dir().display()),
         format!("Sessions DB:     {}", paths.sessions_db_path().display()),
@@ -228,10 +236,12 @@ mod tests {
 
         assert!(lines[0].contains("Project config:") && lines[0].ends_with("config.jsonc"));
         assert!(lines[1].contains("Global config:") && lines[1].ends_with("config.json"));
+        assert!(lines[2].contains("Global rules:") && lines[2].ends_with("rules.md"));
+        assert!(lines[3].contains("Project rules:") && lines[3].ends_with("rules.md"));
         assert!(
-            lines[2].contains("Vault (enc):") && lines[2].ends_with("credentials.enc")
+            lines[4].contains("Vault (enc):") && lines[4].ends_with("credentials.enc")
         );
-        assert!(lines[3].contains("Undo store:") && lines[3].ends_with("undo"));
-        assert!(lines[4].contains("Sessions DB:") && lines[4].ends_with("sessions.db"));
+        assert!(lines[5].contains("Undo store:") && lines[5].ends_with("undo"));
+        assert!(lines[6].contains("Sessions DB:") && lines[6].ends_with("sessions.db"));
     }
 }
