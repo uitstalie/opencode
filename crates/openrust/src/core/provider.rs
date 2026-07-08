@@ -32,7 +32,25 @@ impl MessageContent {
     pub fn as_text(&self) -> &str {
         match self {
             Self::Text(t) => t.as_str(),
-            Self::Parts(_) => "",
+            Self::Parts(parts) => {
+                // No stable way to return &str from owned concatenation;
+                // callers that need the full text should use to_text_lossy().
+                parts
+                    .iter()
+                    .find_map(|p| p.text.as_deref())
+                    .unwrap_or("")
+            }
+        }
+    }
+
+    pub fn to_text_lossy(&self) -> String {
+        match self {
+            Self::Text(t) => t.clone(),
+            Self::Parts(parts) => parts
+                .iter()
+                .filter_map(|p| p.text.as_deref())
+                .collect::<Vec<_>>()
+                .join(""),
         }
     }
 }
@@ -79,7 +97,7 @@ impl ContentPart {
         Self {
             kind: "image_url".to_string(),
             text: None,
-            image_url: Some(ImageUrl { url: url.into() }),
+            image_url: Some(ImageUrl { url: url.into(), detail: None }),
         }
     }
 }
@@ -87,6 +105,8 @@ impl ContentPart {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageUrl {
     pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 /// A chat message
@@ -182,7 +202,7 @@ pub enum StreamChunk {
     ToolCallStart { id: String, name: String },
     ToolCallDelta { id: String, args: String },
     ToolCallEnd { id: String },
-    Finish { usage: Option<Usage> },
+    Finish { usage: Option<Usage>, reason: Option<String> },
 }
 
 #[derive(Debug, Clone, Default)]
@@ -191,16 +211,18 @@ pub struct Usage {
     pub completion_tokens: u64,
     pub total_tokens: u64,
     pub prompt_cache_hit_tokens: u64,
+    pub reasoning_tokens: u64,
 }
 
 #[derive(Debug, Clone)]
 pub struct RequestOptions {
     pub model: String,
     pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
     pub max_tokens: Option<u32>,
     pub system: Option<String>,
     pub reasoning_effort: Option<String>,
-    pub tool_choice: Option<String>,
+    pub tool_choice: Option<serde_json::Value>,
 }
 
 impl RequestOptions {
@@ -208,6 +230,7 @@ impl RequestOptions {
         Self {
             model: model.to_string(),
             temperature: None,
+            top_p: None,
             max_tokens: None,
             system: None,
             reasoning_effort: None,

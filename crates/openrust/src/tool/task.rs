@@ -143,6 +143,7 @@ pub async fn run_agent(
                     model: model.to_string(),
                     temperature: None,
                     max_tokens: None,
+                    top_p: None,
                     system: Some(system.to_string()),
                     reasoning_effort: reasoning_effort.map(str::to_string),
                     tool_choice: None,
@@ -267,7 +268,7 @@ mod tests {
                 } else {
                     "permission result missing".to_string()
                 })),
-                Ok(StreamChunk::Finish { usage: None }),
+                Ok(StreamChunk::Finish { usage: None, reason: None }),
             ])))
         }
 

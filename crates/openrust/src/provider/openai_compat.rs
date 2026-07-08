@@ -25,11 +25,16 @@ pub struct OpenAICompatProvider {
 
 impl OpenAICompatProvider {
     pub fn new(name: String, api_key: String, base_url: String, models: Vec<String>) -> Self {
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_secs(300))
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .build()
+            .unwrap_or_else(|_| Client::new());
         Self {
             name,
             api_key,
             base_url: base_url.trim_end_matches('/').to_string(),
-            client: Client::new(),
+            client,
             models,
         }
     }
@@ -60,13 +65,14 @@ impl LlmProvider for OpenAICompatProvider {
                 }
                 if let Some(tool_calls) = &m.tool_calls {
                     message["tool_calls"] = serde_json::json!(tool_calls);
-                    if m.role == "assistant" && m.content.as_text().is_empty() {
+                    if m.role == "assistant" && m.content.to_text_lossy().is_empty() {
                         message["content"] = serde_json::Value::Null;
                     }
                 }
                 message
             }).collect::<Vec<_>>(),
             "stream": true,
+            "stream_options": serde_json::json!({ "include_usage": true }),
         });
 
         if !tools.is_empty() {
@@ -76,22 +82,38 @@ impl LlmProvider for OpenAICompatProvider {
         if let Some(temp) = options.temperature {
             body["temperature"] = serde_json::json!(temp);
         }
-        if let Some(max_tok) = options.max_tokens {
-            body["max_tokens"] = serde_json::json!(max_tok);
+        if let Some(top_p) = options.top_p {
+            body["top_p"] = serde_json::json!(top_p);
         }
-        if let Some(effort) = options.reasoning_effort {
+        if let Some(max_tok) = options.max_tokens {
+            // o1/o3/gpt-4o families require max_completion_tokens (max_tokens → 400).
+            // Use max_completion_tokens when reasoning_effort is set, else max_tokens
+            // for backward compat with older API servers.
+            let key = if options.reasoning_effort.is_some() {
+                "max_completion_tokens"
+            } else {
+                "max_tokens"
+            };
+            body[key] = serde_json::json!(max_tok);
+        }
+        if let Some(ref effort) = options.reasoning_effort {
             body["reasoning_effort"] = serde_json::json!(effort);
         }
         if let Some(ref tc) = options.tool_choice {
-            body["tool_choice"] = serde_json::json!(tc);
+            body["tool_choice"] = tc.clone();
         }
         if let Some(ref system) = options.system {
-            // Insert system message at the beginning
             if let Some(arr) = body["messages"].as_array_mut() {
+                // o1-preview/o1-mini reject "system" role, require "developer".
+                let role = if options.reasoning_effort.is_some() {
+                    "developer"
+                } else {
+                    "system"
+                };
                 arr.insert(
                     0,
                     serde_json::json!({
-                        "role": "system",
+                        "role": role,
                         "content": system,
                     }),
                 );
@@ -121,11 +143,12 @@ impl LlmProvider for OpenAICompatProvider {
 
         let chunk_stream = async_stream::stream! {
             // Tracks active tool calls by (streaming index, call id).
-            // OpenAI interleaves parallel tool calls using an `index` field
-            // on each delta — args for different calls arrive in the same
-            // SSE chunk, so we route by index, not a single pointer.
             let mut call_ids: Vec<(usize, String)> = Vec::new();
+            // Args received before the id-bearing delta for an index —
+            // flushed once the id arrives (some providers send args first).
+            let mut pending_args: Vec<(usize, String)> = Vec::new();
             let mut buffer = String::new();
+            let mut finish_emitted = false;
 
             for await chunk in stream {
                 let chunk = match chunk {
@@ -144,9 +167,9 @@ impl LlmProvider for OpenAICompatProvider {
                     buffer = buffer[pos + 1..].to_string();
 
                     if line.is_empty() || line.starts_with(':') { continue; }
-                    if !line.starts_with("data: ") { continue; }
-
-                    let data = &line[6..];
+                    // SSE spec: data: optionally followed by a single space.
+                    let Some(data) = line.strip_prefix("data:") else { continue; };
+                    let data = data.strip_prefix(' ').unwrap_or(data);
                     if data == "[DONE]" {
                         for (_, id) in &call_ids {
                             yield Ok(StreamChunk::ToolCallEnd {
@@ -154,7 +177,9 @@ impl LlmProvider for OpenAICompatProvider {
                             });
                         }
                         call_ids.clear();
-                        yield Ok(StreamChunk::Finish { usage: None });
+                        if !finish_emitted {
+                            yield Ok(StreamChunk::Finish { usage: None, reason: None });
+                        }
                         break;
                     }
 
@@ -187,6 +212,19 @@ impl LlmProvider for OpenAICompatProvider {
                                         id: id.clone(),
                                         name: fn_name,
                                     });
+                                    // Flush any args that arrived before the id.
+                                    let flush: Vec<String> = pending_args
+                                        .iter()
+                                        .filter(|(idx, _)| *idx == index)
+                                        .map(|(_, a)| a.clone())
+                                        .collect();
+                                    pending_args.retain(|(idx, _)| *idx != index);
+                                    for a in flush {
+                                        yield Ok(StreamChunk::ToolCallDelta {
+                                            id: id.clone(),
+                                            args: a,
+                                        });
+                                    }
                                 }
 
                                 if !args.is_empty() {
@@ -194,12 +232,14 @@ impl LlmProvider for OpenAICompatProvider {
                                         .iter()
                                         .rev()
                                         .find(|(idx, _)| *idx == index)
-                                        .map(|(_, id)| id.clone())
-                                        .unwrap_or_default();
-                                    yield Ok(StreamChunk::ToolCallDelta {
-                                        id: routed_id,
-                                        args: args.to_string(),
-                                    });
+                                        .map(|(_, id)| id.clone());
+                                    match routed_id {
+                                        Some(rid) => yield Ok(StreamChunk::ToolCallDelta {
+                                            id: rid,
+                                            args: args.to_string(),
+                                        }),
+                                        None => pending_args.push((index, args.to_string())),
+                                    }
                                 }
                             }
                         }
@@ -211,15 +251,17 @@ impl LlmProvider for OpenAICompatProvider {
                             }
                         }
 
-                        // Reasoning content
-                        if let Some(reasoning) = delta["reasoning_content"].as_str() {
-                            if !reasoning.is_empty() {
-                                yield Ok(StreamChunk::ReasoningDelta(reasoning.to_string()));
+                        // Reasoning content (DeepSeek uses reasoning_content, o1 uses reasoning)
+                        for key in &["reasoning_content", "reasoning"] {
+                            if let Some(reasoning) = delta[key].as_str() {
+                                if !reasoning.is_empty() {
+                                    yield Ok(StreamChunk::ReasoningDelta(reasoning.to_string()));
+                                }
                             }
                         }
 
                         // Finish reason
-                        if choice["finish_reason"].as_str().is_some() {
+                        if let Some(reason) = choice["finish_reason"].as_str() {
                             let usage = parsed["usage"].as_object().map(|u| {
                                 let cache_hit = u
                                     .get("prompt_cache_hit_tokens")
@@ -230,11 +272,17 @@ impl LlmProvider for OpenAICompatProvider {
                                             .and_then(|v| v.as_u64())
                                             .unwrap_or(0)
                                     });
+                                let reasoning = u
+                                    .get("completion_tokens_details")
+                                    .and_then(|d| d.get("reasoning_tokens"))
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
                                 Usage {
                                     prompt_tokens: u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
                                     completion_tokens: u.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
                                     total_tokens: u.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
                                     prompt_cache_hit_tokens: cache_hit,
+                                    reasoning_tokens: reasoning,
                                 }
                             });
                             for (_, id) in &call_ids {
@@ -243,7 +291,11 @@ impl LlmProvider for OpenAICompatProvider {
                                 });
                             }
                             call_ids.clear();
-                            yield Ok(StreamChunk::Finish { usage });
+                            finish_emitted = true;
+                            yield Ok(StreamChunk::Finish {
+                                usage,
+                                reason: Some(reason.to_string()),
+                            });
                         }
                     }
                 }
@@ -314,9 +366,23 @@ where
                 if status.is_success() {
                     return Ok(response);
                 }
-                if attempt < max_retries && (status.as_u16() == 429 || status.as_u16() >= 500) {
+                let should_retry = status.as_u16() == 429
+                    || status.as_u16() == 408
+                    || status.as_u16() >= 500;
+                if attempt < max_retries && should_retry {
                     attempt += 1;
-                    let delay_ms = 1000u64 * 2u64.pow(attempt);
+                    // Respect Retry-After header (seconds), fall back to exponential backoff.
+                    let delay_ms = response
+                        .headers()
+                        .get("retry-after")
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|s| s.parse::<u64>().ok())
+                        .map(|secs| secs * 1000)
+                        .unwrap_or_else(|| {
+                            let base = 1000u64 * 2u64.pow(attempt);
+                            let jitter = (rand_seed() % 300).max(50);
+                            base + jitter
+                        });
                     tracing::warn!(
                         "Provider returned {}, retrying in {}ms (attempt {}/{})",
                         status,
@@ -331,9 +397,11 @@ where
                 return Err(anyhow::anyhow!("HTTP {}: {}", status, text));
             }
             Err(e) => {
-                if attempt < max_retries && e.is_connect() || e.is_timeout() {
+                if attempt < max_retries && (e.is_connect() || e.is_timeout()) {
                     attempt += 1;
-                    let delay_ms = 1000u64 * 2u64.pow(attempt);
+                    let base = 1000u64 * 2u64.pow(attempt);
+                    let jitter = (rand_seed() % 300).max(50);
+                    let delay_ms = base + jitter;
                     tracing::warn!(
                         "Connection error, retrying in {}ms (attempt {}/{}): {}",
                         delay_ms,
@@ -348,4 +416,11 @@ where
             }
         }
     }
+}
+
+fn rand_seed() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos() as u64
 }

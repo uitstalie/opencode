@@ -214,14 +214,13 @@ pub(super) fn spawn_prompt_worker(
                                     recent.join("\n"),
                                 );
                             }
+                            let summary_text = summary.trim().to_string();
                             history.drain(..compact_cutoff);
                             history.insert(
                                 0,
                                 provider::Message {
                                     role: "system".to_string(),
-                                    content: provider::MessageContent::text(
-                                        "[compaction checkpoint]",
-                                    ),
+                                    content: provider::MessageContent::text(summary_text),
                                     name: None,
                                     tool_call_id: None,
                                     tool_calls: None,
@@ -246,10 +245,11 @@ pub(super) fn spawn_prompt_worker(
                             model: model.clone(),
                             temperature: None,
                             max_tokens: None,
+                            top_p: None,
                             system: Some(system.clone()),
                             reasoning_effort: reasoning_effort.clone(),
                             tool_choice: if is_last_step {
-                                Some("none".to_string())
+                                Some(serde_json::json!("none"))
                             } else {
                                 None
                             },
@@ -315,7 +315,7 @@ pub(super) fn spawn_prompt_worker(
                             });
                             tool_outputs.push((call_id, name, args, tool_text, has_image, image_b64));
                         }
-                        StreamChunk::Finish { usage } => {
+                        StreamChunk::Finish { usage, .. } => {
                             finish_seen = true;
                             if let Some(u) = &usage {
                                 current_total_tokens = u.total_tokens;

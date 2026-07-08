@@ -72,6 +72,7 @@ impl SessionView {
                             model,
                             temperature: None,
                             max_tokens: Some(16),
+                            top_p: None,
                             system: None,
                             reasoning_effort: self.reasoning_effort.clone(),
                             tool_choice: None,

@@ -102,6 +102,7 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
                             model: model_id,
                             temperature: None,
                             max_tokens: None,
+                            top_p: None,
                             system: None,
                             reasoning_effort: None,
                             tool_choice: None,
@@ -127,7 +128,7 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
                             print!("{}", args);
                         }
                         crate::core::provider::StreamChunk::ToolCallEnd { .. } => {}
-                        crate::core::provider::StreamChunk::Finish { usage } => {
+                        crate::core::provider::StreamChunk::Finish { usage, .. } => {
                             if let Some(u) = usage {
                                 println!("\n──────────────────────────────────────────");
                                 println!(
