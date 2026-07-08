@@ -149,6 +149,7 @@ pub(super) fn spawn_prompt_worker(
             let mut current_total_tokens: u64 = 0;
             let mut total_prompt_tokens: u64 = 0;
             let mut total_cache_hit_tokens: u64 = 0;
+            let mut last_compaction_summary: Option<String> = None;
             let compaction_settings = compaction::CompactionSettings::default();
 
             loop {
@@ -186,7 +187,7 @@ pub(super) fn spawn_prompt_worker(
 
                     if !older.is_empty() {
                         let compact_prompt = compaction::build_compaction_prompt(
-                            None,
+                            last_compaction_summary.as_deref(),
                             &format!("Conversation history to compact:\n\n{}", older.join("\n")),
                         );
                         let sys = agent::builtin_agent_system("compaction")
@@ -215,6 +216,7 @@ pub(super) fn spawn_prompt_worker(
                                 );
                             }
                             let summary_text = summary.trim().to_string();
+                            last_compaction_summary = Some(summary_text.clone());
                             history.drain(..compact_cutoff);
                             history.insert(
                                 0,
@@ -389,20 +391,27 @@ pub(super) fn spawn_prompt_worker(
                             tool_calls: None,
                         });
                     }
-                    // Inject TODO state machine reminder so the LLM stays on track.
-                    if let (Some(store), Some(session_id)) =
-                        (store_clone.as_ref(), session_id_clone.as_ref())
-                    {
-                        if let Ok(tasks) = store.list_tasks(session_id) {
-                            let reminder = crate::tool::todowrite::todo_reminder(&tasks);
-                            if !reminder.is_empty() {
-                                history.push(provider::Message {
-                                    role: "system".to_string(),
-                                    content: provider::MessageContent::text(reminder),
-                                    name: None,
-                                    tool_call_id: None,
-                                    tool_calls: None,
-                                });
+                    // Inject TODO reminder only when the state changed
+                    // (todowrite was called in this batch).
+                    let todo_changed = tool_outputs
+                        .iter()
+                        .any(|(_, name, _, _, _, _)| name == "todowrite");
+                    if todo_changed {
+                        if let (Some(store), Some(session_id)) =
+                            (store_clone.as_ref(), session_id_clone.as_ref())
+                        {
+                            if let Ok(tasks) = store.list_tasks(session_id) {
+                                let reminder =
+                                    crate::tool::todowrite::todo_reminder(&tasks);
+                                if !reminder.is_empty() {
+                                    history.push(provider::Message {
+                                        role: "system".to_string(),
+                                        content: provider::MessageContent::text(reminder),
+                                        name: None,
+                                        tool_call_id: None,
+                                        tool_calls: None,
+                                    });
+                                }
                             }
                         }
                     }

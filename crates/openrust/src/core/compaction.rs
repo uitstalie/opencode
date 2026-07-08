@@ -200,18 +200,6 @@ pub fn trim_history(
     if keep_from > 0 {
         let trimmed = keep_from;
         messages.drain(..keep_from);
-        messages.insert(
-            0,
-            crate::core::provider::Message {
-                role: "system".to_string(),
-                content: crate::core::provider::MessageContent::text(
-                    &format!("[history trimmed: {trimmed} older messages removed to fit context window]"),
-                ),
-                name: None,
-                tool_call_id: None,
-                tool_calls: None,
-            },
-        );
         return trimmed;
     }
     0
