@@ -69,10 +69,12 @@ impl SessionView {
             .map(|index| (index + 1) % agents.len())
             .unwrap_or(0);
         let agent_id = Some(agents[next].id.clone());
+        let tools = agents[next].tools.clone();
         match store.set_session_agent(&self.session_id, agent_id.clone()) {
             Ok(()) => self.note(format!(
-                "agent: {}",
-                agent_id.as_deref().unwrap_or("default")
+                "agent: {} (tools: {})",
+                agent_id.as_deref().unwrap_or("default"),
+                tools
             )),
             Err(err) => self.note(format!("failed to set agent: {}", err)),
         }
@@ -96,14 +98,12 @@ impl SessionView {
     }
 
     pub(super) fn effective_system(&self) -> String {
-        let mode = self.current_agent_mode();
-        let mut system = self.system_prompt.render_with_mode(&mode);
-        if let Some(info) = self.current_agent_info() {
-            if !info.system.is_empty() {
+        let mut system = self.system_prompt.render();
+        if let Some(info) = self.current_agent_info()
+            && !info.system.is_empty() {
                 system.push_str("\n\n");
                 system.push_str(&info.system);
             }
-        }
         system
     }
 
@@ -150,9 +150,9 @@ impl SessionView {
         }
         self.reload_agents();
 
-        if let Some((provider_name, model)) = self.config.resolve_provider_model() {
-            if let Some(resolved) = self.config.get_provider(&provider_name) {
-                if let Ok(prompt) =
+        if let Some((provider_name, model)) = self.config.resolve_provider_model()
+            && let Some(resolved) = self.config.get_provider(&provider_name)
+                && let Ok(prompt) =
                     crate::system_prompt::SystemPrompt::from_config(&self.config, &resolved)
                 {
                     self.system_prompt = prompt;
@@ -162,8 +162,6 @@ impl SessionView {
                         self.llm = Some(Arc::from(new_llm));
                     }
                 }
-            }
-        }
 
         let agent_count = self.agents.len();
         self.note(format!("reloaded config, agents ({agent_count}), rules, skills"));
@@ -173,9 +171,9 @@ impl SessionView {
         self.current_agent_info().map_or(50, |a| a.max_steps)
     }
 
-    pub(super) fn current_agent_mode(&self) -> String {
+    pub(super) fn current_agent_tools(&self) -> String {
         self.current_agent_info()
-            .map_or("primary".to_string(), |a| a.mode.clone())
+            .map_or("all".to_string(), |a| a.tools.clone())
     }
 
     pub(super) fn current_context_window(&self) -> u64 {
@@ -262,7 +260,7 @@ impl SessionView {
                     llm_clone.as_ref(),
                     &model,
                     &system,
-                    "subagent",
+                    "none",
                     5,
                     None,
                     vec![provider::Message::user(prompt)],
@@ -355,7 +353,7 @@ impl SessionView {
                 llm_clone.as_ref(),
                 &model,
                 &system,
-                "subagent",
+                "none",
                 3,
                 None,
                 vec![provider::Message::user(user_text)],
@@ -403,7 +401,7 @@ impl SessionView {
                 llm_clone.as_ref(),
                 &model,
                 &system,
-                "subagent",
+                "none",
                 3,
                 None,
                 vec![provider::Message::user(conversation)],

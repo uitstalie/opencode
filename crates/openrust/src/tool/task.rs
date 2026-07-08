@@ -41,10 +41,10 @@ impl Tool for TaskTool {
         };
 
         let agents = agent::load_agents(&ctx.cwd).unwrap_or_default();
-        let (system, agent_mode, max_steps) = match agent::agent_by_id(&agents, subagent_type) {
-            Some(found) => (found.system.clone(), found.mode.clone(), found.max_steps),
+        let (system, tool_spec, max_steps) = match agent::agent_by_id(&agents, subagent_type) {
+            Some(found) => (found.system.clone(), found.tools.clone(), found.max_steps),
             None => match agent::builtin_agent_system(subagent_type) {
-                Some(system) => (system.to_string(), "subagent".to_string(), 25u32),
+                Some(system) => (system.to_string(), "none".to_string(), 25u32),
                 None => {
                     let available = agents
                         .iter()
@@ -74,7 +74,7 @@ impl Tool for TaskTool {
             llm.as_ref(),
             model,
             &system,
-            &agent_mode,
+            &tool_spec,
             max_steps,
             ctx.reasoning_effort.as_deref(),
             initial,
@@ -94,17 +94,18 @@ impl Tool for TaskTool {
 
 /// Run a headless agent loop (no UI events): stream, execute tools locally, feed
 /// results back, and repeat until the model finishes. Returns the final text.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_agent(
     llm: &dyn LlmProvider,
     model: &str,
     system: &str,
-    agent_mode: &str,
+    tool_spec: &str,
     max_steps: u32,
     reasoning_effort: Option<&str>,
     initial: Vec<Message>,
     tool_ctx: &ToolContext,
 ) -> anyhow::Result<String> {
-    let allowed = catalog::tools_for_mode(agent_mode, true);
+    let allowed = catalog::resolve_tool_names(tool_spec, &tool_ctx.presets, true);
     let tool_defs: Vec<ToolDef> = allowed
         .iter()
         .filter_map(|meta| catalog::create_tool(meta.name, None))
@@ -158,11 +159,10 @@ pub async fn run_agent(
         let mut finish_seen = false;
 
         while let Some(chunk) = stream.next().await {
-            if let Some(flag) = &tool_ctx.shutdown {
-                if flag.load(std::sync::atomic::Ordering::SeqCst) {
+            if let Some(flag) = &tool_ctx.shutdown
+                && flag.load(std::sync::atomic::Ordering::SeqCst) {
                     return Ok(last_assistant);
                 }
-            }
             match chunk? {
                 StreamChunk::TextDelta(text) => assistant_text.push_str(&text),
                 StreamChunk::ReasoningDelta(_) => {}

@@ -25,14 +25,14 @@ impl SessionView {
         writeln!(stdout, "OpenRust TUI")?;
         writeln!(stdout, "provider: {}", self.provider_name)?;
         writeln!(stdout, "model: {}", self.model)?;
-        writeln!(stdout, "")?;
+        writeln!(stdout)?;
         if let Some(status) = status {
             writeln!(stdout, "status: {}", status)?;
         }
-        writeln!(stdout, "")?;
+        writeln!(stdout)?;
         if self.interactive {
             writeln!(stdout, "input: {}", self.input_editor.lines().join("\n"))?;
-            writeln!(stdout, "")?;
+            writeln!(stdout)?;
         }
         writeln!(stdout, "history:")?;
         for msg in self.messages.iter().rev().take(12).rev() {
@@ -47,6 +47,15 @@ impl SessionView {
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     ) -> anyhow::Result<()> {
         terminal.draw(|frame| self.render_frame(frame))?;
+        // Selection modals (dialog/question/permission) are list pickers — no
+        // text cursor needed. Hide it so it doesn't linger at the last input
+        // position underneath the overlay.
+        if self.ui.dialog.is_some()
+            || self.ui.pending_question.is_some()
+            || self.ui.pending_permission.is_some()
+        {
+            execute!(terminal.backend_mut(), cursor::Hide)?;
+        }
         Ok(())
     }
 
@@ -58,6 +67,23 @@ impl SessionView {
         }
 
         self.render_session_frame(frame, regions);
+    }
+
+    /// Pin the hardware cursor to the input textarea so it stays inside the
+    /// input box instead of drifting into the session output while the AI is
+    /// streaming. Skipped when any modal is active (the modal layer handles
+    /// its own cursor, or the cursor is hidden for list-picker modals).
+    fn place_input_cursor(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
+        if self.ui.dialog.is_some()
+            || self.ui.pending_question.is_some()
+            || self.ui.pending_permission.is_some()
+            || self.ui.pending_text_input.is_some()
+        {
+            return;
+        }
+        let (row, col) = self.input_editor.cursor();
+        let display_col = super::util::textarea_display_col(self.input_editor.lines(), row, col);
+        frame.set_cursor_position((area.x + 1 + display_col as u16, area.y + 1 + row as u16));
     }
 
     pub(super) fn render_session_frame(&self, frame: &mut Frame, regions: render::LayoutRegions) {
@@ -170,6 +196,7 @@ impl SessionView {
 
         let input = self.input_widget("Input");
         frame.render_widget(&input, regions.input);
+        self.place_input_cursor(frame, regions.input);
 
         let footer = Paragraph::new(self.status_line()).style(self.theme.footer_style());
         frame.render_widget(footer, regions.status);
@@ -235,6 +262,7 @@ impl SessionView {
 
         let prompt = self.input_widget("Prompt");
         frame.render_widget(&prompt, sections[2]);
+        self.place_input_cursor(frame, sections[2]);
 
         let hint = Paragraph::new("输入消息后 Enter 开始 · /connect 配置 provider · /models 选择模型 · Esc 退出")
             .style(self.theme.muted_style())

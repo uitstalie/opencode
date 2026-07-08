@@ -26,6 +26,16 @@ pub(super) fn normalize_single_line_text(text: &str) -> String {
     text.replace(['\r', '\n'], " ")
 }
 
+/// Convert a textarea cursor (row, char-col) into a terminal display column,
+/// accounting for wide characters (CJK, emoji) that occupy 2 cells.
+pub(super) fn textarea_display_col(lines: &[String], row: usize, col: usize) -> usize {
+    use unicode_width::UnicodeWidthChar;
+    lines
+        .get(row)
+        .map(|line| line.chars().take(col).map(|c| c.width().unwrap_or(1)).sum())
+        .unwrap_or(col)
+}
+
 pub(super) fn textarea_input_from_key_event(key: event::KeyEvent) -> TextAreaInput {
     let input_key = match key.code {
         KeyCode::Char(ch) => TextAreaKey::Char(ch),
@@ -70,7 +80,7 @@ pub(super) fn read_line_span(result: &str) -> Option<(usize, usize)> {
         trimmed[..colon].trim().parse::<usize>().ok()
     });
     let first = numbers.next()?;
-    Some((first, numbers.last().unwrap_or(first)))
+    Some((first, numbers.next_back().unwrap_or(first)))
 }
 
 pub(super) fn home_input_hint() -> &'static str {

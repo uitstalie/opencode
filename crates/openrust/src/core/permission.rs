@@ -161,11 +161,10 @@ pub fn expand_project(path: &str, project_root: &Path) -> String {
 pub fn target_paths(params: &serde_json::Value) -> Vec<String> {
     // Single-path tools: target / filePath / path / workdir
     for key in &["target", "filePath", "path", "workdir"] {
-        if let Some(s) = params[key].as_str() {
-            if !s.is_empty() {
+        if let Some(s) = params[key].as_str()
+            && !s.is_empty() {
                 return vec![s.to_string()];
             }
-        }
     }
     // bash: extract file paths from the command content
     if let Some(cmd) = params["command"].as_str() {
@@ -234,13 +233,12 @@ fn extract_command_paths(command: &str) -> Vec<String> {
     // Walk tokens looking for: (a) redirect operators, (b) known path commands
     while i < tokens.len() {
         // Redirect: > or >> followed by a filename
-        if tokens[i] == ">" || tokens[i] == ">>" {
-            if i + 1 < tokens.len() {
+        if (tokens[i] == ">" || tokens[i] == ">>")
+            && i + 1 < tokens.len() {
                 paths.push(tokens[i + 1].clone());
                 i += 2;
                 continue;
             }
-        }
         // Redirect appended to previous token: echo>file
         if let Some(rest) = tokens[i].strip_prefix(">").or_else(|| tokens[i].strip_prefix(">>")) {
             if !rest.is_empty() {

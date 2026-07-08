@@ -27,8 +27,8 @@ pub fn has_component(rel: &str, component: &str) -> bool {
 
 /// Protected prefixes that should never be deleted.
 pub const SYSTEM_PROTECTED: &[&str] = &[
-    "/", "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib64", "/opt", "/proc", "/root",
-    "/run", "/sbin", "/srv", "/sys", "/usr", "/var",
+    "/", "/bin", "/boot", "/dev", "/etc", "/lib", "/lib64", "/opt", "/proc",
+    "/root", "/run", "/sbin", "/srv", "/sys", "/usr", "/var",
 ];
 
 /// Protected user-level directories (~/.config, etc.)
@@ -53,11 +53,18 @@ pub fn is_protected_path(canonical: &Path) -> Option<&'static str> {
     // Windows: strip \\?\ prefix from canonical paths
     let s = s.strip_prefix("\\\\?\\").unwrap_or(s);
 
-    // Exact match against system prefixes
+    // System prefixes: protect the directory AND its contents
+    // (e.g. /etc/passwd, /usr/bin/foo).
     for prefix in SYSTEM_PROTECTED {
         if has_component(s, prefix) {
             return Some("protected system path");
         }
+    }
+
+    // /home is a system mount point — protect the directory itself but
+    // allow operations on user data underneath (/home/user/project/file).
+    if s == "/home" {
+        return Some("protected system path");
     }
 
     // Windows system paths (case-insensitive, won't match on POSIX)
@@ -126,11 +133,10 @@ pub fn canonicalize_safe(path: &Path) -> Option<PathBuf> {
 /// Check if a path is protected. Returns `Err(reason)` if it is.
 /// Handles non-existent paths via `canonicalize_safe`.
 pub fn check_protected(path: &Path) -> Result<(), &'static str> {
-    if let Some(canon) = canonicalize_safe(path) {
-        if let Some(reason) = is_protected_path(&canon) {
+    if let Some(canon) = canonicalize_safe(path)
+        && let Some(reason) = is_protected_path(&canon) {
             return Err(reason);
         }
-    }
     Ok(())
 }
 

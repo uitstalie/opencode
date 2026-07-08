@@ -92,11 +92,10 @@ impl SessionView {
             self.note("session store unavailable".to_string());
             return;
         };
-        if let Ok(n) = store.cleanup_old_sessions(30 * 24 * 60 * 60) {
-            if n > 0 {
+        if let Ok(n) = store.cleanup_old_sessions(30 * 24 * 60 * 60)
+            && n > 0 {
                 self.note(format!("cleaned {n} sessions older than 30 days"));
             }
-        }
         let Ok(sessions) = store.list_sessions() else {
             self.note("failed to list sessions".to_string());
             return;
@@ -436,12 +435,9 @@ impl SessionView {
                 Some(value) => self.switch_session(value),
                 None => {}
             },
-            DialogKind::SessionDelete => match dialog.selected_value() {
-                Some(value) => {
-                    self.delete_session(value);
-                    self.open_session_delete_dialog();
-                }
-                None => {}
+            DialogKind::SessionDelete => if let Some(value) = dialog.selected_value() {
+                self.delete_session(value);
+                self.open_session_delete_dialog();
             },
             DialogKind::Agent => match dialog.selected_value() {
                 Some("__default__") => self.set_session_agent(None),
@@ -639,8 +635,8 @@ impl SessionView {
         match self.save_global_config() {
             Ok(()) => {
                 let api_key = value.trim();
-                if !api_key.is_empty() {
-                    if let Err(err) = Vault::save(&draft.provider, api_key) {
+                if !api_key.is_empty()
+                    && let Err(err) = Vault::save(&draft.provider, api_key) {
                         self.reload_config();
                         self.note(format!(
                             "provider added: {}, but failed to save API key: {}",
@@ -648,7 +644,6 @@ impl SessionView {
                         ));
                         return;
                     }
-                }
                 self.reload_config();
                 self.note(format!(
                     "provider configured: {} · model: {}/{}",
@@ -706,10 +701,16 @@ impl SessionView {
             );
             let textarea = self.text_input_widget(input);
             frame.render_widget(&textarea, inner[1]);
+            let (row, col) = input.editor.cursor();
+            let display_col = super::util::textarea_display_col(input.editor.lines(), row, col);
+            frame.set_cursor_position((
+                inner[1].x + 1 + display_col as u16,
+                inner[1].y + 1 + row as u16,
+            ));
             return;
         }
-        if self.diff_visible {
-            if let Some((title, before, after)) = &self.last_diff {
+        if self.diff_visible
+            && let Some((title, before, after)) = &self.last_diff {
                 self.render.dialog_area.set(Some(centered_rect(80, 70, area)));
                 let dialog_area = centered_rect(80, 70, area);
                 frame.render_widget(Clear, dialog_area);
@@ -726,7 +727,6 @@ impl SessionView {
                     .wrap(Wrap { trim: false });
                 frame.render_widget(widget, dialog_area);
             }
-        }
     }
 
     fn render_dialog_panel(&self, frame: &mut Frame, area: ratatui::layout::Rect, dialog: &Dialog) {
@@ -760,7 +760,7 @@ impl SessionView {
             .wrap(Wrap { trim: false });
         frame.render_widget(description, inner[1]);
 
-        let max_visible = ((inner[2].height as usize + 2) / 3).max(1);
+        let max_visible = (inner[2].height as usize).div_ceil(3).max(1);
         let options = Paragraph::new(dialog.option_lines(&self.theme, max_visible))
             .style(self.theme.dialog_style())
             .wrap(Wrap { trim: false });

@@ -102,8 +102,8 @@ impl LlmProvider for OpenAICompatProvider {
         if let Some(ref tc) = options.tool_choice {
             body["tool_choice"] = tc.clone();
         }
-        if let Some(ref system) = options.system {
-            if let Some(arr) = body["messages"].as_array_mut() {
+        if let Some(ref system) = options.system
+            && let Some(arr) = body["messages"].as_array_mut() {
                 // o1-preview/o1-mini reject "system" role, require "developer".
                 let role = if options.reasoning_effort.is_some() {
                     "developer"
@@ -118,7 +118,6 @@ impl LlmProvider for OpenAICompatProvider {
                     }),
                 );
             }
-        }
 
         tracing::debug!("POST {} (model={})", url, options.model);
 
@@ -245,20 +244,18 @@ impl LlmProvider for OpenAICompatProvider {
                         }
 
                         // Text content
-                        if let Some(content) = delta["content"].as_str() {
-                            if !content.is_empty() {
+                        if let Some(content) = delta["content"].as_str()
+                            && !content.is_empty() {
                                 yield Ok(StreamChunk::TextDelta(content.to_string()));
                             }
-                        }
 
                         // Reasoning content (DeepSeek uses reasoning_content, o1 uses reasoning)
                         for key in &["reasoning_content", "reasoning"] {
-                            if let Some(reasoning) = delta[key].as_str() {
-                                if !reasoning.is_empty() {
+                            if let Some(reasoning) = delta[key].as_str()
+                                && !reasoning.is_empty() {
                                     yield Ok(StreamChunk::ReasoningDelta(reasoning.to_string()));
                                 }
                             }
-                        }
 
                         // Finish reason
                         if let Some(reason) = choice["finish_reason"].as_str() {

@@ -24,7 +24,7 @@ pub struct AgentInfo {
     pub id: String,
     pub title: String,
     pub description: String,
-    pub mode: String,
+    pub tools: String,
     pub hidden: bool,
     pub max_steps: u32,
     pub system: String,
@@ -142,14 +142,13 @@ fn overlay_agent(base: &mut AgentInfo, parsed: &ParsedAgent) {
     if let Some(v) = parsed.frontmatter.get("description") {
         base.description = v.clone();
     }
-    if let Some(v) = parsed.frontmatter.get("mode") {
-        base.mode = v.clone();
+    if let Some(v) = parsed.frontmatter.get("tools") {
+        base.tools = v.clone();
     }
-    if let Some(v) = parsed.frontmatter.get("steps") {
-        if let Ok(n) = v.parse::<u32>() {
+    if let Some(v) = parsed.frontmatter.get("steps")
+        && let Ok(n) = v.parse::<u32>() {
             base.max_steps = n;
         }
-    }
     if let Some(v) = parsed.frontmatter.get("hidden") {
         base.hidden = v == "true";
     }
@@ -174,11 +173,11 @@ fn parsed_to_agent(parsed: &ParsedAgent) -> AgentInfo {
             .cloned()
             .or_else(|| first_nonempty_paragraph(&parsed.system))
             .unwrap_or_else(|| parsed.id.clone()),
-        mode: parsed
+        tools: parsed
             .frontmatter
-            .get("mode")
+            .get("tools")
             .cloned()
-            .unwrap_or_else(|| "primary".to_string()),
+            .unwrap_or_else(|| "all".to_string()),
         hidden: parsed
             .frontmatter
             .get("hidden")
@@ -261,7 +260,7 @@ fn builtin_agents() -> Vec<AgentInfo> {
             id: "build".to_string(),
             title: "Build".to_string(),
             description: "The default agent. Executes tools based on configured permissions.".to_string(),
-            mode: "primary".to_string(),
+            tools: "all".to_string(),
             hidden: false,
             max_steps: 50,
             system: BUILTIN_BUILD_SYSTEM.to_string(),
@@ -271,8 +270,8 @@ fn builtin_agents() -> Vec<AgentInfo> {
         AgentInfo {
             id: "plan".to_string(),
             title: "Plan".to_string(),
-            description: "Plan mode. Disallows all edit tools.".to_string(),
-            mode: "plan".to_string(),
+            description: "Planning agent with read-only tools.".to_string(),
+            tools: "read_only".to_string(),
             hidden: false,
             max_steps: 200,
             system: BUILTIN_PLAN_SYSTEM.to_string(),
@@ -282,8 +281,8 @@ fn builtin_agents() -> Vec<AgentInfo> {
         AgentInfo {
             id: "general".to_string(),
             title: "General".to_string(),
-            description: "General-purpose agent for researching complex questions and executing multi-step tasks.".to_string(),
-            mode: "subagent".to_string(),
+            description: "General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel.".to_string(),
+            tools: "all".to_string(),
             hidden: true,
             max_steps: 25,
             system: BUILTIN_GENERAL_SYSTEM.to_string(),
@@ -294,7 +293,7 @@ fn builtin_agents() -> Vec<AgentInfo> {
             id: "explore".to_string(),
             title: "Explore".to_string(),
             description: "Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns, search code for keywords, or answer questions about the codebase.".to_string(),
-            mode: "explore".to_string(),
+            tools: "read_only".to_string(),
             hidden: true,
             max_steps: 25,
             system: BUILTIN_EXPLORE_SYSTEM.to_string(),
@@ -305,7 +304,7 @@ fn builtin_agents() -> Vec<AgentInfo> {
             id: "compaction".to_string(),
             title: "Compaction".to_string(),
             description: "Anchored context summarization agent.".to_string(),
-            mode: "primary".to_string(),
+            tools: "none".to_string(),
             hidden: true,
             max_steps: 5,
             system: BUILTIN_COMPACTION_SYSTEM.to_string(),
@@ -316,7 +315,7 @@ fn builtin_agents() -> Vec<AgentInfo> {
             id: "title".to_string(),
             title: "Title".to_string(),
             description: "Conversation title generator.".to_string(),
-            mode: "primary".to_string(),
+            tools: "none".to_string(),
             hidden: true,
             max_steps: 5,
             system: BUILTIN_TITLE_SYSTEM.to_string(),
@@ -327,7 +326,7 @@ fn builtin_agents() -> Vec<AgentInfo> {
             id: "summary".to_string(),
             title: "Summary".to_string(),
             description: "Conversation summary generator.".to_string(),
-            mode: "primary".to_string(),
+            tools: "none".to_string(),
             hidden: true,
             max_steps: 5,
             system: BUILTIN_SUMMARY_SYSTEM.to_string(),
@@ -459,14 +458,14 @@ mod tests {
         std::fs::create_dir_all(&agents).unwrap();
         std::fs::write(
             agents.join("build.md"),
-            "---\ntitle: Custom Build\nmode: explore\nsteps: 10\n---\n# My Build\nCustom system.",
+            "---\ntitle: Custom Build\ntools: read_only\nsteps: 10\n---\n# My Build\nCustom system.",
         )
         .unwrap();
 
         let list = load_agents(dir.path()).unwrap();
         let agent = agent_by_id(&list, "build").unwrap();
         assert_eq!(agent.title, "Custom Build");
-        assert_eq!(agent.mode, "explore");
+        assert_eq!(agent.tools, "read_only");
         assert_eq!(agent.max_steps, 10);
         assert!(agent.system.contains("Custom system"));
     }
@@ -481,7 +480,7 @@ mod tests {
         let list = load_agents(dir.path()).unwrap();
         let agent = agent_by_id(&list, "build").unwrap();
         assert_eq!(agent.title, "Build");
-        assert_eq!(agent.mode, "primary");
+        assert_eq!(agent.tools, "all");
         assert_eq!(agent.max_steps, 50);
         assert_eq!(agent.system.trim(), "New system only.");
     }
@@ -522,7 +521,7 @@ mod tests {
             id: "build".to_string(),
             title: "Build".to_string(),
             description: "Build agent".to_string(),
-            mode: "all".to_string(),
+            tools: "all".to_string(),
             hidden: false,
             max_steps: 50,
             system: String::new(),
@@ -541,7 +540,7 @@ mod tests {
                 id: "review".to_string(),
                 title: "Review".to_string(),
                 description: "Review agent".to_string(),
-                mode: "all".to_string(),
+                tools: "all".to_string(),
                 hidden: false,
                 max_steps: 50,
                 system: String::new(),
@@ -552,7 +551,7 @@ mod tests {
                 id: "build".to_string(),
                 title: "Build".to_string(),
                 description: "Build agent".to_string(),
-                mode: "all".to_string(),
+                tools: "all".to_string(),
                 hidden: false,
                 max_steps: 50,
                 system: String::new(),

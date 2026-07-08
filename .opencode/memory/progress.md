@@ -1,10 +1,10 @@
 # Project Progress
 
-> 最后更新：2026-07-04
+> 最后更新：2026-07-08
 
 ## Rust 重写里程碑（openrust）
 - Phase 0 / 0.9 / 1A–1D / 1 收尾 / 2 全部完成：CLI + Provider + 14 工具 + 会话/权限/system prompt + 最小 TUI + 真实 tool loop + task 子 agent + 权限弹窗 + 富渲染（markdown/syntect/diff/sidebar）
-- `cargo test` 136 passed，零 warning；分支 `opencode-rust-tui` 已推送
+- `cargo test` 192 passed，零 warning；分支 `opencode-rust-tui` 已推送
 - 路线图已重估：Phase 3 改为主线能力补齐 + 交互层打磨，Phase 4 改为 TS 退场门槛定义 + 迁移收口，新增 Phase 5 用于对齐 Phase 1 / 2 与最新 `dev-ai-release`
 
 ## 已完成
@@ -151,7 +151,16 @@
 - 新增 slash 命令 `/files`(`/tree`)、`/diff`；Theme 加 diff/sidebar 样式
 - `cargo test` 126 passed（113 → 126）；零 warning
 
+### Rust TUI 重写 — Phase 3 交互层增强（ESC 中断 / 跟进消息 / 工具调用动画）
+- **ESC 中断**：`PromptEvent::Aborted` + `abort: Arc<AtomicBool>`；ESC 设置中断标志；pump 处理 Aborted（保存 assistant_preview，清除 pending_prompts，恢复就绪状态）；每回合重置 abort，与关闭标志分离
+- **实时跟进消息**：`PromptJob.followup_tx` 通道；运行时用户输入立即显示 + 持久化 + 推送到 self.messages + 发送给 worker；worker 每步注入历史，随工具调用结果发送
+- **渐进式工具调用显示**：`ToolCall` 拆分为 `ToolCallStart{id,name}` + `ToolRunning{id}`；`pending_tool_calls: Vec<PendingTool>`（ToolState Created/Running）；session_render 中 spinner 渲染（盲文帧 100ms/帧）
+- **30fps 动画修复**：统一 `poll_timeout=33ms`，poll 超时时 `needs_render || ai_running` 强制重绘（此前 spinner 在工具执行期间卡死，因无事件 = 无重绘）
+- **Clippy 全面清理**（8 个预存 + auto-fix）：&PathBuf→&Path, vec!→array, match→let, needless_range_loop, unwrap→if let, 添加 too_many_arguments
+- `cargo test` 192 passed，零 warning
+
 ## 进行中
+- **mode → read_only 迁移**：用户决定彻底删除 `mode` 概念，agent 能力完全由 md 文件定义；工具集控制改由 frontmatter `read_only: true` 布尔实现。8 步计划已定但尚未实现
 - Phase 5 已启动：以最新 `dev-ai-release` 为基线审计 Phase 1 / 2 语义差距，首版矩阵见 `doc/openrust-phase5-alignment.md`
 
 ## 下一步

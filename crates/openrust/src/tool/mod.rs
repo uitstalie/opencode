@@ -202,6 +202,9 @@ pub struct ToolContext {
     pub reasoning_effort: Option<String>,
     /// Shared shutdown flag — checked by nested agent loops (task tool).
     pub shutdown: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// Tool presets for resolving agent `tools` specs (config overlay + builtins).
+    pub presets: std::collections::HashMap<String, Vec<String>>,
+
 }
 
 impl ToolContext {
@@ -220,6 +223,7 @@ impl ToolContext {
             model: None,
             reasoning_effort: None,
             shutdown: None,
+            presets: std::collections::HashMap::new(),
         }
     }
 
@@ -255,15 +259,14 @@ pub fn check_permission(
     ctx: &ToolContext,
 ) -> Decision {
     // bash: dedicated flow — dangerous command check + path scope check
-    if tool_name == "bash" {
-        if let Some(cmd) = params["command"].as_str() {
+    if tool_name == "bash"
+        && let Some(cmd) = params["command"].as_str() {
             return crate::core::permission::evaluate_bash(
                 cmd,
                 ctx.project_root(),
                 ctx.interactive,
             );
         }
-    }
 
     // Other tools: extract paths and scope-check each
     let targets = crate::core::permission::target_paths(params);
@@ -363,6 +366,12 @@ pub trait Tool: Send + Sync {
 
 pub struct ToolRegistry {
     tools: HashMap<String, Box<dyn Tool>>,
+}
+
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ToolRegistry {

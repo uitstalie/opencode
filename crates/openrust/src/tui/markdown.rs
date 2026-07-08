@@ -435,10 +435,10 @@ fn build_table(
     let mut result = Vec::new();
     for (row_idx, row) in grid.iter().enumerate() {
         let mut spans: Vec<Span<'static>> = Vec::new();
-        for i in 0..n_cols {
+        for (i, max_w) in col_w.iter().enumerate().take(n_cols) {
             let cell = row.get(i).map(|s| s.as_str()).unwrap_or("");
             let cw = display_width(cell);
-            let gap = col_w[i].saturating_sub(cw);
+            let gap = max_w.saturating_sub(cw);
             let (lp, rp) = match alignments.get(i).copied() {
                 Some(Alignment::Center) => (gap / 2, gap - gap / 2),
                 Some(Alignment::Right) => (gap, 0),
@@ -452,7 +452,7 @@ fn build_table(
             } else {
                 Style::default()
             };
-            let mut content = String::with_capacity(col_w[i]);
+            let mut content = String::with_capacity(*max_w);
             content.push_str(&" ".repeat(lp));
             content.push_str(cell);
             content.push_str(&" ".repeat(rp));
@@ -462,11 +462,11 @@ fn build_table(
 
         if row_idx == 0 {
             let mut sep = String::new();
-            for i in 0..n_cols {
+            for (i, max_w) in col_w.iter().enumerate().take(n_cols) {
                 if i > 0 {
                     sep.push_str("─┼─");
                 }
-                sep.push_str(&"─".repeat(col_w[i]));
+                sep.push_str(&"─".repeat(*max_w));
             }
             result.push(Line::from(Span::styled(sep, theme.muted_style())));
         }

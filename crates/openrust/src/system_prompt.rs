@@ -16,34 +16,25 @@ pub struct SystemPrompt {
 
 impl SystemPrompt {
     pub fn render(&self) -> String {
-        self.render_with_mode("primary")
-    }
-
-    pub fn render_with_mode(&self, mode: &str) -> String {
         let shell_kind = crate::tool::shell::detect_shell_kind();
         let cwd = std::path::Path::new(&self.cwd);
         let skills = crate::tool::skill::list_skills_for_cwd(cwd);
-        let mut sections = Vec::new();
-        sections.push(render_section("constraint", &render_constraint()));
-        sections.push(render_section(
-            "identity",
-            &render_identity(&self.provider, &self.model),
-        ));
-        sections.push(render_section("environment", &render_environment(self)));
-        sections.push(render_section(
-            "instructions",
-            &render_instructions(
-                &self.config_path,
-                &self.global_rules,
-                &self.agents_md,
-                &self.project_rules,
+        let sections = [
+            render_section("constraint", &render_constraint()),
+            render_section("identity", &render_identity(&self.provider, &self.model)),
+            render_section("environment", &render_environment(self)),
+            render_section(
+                "instructions",
+                &render_instructions(
+                    &self.config_path,
+                    &self.global_rules,
+                    &self.agents_md,
+                    &self.project_rules,
+                ),
             ),
-        ));
-        sections.push(render_section(
-            "capabilities",
-            &render_capabilities(shell_kind, &skills, mode),
-        ));
-        sections.push(render_section("style", &render_style()));
+            render_section("capabilities", &render_capabilities(shell_kind, &skills)),
+            render_section("style", &render_style()),
+        ];
         sections.join("\n\n")
     }
 
@@ -198,11 +189,10 @@ fn load_rules_dir(dir: &std::path::Path) -> String {
 
     let mut parts = Vec::new();
     for entry in &files {
-        if let Ok(content) = std::fs::read_to_string(entry.path()) {
-            if !content.trim().is_empty() {
+        if let Ok(content) = std::fs::read_to_string(entry.path())
+            && !content.trim().is_empty() {
                 parts.push(content.trim().to_string());
             }
-        }
     }
     parts.join("\n\n")
 }
@@ -210,7 +200,6 @@ fn load_rules_dir(dir: &std::path::Path) -> String {
 fn render_capabilities(
     shell_kind: crate::tool::shell::ShellKind,
     skills: &[crate::tool::skill::SkillEntry],
-    mode: &str,
 ) -> String {
     let mut lines = Vec::new();
 
@@ -252,29 +241,10 @@ fn render_capabilities(
         ),
     );
 
-    lines.extend(crate::tool::catalog::tools_for_mode(mode, false).iter().map(|tool| {
-        format!(
-            "- {} [{}]: {}",
-            tool.name,
-            tool_category_label(tool.category),
-            tool.prompt_hint
-        )
-    }));
-
     lines.join("\n")
 }
 
-fn tool_category_label(category: crate::tool::catalog::ToolCategory) -> &'static str {
-    match category {
-        crate::tool::catalog::ToolCategory::Filesystem => "fs",
-        crate::tool::catalog::ToolCategory::Shell => "shell",
-        crate::tool::catalog::ToolCategory::Network => "net",
-        crate::tool::catalog::ToolCategory::Interaction => "interaction",
-        crate::tool::catalog::ToolCategory::Undo => "undo",
-    }
-}
-
-fn render_style() -> String {
+    fn render_style() -> String {
     [
         "## Role".to_string(),
         "- 直接给结论，再给必要依据。".to_string(),
@@ -331,6 +301,7 @@ mod tests {
                     options: None,
                 },
             )]),
+            presets: std::collections::HashMap::new(),
         };
         let provider = ResolvedProvider {
             name: "deepseek".to_string(),

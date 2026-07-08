@@ -15,7 +15,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Full openrust configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -25,6 +25,11 @@ pub struct Config {
 
     #[serde(default)]
     pub provider: HashMap<String, ProviderConfig>,
+
+    /// Custom tool presets. Keys overlay builtins (all/read_only/no_write/
+    /// no_internet/none) or define new ones; values are tool-name lists.
+    #[serde(default)]
+    pub presets: HashMap<String, Vec<String>>,
 }
 
 /// Per-provider configuration
@@ -72,7 +77,7 @@ impl Config {
     /// Load config from project and global paths.
     /// Also runs migration: any plaintext api_key in config.json is moved
     /// to the encrypted vault (credentials.enc) and removed from config.
-    pub fn load(project_dir: &PathBuf) -> anyhow::Result<Self> {
+    pub fn load(project_dir: &Path) -> anyhow::Result<Self> {
         let mut config = Config::default();
 
         // Load global config (~/.config/openrust/config.json)
@@ -102,11 +107,10 @@ impl Config {
     fn migrate_api_keys(config: &Config) {
         let mut to_migrate = HashMap::new();
         for (name, cfg) in &config.provider {
-            if let Some(ref key) = cfg.api_key {
-                if !key.is_empty() {
+            if let Some(ref key) = cfg.api_key
+                && !key.is_empty() {
                     to_migrate.insert(name.clone(), key.clone());
                 }
-            }
         }
         if to_migrate.is_empty() {
             return;
@@ -131,6 +135,9 @@ impl Config {
         }
         for (k, v) in other.provider {
             self.provider.insert(k, v);
+        }
+        for (k, v) in other.presets {
+            self.presets.insert(k, v);
         }
     }
 
@@ -321,11 +328,10 @@ pub fn strip_jsonc_comments(input: &str) -> String {
                 if c == '"' {
                     break;
                 }
-                if c == '\\' {
-                    if let Some(esc) = iter.next() {
+                if c == '\\'
+                    && let Some(esc) = iter.next() {
                         result.push(esc);
                     }
-                }
             }
         } else {
             result.push(ch);
@@ -434,7 +440,7 @@ mod tests {
         )
         .unwrap();
 
-        let config = Config::load(&dir.path().to_path_buf()).unwrap();
+        let config = Config::load(dir.path()).unwrap();
         let provider = config.get_provider("overlay-provider").unwrap();
 
         assert_eq!(
@@ -462,6 +468,7 @@ mod tests {
                     options: None,
                 },
             )]),
+            presets: HashMap::new(),
         };
 
         let provider = config.get_provider("config-only-provider").unwrap();

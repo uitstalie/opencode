@@ -29,6 +29,7 @@ impl SessionView {
             self.note("LLM not initialized".to_string());
             return Ok(());
         };
+        self.abort.store(false, std::sync::atomic::Ordering::SeqCst);
         self.prompt_job = Some(super::spawn_prompt_worker(
             Arc::clone(llm),
             self.messages.clone(),
@@ -37,11 +38,13 @@ impl SessionView {
             self.reasoning_effort.clone(),
             self.cwd.clone(),
             Arc::clone(&self.shutdown),
+            self.abort.clone(),
             Some(self.session_id.clone()),
             self.store.clone(),
             false,
             self.current_agent_max_steps(),
-            self.current_agent_mode(),
+            self.current_agent_tools(),
+            self.config.presets.clone(),
             self.current_context_window(),
         ));
         while self.prompt_job.is_some() {
@@ -56,12 +59,33 @@ impl SessionView {
         prompt: String,
     ) -> anyhow::Result<()> {
         if self.ai_running || self.prompt_job.is_some() {
-            self.pending_prompts.push_back(prompt);
-            self.status = format!("queued: {} prompt(s)", self.pending_prompts.len());
+            self.enqueue_followup(prompt);
             return Ok(());
         }
 
         self.start_prompt_job(terminal, prompt)
+    }
+
+    /// Handle a user message submitted while the AI turn is in flight: show it
+    /// immediately as a queued user message and forward it to the worker via
+    /// the follow-up channel so it is injected at the next tool round.
+    fn enqueue_followup(&mut self, prompt: String) {
+        self.messages.push(super::Message {
+            role: "user".to_string(),
+            content: super::MessageContent::text(prompt.clone()),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        });
+        self.persist_message("user", &prompt);
+        self.display.push(render::DisplayMessage::new("user", &prompt));
+        if let Some(job) = &self.prompt_job {
+            let _ = job.followup_tx.send(prompt);
+            self.status = "queued for next round".to_string();
+        } else {
+            self.pending_prompts.push_back(prompt);
+            self.status = format!("queued: {} prompt(s)", self.pending_prompts.len());
+        }
     }
 
     pub(super) fn start_prompt_job(
@@ -123,8 +147,12 @@ impl SessionView {
                     self.status = "AI thinking".to_string();
                     needs_render = true;
                 }
-                super::PromptEvent::ToolCall { name, .. } => {
+                super::PromptEvent::ToolCallStart { id: _, name } => {
                     self.status = format!("tool call: {}", name);
+                    needs_render = true;
+                }
+                super::PromptEvent::ToolRunning { id: _ } => {
+                    self.status = "tool running".to_string();
                     needs_render = true;
                 }
                 super::PromptEvent::ToolBatch { assistant, tool_calls, results } => {
@@ -215,6 +243,14 @@ impl SessionView {
                     finished = true;
                     self.generate_summary();
                 }
+                super::PromptEvent::Aborted => {
+                    self.ai_running = false;
+                    self.prompt_job = None;
+                    self.assistant_preview.clear();
+                    self.thinking_preview.clear();
+                    needs_render = true;
+                    finished = true;
+                }
             }
             if finished {
                 break;
@@ -252,6 +288,7 @@ impl SessionView {
             self.note("LLM not initialized".to_string());
             return Ok(());
         };
+        self.abort.store(false, std::sync::atomic::Ordering::SeqCst);
         self.prompt_job = Some(super::spawn_prompt_worker(
             Arc::clone(llm),
             self.messages.clone(),
@@ -260,11 +297,13 @@ impl SessionView {
             self.reasoning_effort.clone(),
             self.cwd.clone(),
             Arc::clone(&self.shutdown),
+            self.abort.clone(),
             Some(self.session_id.clone()),
             self.store.clone(),
             true,
             self.current_agent_max_steps(),
-            self.current_agent_mode(),
+            self.current_agent_tools(),
+            self.config.presets.clone(),
             self.current_context_window(),
         ));
         Ok(())

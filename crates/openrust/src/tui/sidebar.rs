@@ -35,18 +35,17 @@ struct TreeEntry {
 
 impl FileTree {
     pub fn new(root: PathBuf) -> Self {
-        let (events, watcher) = match channel::<()>() {
-            (tx, rx) => {
-                let watcher = notify::recommended_watcher(move |_res| {
-                    let _ = tx.send(());
-                })
-                .ok()
-                .and_then(|mut watcher| {
-                    watcher.watch(&root, RecursiveMode::Recursive).ok()?;
-                    Some(watcher)
-                });
-                (watcher.is_some().then_some(rx), watcher)
-            }
+        let (events, watcher) = {
+            let (tx, rx) = channel::<()>();
+            let watcher = notify::recommended_watcher(move |_res| {
+                let _ = tx.send(());
+            })
+            .ok()
+            .and_then(|mut watcher| {
+                watcher.watch(&root, RecursiveMode::Recursive).ok()?;
+                Some(watcher)
+            });
+            (watcher.is_some().then_some(rx), watcher)
         };
         let mut tree = Self {
             root,

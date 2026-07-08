@@ -64,8 +64,8 @@ impl Tool for SkillTool {
         }
 
         // Fallback: built-in skill
-        if found.is_none() {
-            if let Some(body) = builtin_skill_body(name) {
+        if found.is_none()
+            && let Some(body) = builtin_skill_body(name) {
                 let mut metadata = HashMap::new();
                 metadata.insert("name".to_string(), serde_json::json!(name));
                 metadata.insert("path".to_string(), serde_json::json!(format!("builtin/{}", name)));
@@ -75,7 +75,6 @@ impl Tool for SkillTool {
                     metadata,
                 };
             }
-        }
 
         let (skill_path, body, fm_errors) = match found {
             Some(f) => f,

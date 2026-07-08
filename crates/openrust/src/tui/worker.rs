@@ -18,16 +18,17 @@ pub(super) struct PromptJob {
     pub(super) receiver: mpsc::Receiver<PromptEvent>,
     pub(super) ask_receiver: mpsc::Receiver<AskRequest>,
     pub(super) permission_receiver: mpsc::Receiver<PermissionRequest>,
+    /// Sender held by the TUI; worker drains this each step to inject
+    /// follow-up user messages queued while the turn is in flight.
+    pub(super) followup_tx: mpsc::Sender<String>,
 }
 
 #[derive(Debug)]
 pub(super) enum PromptEvent {
     AssistantDelta(String),
     ThinkingDelta(String),
-    ToolCall {
-        _id: String,
-        name: String,
-    },
+    ToolCallStart { id: String, name: String },
+    ToolRunning { id: String },
     ToolBatch {
         assistant: String,
         tool_calls: Vec<serde_json::Value>,
@@ -35,6 +36,8 @@ pub(super) enum PromptEvent {
     },
     Finish { prompt_tokens: u64, cache_hit_tokens: u64 },
     Error(String),
+    /// User pressed ESC to abort the current turn.
+    Aborted,
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +85,7 @@ impl Drop for SessionRuntimeGuard {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn spawn_prompt_worker(
     llm: Arc<dyn provider::LlmProvider>,
     messages: Vec<provider::Message>,
@@ -90,16 +94,19 @@ pub(super) fn spawn_prompt_worker(
     reasoning_effort: Option<String>,
     cwd: std::path::PathBuf,
     shutdown: Arc<AtomicBool>,
+    abort: Arc<AtomicBool>,
     session_id: Option<String>,
     store: Option<SessionStore>,
     interactive: bool,
     max_steps: u32,
-    agent_mode: String,
+    tool_spec: String,
+    presets: std::collections::HashMap<String, Vec<String>>,
     context_window: u64,
 ) -> PromptJob {
     let (tx, rx) = mpsc::channel();
     let (ask_tx, ask_rx) = mpsc::channel::<AskRequest>();
     let (permission_tx, permission_rx) = mpsc::channel::<PermissionRequest>();
+    let (followup_tx, followup_rx) = mpsc::channel::<String>();
     std::thread::spawn(move || {
         let rt = match tokio::runtime::Runtime::new() {
             Ok(rt) => rt,
@@ -111,7 +118,7 @@ pub(super) fn spawn_prompt_worker(
         };
 
         let result = rt.block_on(async {
-            let allowed = catalog::tools_for_mode(&agent_mode, false);
+            let allowed = catalog::resolve_tool_names(&tool_spec, &presets, false);
             let tool_defs: Vec<provider::ToolDef> = allowed
                 .iter()
                 .filter_map(|meta| catalog::create_tool(meta.name, None))
@@ -142,6 +149,7 @@ pub(super) fn spawn_prompt_worker(
                 model: Some(model.clone()),
                 reasoning_effort: reasoning_effort.clone(),
                 shutdown: Some(Arc::clone(&shutdown)),
+                presets: presets.clone(),
                 ..ToolContext::new(std::path::PathBuf::new())
             };
 
@@ -156,8 +164,7 @@ pub(super) fn spawn_prompt_worker(
             // The supervisory list spans turns until all items are done.
             if let (Some(store), Some(session_id)) =
                 (store_clone.as_ref(), session_id_clone.as_ref())
-            {
-                if let Ok(tasks) = store.list_tasks(session_id) {
+                && let Ok(tasks) = store.list_tasks(session_id) {
                     let reminder = crate::tool::todowrite::todo_reminder(&tasks);
                     if !reminder.is_empty() {
                         history.push(provider::Message {
@@ -169,9 +176,15 @@ pub(super) fn spawn_prompt_worker(
                         });
                     }
                 }
-            }
 
             loop {
+                if shutdown.load(Ordering::SeqCst) {
+                    return Ok::<_, anyhow::Error>(());
+                }
+                if abort.load(Ordering::SeqCst) {
+                    let _ = tx.send(PromptEvent::Aborted);
+                    return Ok::<_, anyhow::Error>(());
+                }
                 step_count += 1;
 
                 let is_last_step = step_count >= max_steps;
@@ -217,7 +230,7 @@ pub(super) fn spawn_prompt_worker(
                             llm.as_ref(),
                             &model,
                             &sys,
-                            "subagent",
+                            "none",
                             5,
                             None,
                             vec![provider::Message::user(compact_prompt)],
@@ -282,11 +295,16 @@ pub(super) fn spawn_prompt_worker(
                 let mut thinking_text = String::new();
                 let mut pending_tools: Vec<(String, String, String)> = Vec::new();
                 let mut executed_tools: Vec<provider::ToolCall> = Vec::new();
-                let mut tool_outputs: Vec<(String, String, String, String, bool, Option<(String, String)>)> = Vec::new();
+                type ToolOutput = (String, String, String, String, bool, Option<(String, String)>);
+                let mut tool_outputs: Vec<ToolOutput> = Vec::new();
                 let mut finish_seen = false;
 
                 while let Some(chunk) = stream.next().await {
                     if shutdown.load(Ordering::SeqCst) {
+                        return Ok::<_, anyhow::Error>(());
+                    }
+                    if abort.load(Ordering::SeqCst) {
+                        let _ = tx.send(PromptEvent::Aborted);
                         return Ok::<_, anyhow::Error>(());
                     }
                     match chunk? {
@@ -300,7 +318,7 @@ pub(super) fn spawn_prompt_worker(
                         }
                         StreamChunk::ToolCallStart { id, name } => {
                             pending_tools.push((id.clone(), name.clone(), String::new()));
-                            let _ = tx.send(PromptEvent::ToolCall { _id: id, name });
+                            let _ = tx.send(PromptEvent::ToolCallStart { id, name });
                         }
                         StreamChunk::ToolCallDelta { id, args } => {
                             if let Some((_, _, buffer)) = pending_tools
@@ -319,6 +337,7 @@ pub(super) fn spawn_prompt_worker(
                             else {
                                 continue;
                             };
+                            let _ = tx.send(PromptEvent::ToolRunning { id: call_id.clone() });
                             let tool_output = crate::tool::run_tool(&name, &args, &tool_ctx).await;
                             let has_image = matches!(&tool_output, crate::tool::ToolResult::Image { .. });
                             let image_b64 = match &tool_output {
@@ -387,13 +406,13 @@ pub(super) fn spawn_prompt_worker(
                         content: provider::MessageContent::text(captured_text.clone()),
                         name: None,
                         tool_call_id: None,
-                        tool_calls: Some(executed_tools.drain(..).collect()),
+                        tool_calls: Some(std::mem::take(&mut executed_tools)),
                     };
                     history.push(assistant);
 
                     for (call_id, name, _args, tool_text, has_image, image_b64) in &tool_outputs {
-                        if let Some((b64, mime)) = image_b64 {
-                            if *has_image && llm.supports_images(&model) {
+                        if let Some((b64, mime)) = image_b64
+                            && *has_image && llm.supports_images(&model) {
                                 history.push(provider::Message::user_with_images(
                                     format!("(image read by {} tool)", name),
                                     vec![provider::ContentPart::image_url(
@@ -401,7 +420,6 @@ pub(super) fn spawn_prompt_worker(
                                     )],
                                 ));
                             }
-                        }
                         history.push(provider::Message {
                             role: "tool".to_string(),
                             content: provider::MessageContent::text(tool_text.clone()),
@@ -415,11 +433,10 @@ pub(super) fn spawn_prompt_worker(
                     let todo_changed = tool_outputs
                         .iter()
                         .any(|(_, name, _, _, _, _)| name == "todowrite");
-                    if todo_changed {
-                        if let (Some(store), Some(session_id)) =
+                    if todo_changed
+                        && let (Some(store), Some(session_id)) =
                             (store_clone.as_ref(), session_id_clone.as_ref())
-                        {
-                            if let Ok(tasks) = store.list_tasks(session_id) {
+                            && let Ok(tasks) = store.list_tasks(session_id) {
                                 let reminder =
                                     crate::tool::todowrite::todo_reminder(&tasks);
                                 if !reminder.is_empty() {
@@ -432,8 +449,6 @@ pub(super) fn spawn_prompt_worker(
                                     });
                                 }
                             }
-                        }
-                    }
 
                     tool_outputs.clear();
                     pending_tools.clear();
@@ -442,6 +457,12 @@ pub(super) fn spawn_prompt_worker(
 
                 if !assistant_text.trim().is_empty() {
                     history.push(provider::Message::assistant(assistant_text));
+                }
+
+                // Drain follow-up user messages queued mid-turn and inject them
+                // so the next LLM round sees them alongside tool results.
+                while let Ok(msg) = followup_rx.try_recv() {
+                    history.push(provider::Message::user(msg));
                 }
 
                 if is_last_step {
@@ -480,5 +501,6 @@ pub(super) fn spawn_prompt_worker(
         receiver: rx,
         ask_receiver: ask_rx,
         permission_receiver: permission_rx,
+        followup_tx,
     }
 }
