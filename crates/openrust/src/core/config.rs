@@ -24,9 +24,6 @@ pub struct Config {
     pub model: Option<String>,
 
     #[serde(default)]
-    pub mode: Option<String>,
-
-    #[serde(default)]
     pub provider: HashMap<String, ProviderConfig>,
 }
 
@@ -131,9 +128,6 @@ impl Config {
     fn merge(&mut self, other: Config) {
         if other.model.is_some() {
             self.model = other.model;
-        }
-        if other.mode.is_some() {
-            self.mode = other.mode;
         }
         for (k, v) in other.provider {
             self.provider.insert(k, v);
@@ -459,7 +453,6 @@ mod tests {
     fn provider_api_key_falls_back_to_config_value() {
         let config = Config {
             model: Some("config-only-provider/deepseek-v4-pro".to_string()),
-            mode: None,
             provider: HashMap::from([(
                 "config-only-provider".to_string(),
                 ProviderConfig {

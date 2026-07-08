@@ -143,7 +143,6 @@ impl SessionView {
                         if let Ok(system) = crate::system_prompt::SystemPrompt::from_config(
                             &config,
                             &resolved,
-                            config.mode.clone(),
                         ) {
                             self.system = system.render();
                         }

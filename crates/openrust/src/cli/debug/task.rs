@@ -55,7 +55,7 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
             title,
             status,
         } => {
-            store.ensure_session(&session, None)?;
+            store.ensure_session(&session)?;
             let id = format!("task-{}", now_micros());
             store.upsert_task(
                 &session,

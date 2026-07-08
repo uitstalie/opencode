@@ -144,7 +144,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("openrust-todo-{}", now_string()));
         let store = SessionStore::open_at(&dir).unwrap();
         let session_id = "todo-session".to_string();
-        store.ensure_session(&session_id, None).unwrap();
+        store.ensure_session(&session_id).unwrap();
         let mut ctx = ToolContext::new(dir);
         ctx.store = Some(store.clone());
         ctx.session_id = Some(session_id.clone());

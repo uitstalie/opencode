@@ -33,16 +33,24 @@ pub struct AgentInfo {
 }
 
 pub fn load_agents(cwd: &Path) -> anyhow::Result<Vec<AgentInfo>> {
-    let mut agents = builtin_agents();
-    for directory in candidate_directories(cwd) {
-        if !directory.exists() {
-            continue;
-        }
-        collect_markdown(&directory, &directory, &mut agents)?;
+    use std::collections::HashMap;
+    let mut map: HashMap<String, AgentInfo> = HashMap::new();
+
+    for agent in builtin_agents() {
+        map.insert(agent.id.clone(), agent);
     }
-    agents.sort_by(|a, b| a.id.cmp(&b.id));
-    agents.dedup_by(|a, b| a.id == b.id);
-    Ok(agents)
+
+    let global_dir = crate::core::platform::PlatformPaths::detect()
+        .config_dir()
+        .join("agents");
+    apply_agent_dir(&mut map, &global_dir);
+
+    let project_dir = cwd.join(".openrust").join("agents");
+    apply_agent_dir(&mut map, &project_dir);
+
+    let mut result: Vec<_> = map.into_values().collect();
+    result.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(result)
 }
 
 pub fn agent_by_id<'a>(agents: &'a [AgentInfo], id: &str) -> Option<&'a AgentInfo> {
@@ -75,68 +83,117 @@ pub fn visible_agents(agents: &[AgentInfo]) -> Vec<&AgentInfo> {
     agents.iter().filter(|agent| !agent.hidden).collect()
 }
 
-fn candidate_directories(cwd: &Path) -> Vec<PathBuf> {
-    vec![cwd.join(".openrust").join("agents")]
+struct ParsedAgent {
+    id: String,
+    frontmatter: std::collections::HashMap<String, String>,
+    system: String,
+    path: PathBuf,
+    content: String,
 }
 
-fn collect_markdown(
-    root: &Path,
-    directory: &Path,
-    agents: &mut Vec<AgentInfo>,
-) -> anyhow::Result<()> {
-    for entry in std::fs::read_dir(directory)? {
-        let entry = entry?;
+fn apply_agent_dir(map: &mut std::collections::HashMap<String, AgentInfo>, dir: &Path) {
+    for parsed in parse_agent_dir(dir) {
+        match map.entry(parsed.id.clone()) {
+            std::collections::hash_map::Entry::Occupied(mut e) => {
+                overlay_agent(e.get_mut(), &parsed);
+            }
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(parsed_to_agent(&parsed));
+            }
+        }
+    }
+}
+
+fn parse_agent_dir(dir: &Path) -> Vec<ParsedAgent> {
+    let mut result = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return result;
+    };
+    for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
-            collect_markdown(root, &path, agents)?;
+        if !path.is_file() {
             continue;
         }
-        if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
             continue;
         }
-        let content = std::fs::read_to_string(&path)?;
+        let Some(id) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
         let (frontmatter, system) = parse_agent_document(&content);
-        let id = path
-            .strip_prefix(root)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .trim_end_matches(".md")
-            .replace('\\', "/");
-        let title = frontmatter
-            .get("title")
-            .cloned()
-            .or_else(|| first_heading(&system))
-            .unwrap_or_else(|| id.clone());
-        let description = frontmatter
-            .get("description")
-            .cloned()
-            .or_else(|| first_nonempty_paragraph(&system))
-            .unwrap_or_else(|| title.clone());
-        let mode = frontmatter
-            .get("mode")
-            .cloned()
-            .unwrap_or_else(|| "all".to_string());
-        let hidden = frontmatter
-            .get("hidden")
-            .map(|value| value == "true")
-            .unwrap_or(false);
-        let max_steps = frontmatter
-            .get("steps")
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(50);
-        agents.push(AgentInfo {
-            id,
-            title,
-            description,
-            mode,
-            hidden,
-            max_steps,
+        result.push(ParsedAgent {
+            id: id.to_string(),
+            frontmatter,
             system,
-            path: path.clone(),
+            path,
             content,
         });
     }
-    Ok(())
+    result
+}
+
+fn overlay_agent(base: &mut AgentInfo, parsed: &ParsedAgent) {
+    if let Some(v) = parsed.frontmatter.get("title") {
+        base.title = v.clone();
+    }
+    if let Some(v) = parsed.frontmatter.get("description") {
+        base.description = v.clone();
+    }
+    if let Some(v) = parsed.frontmatter.get("mode") {
+        base.mode = v.clone();
+    }
+    if let Some(v) = parsed.frontmatter.get("steps") {
+        if let Ok(n) = v.parse::<u32>() {
+            base.max_steps = n;
+        }
+    }
+    if let Some(v) = parsed.frontmatter.get("hidden") {
+        base.hidden = v == "true";
+    }
+    if !parsed.system.trim().is_empty() {
+        base.system = parsed.system.clone();
+    }
+    base.path = parsed.path.clone();
+    base.content = parsed.content.clone();
+}
+
+fn parsed_to_agent(parsed: &ParsedAgent) -> AgentInfo {
+    AgentInfo {
+        title: parsed
+            .frontmatter
+            .get("title")
+            .cloned()
+            .or_else(|| first_heading(&parsed.system))
+            .unwrap_or_else(|| parsed.id.clone()),
+        description: parsed
+            .frontmatter
+            .get("description")
+            .cloned()
+            .or_else(|| first_nonempty_paragraph(&parsed.system))
+            .unwrap_or_else(|| parsed.id.clone()),
+        mode: parsed
+            .frontmatter
+            .get("mode")
+            .cloned()
+            .unwrap_or_else(|| "primary".to_string()),
+        hidden: parsed
+            .frontmatter
+            .get("hidden")
+            .map(|v| v == "true")
+            .unwrap_or(false),
+        max_steps: parsed
+            .frontmatter
+            .get("steps")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(50),
+        system: parsed.system.clone(),
+        id: parsed.id.clone(),
+        path: parsed.path.clone(),
+        content: parsed.content.clone(),
+    }
 }
 
 fn first_heading(content: &str) -> Option<String> {
@@ -215,7 +272,7 @@ fn builtin_agents() -> Vec<AgentInfo> {
             id: "plan".to_string(),
             title: "Plan".to_string(),
             description: "Plan mode. Disallows all edit tools.".to_string(),
-            mode: "primary".to_string(),
+            mode: "plan".to_string(),
             hidden: false,
             max_steps: 200,
             system: BUILTIN_PLAN_SYSTEM.to_string(),
@@ -396,17 +453,49 @@ mod tests {
     }
 
     #[test]
-    fn preserves_nested_agent_paths() {
+    fn project_agent_overlays_builtin() {
         let dir = tempfile::tempdir().unwrap();
-        let agents = dir.path().join(".openrust").join("agents").join("nested");
+        let agents = dir.path().join(".openrust").join("agents");
         std::fs::create_dir_all(&agents).unwrap();
-        std::fs::write(agents.join("custom-review.md"), "# Review\nReview agent.").unwrap();
+        std::fs::write(
+            agents.join("build.md"),
+            "---\ntitle: Custom Build\nmode: explore\nsteps: 10\n---\n# My Build\nCustom system.",
+        )
+        .unwrap();
 
         let list = load_agents(dir.path()).unwrap();
-        assert_eq!(
-            agent_by_id(&list, "nested/custom-review").unwrap().id,
-            "nested/custom-review"
-        );
+        let agent = agent_by_id(&list, "build").unwrap();
+        assert_eq!(agent.title, "Custom Build");
+        assert_eq!(agent.mode, "explore");
+        assert_eq!(agent.max_steps, 10);
+        assert!(agent.system.contains("Custom system"));
+    }
+
+    #[test]
+    fn overlay_preserves_builtin_fields_when_omitted() {
+        let dir = tempfile::tempdir().unwrap();
+        let agents = dir.path().join(".openrust").join("agents");
+        std::fs::create_dir_all(&agents).unwrap();
+        std::fs::write(agents.join("build.md"), "New system only.").unwrap();
+
+        let list = load_agents(dir.path()).unwrap();
+        let agent = agent_by_id(&list, "build").unwrap();
+        assert_eq!(agent.title, "Build");
+        assert_eq!(agent.mode, "primary");
+        assert_eq!(agent.max_steps, 50);
+        assert_eq!(agent.system.trim(), "New system only.");
+    }
+
+    #[test]
+    fn agent_id_is_filename_stem() {
+        let dir = tempfile::tempdir().unwrap();
+        let agents = dir.path().join(".openrust").join("agents");
+        std::fs::create_dir_all(&agents).unwrap();
+        std::fs::write(agents.join("MyAgent.md"), "# My Agent").unwrap();
+
+        let list = load_agents(dir.path()).unwrap();
+        assert!(agent_by_id(&list, "MyAgent").is_some());
+        assert!(agent_by_id(&list, "myagent").is_none());
     }
 
     #[test]

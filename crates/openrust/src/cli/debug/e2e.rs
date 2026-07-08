@@ -83,7 +83,6 @@ fn render_run_system(run_config: &E2eRunConfig) -> anyhow::Result<String> {
     Ok(SystemPrompt::from_config(
         &run_config.config,
         &run_config.resolved,
-        run_config.config.mode.clone(),
     )?
     .render())
 }
@@ -115,7 +114,6 @@ mod tests {
     fn resolve_run_config_errors_without_model() {
         let err = resolve_run_config(Config {
             model: None,
-            mode: None,
             provider: HashMap::from([(
                 "deepseek".to_string(),
                 ProviderConfig {
@@ -135,7 +133,6 @@ mod tests {
     fn create_run_provider_errors_without_api_key() {
         let run_config = resolve_run_config(Config {
             model: Some("missing-key-provider/deepseek-chat".to_string()),
-            mode: None,
             provider: HashMap::from([(
                 "missing-key-provider".to_string(),
                 ProviderConfig {
@@ -164,7 +161,6 @@ mod tests {
         let run_config = E2eRunConfig {
             config: Config {
                 model: None,
-                mode: None,
                 provider: HashMap::new(),
             },
             provider_name: "deepseek".to_string(),

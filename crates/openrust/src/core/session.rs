@@ -12,7 +12,6 @@ pub struct Session {
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
-    pub mode: Option<String>,
     #[serde(default)]
     pub agent: Option<String>,
     pub created_at: String,
@@ -58,7 +57,6 @@ pub struct SessionSummary {
     pub id: String,
     pub title: Option<String>,
     pub summary: Option<String>,
-    pub mode: Option<String>,
     pub agent: Option<String>,
     pub message_count: usize,
     pub created_at: String,
@@ -113,7 +111,6 @@ impl SessionStore {
                     id: session.id,
                     title: session.title,
                     summary: session.summary,
-                    mode: session.mode,
                     agent: session.agent,
                     message_count,
                     created_at: session.created_at,
@@ -263,7 +260,7 @@ impl SessionStore {
         Ok(())
     }
 
-    pub fn ensure_session(&self, id: &str, mode: Option<String>) -> anyhow::Result<Session> {
+    pub fn ensure_session(&self, id: &str) -> anyhow::Result<Session> {
         if let Some(session) = self.get_session(id)? {
             return Ok(session);
         }
@@ -273,7 +270,6 @@ impl SessionStore {
             id: id.to_string(),
             title: None,
             summary: None,
-            mode,
             agent: None,
             created_at: now.clone(),
             updated_at: now,
@@ -533,7 +529,7 @@ mod tests {
         {
             let store = SessionStore::open_at(dir.path()).unwrap();
             store
-                .ensure_session("session-1", Some("build".to_string()))
+                .ensure_session("session-1")
                 .unwrap();
             store.append_message("session-1", "user", "hello").unwrap();
             store
@@ -548,7 +544,6 @@ mod tests {
 
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].id, "session-1");
-        assert_eq!(sessions[0].mode.as_deref(), Some("build"));
         assert_eq!(sessions[0].message_count, 2);
 
         let messages = store.get_messages("session-1").unwrap();
@@ -563,7 +558,7 @@ mod tests {
     fn session_store_persists_tasks() {
         let dir = tempfile::tempdir().unwrap();
         let store = SessionStore::open_at(dir.path()).unwrap();
-        store.ensure_session("session-4", None).unwrap();
+        store.ensure_session("session-4").unwrap();
         store
             .upsert_task(
                 "session-4",
@@ -591,7 +586,7 @@ mod tests {
         {
             let store = SessionStore::open_at(dir.path()).unwrap();
             store
-                .ensure_session("session-5", Some("build".to_string()))
+                .ensure_session("session-5")
                 .unwrap();
             store
                 .set_session_agent("session-5", Some("review".to_string()))
@@ -614,7 +609,7 @@ mod tests {
     fn replace_messages_overwrites_history() {
         let dir = tempfile::tempdir().unwrap();
         let store = SessionStore::open_at(dir.path()).unwrap();
-        store.ensure_session("session-6", None).unwrap();
+        store.ensure_session("session-6").unwrap();
         store.append_message("session-6", "user", "one").unwrap();
         store
             .append_message("session-6", "assistant", "two")
@@ -645,7 +640,7 @@ mod tests {
     fn effective_messages_follow_latest_compaction_checkpoint() {
         let dir = tempfile::tempdir().unwrap();
         let store = SessionStore::open_at(dir.path()).unwrap();
-        store.ensure_session("session-7", None).unwrap();
+        store.ensure_session("session-7").unwrap();
         store
             .append_message("session-7", "user", "old one")
             .unwrap();
@@ -673,13 +668,12 @@ mod tests {
     fn open_at_reuses_existing_session() {
         let dir = tempfile::tempdir().unwrap();
         let store = SessionStore::open_at(dir.path()).unwrap();
-        store.ensure_session("session-2", None).unwrap();
+        store.ensure_session("session-2").unwrap();
 
         let session = store
-            .ensure_session("session-2", Some("plan".to_string()))
+            .ensure_session("session-2")
             .unwrap();
         assert_eq!(session.id, "session-2");
-        assert_eq!(session.mode, None);
     }
 
     #[test]
@@ -688,7 +682,7 @@ mod tests {
         let store = SessionStore::open_at(dir.path()).unwrap();
 
         store
-            .ensure_session("session-3", Some("build".to_string()))
+            .ensure_session("session-3")
             .unwrap();
         store
             .append_message("session-3", "system", "stable prefix")

@@ -3,7 +3,6 @@
 use crate::core::config::{Config, ResolvedProvider};
 
 pub struct SystemPrompt {
-    pub mode: String,
     pub provider: String,
     pub model: String,
     pub cwd: String,
@@ -24,7 +23,7 @@ impl SystemPrompt {
         sections.push(render_section("constraint", &render_constraint()));
         sections.push(render_section(
             "identity",
-            &render_identity(&self.provider, &self.model, &self.mode),
+            &render_identity(&self.provider, &self.model),
         ));
         sections.push(render_section("environment", &render_environment(self)));
         sections.push(render_section(
@@ -47,7 +46,6 @@ impl SystemPrompt {
     pub fn from_config(
         config: &Config,
         provider: &ResolvedProvider,
-        mode: Option<String>,
     ) -> anyhow::Result<Self> {
         let cwd = std::env::current_dir()
             .unwrap_or_else(|_| std::path::PathBuf::from("."))
@@ -60,9 +58,6 @@ impl SystemPrompt {
         let platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
 
         Ok(Self {
-            mode: mode
-                .or_else(|| config.mode.clone())
-                .unwrap_or_else(|| "build".to_string()),
             provider: provider.name.clone(),
             model: config
                 .resolve_provider_model()
@@ -93,13 +88,10 @@ fn render_constraint() -> String {
     .join("\n")
 }
 
-fn render_identity(provider: &str, model: &str, mode: &str) -> String {
+fn render_identity(provider: &str, model: &str) -> String {
     [
         format!("provider={provider}"),
         format!("model={model}"),
-        String::new(),
-        "## Mode".to_string(),
-        format!("mode={mode}"),
     ]
     .join("\n")
 }
@@ -260,9 +252,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn render_keeps_fixed_sections_and_mode_block() {
+    fn render_keeps_fixed_sections() {
         let prompt = SystemPrompt {
-            mode: "build".to_string(),
             provider: "deepseek".to_string(),
             model: "deepseek/deepseek-v4-pro".to_string(),
             cwd: "/tmp/project".to_string(),
@@ -281,14 +272,12 @@ mod tests {
         assert!(prompt.contains("<instructions>"));
         assert!(prompt.contains("<capabilities>"));
         assert!(prompt.contains("<style>"));
-        assert!(prompt.contains("mode=build"));
     }
 
     #[test]
     fn from_config_uses_explicit_config_model() {
         let config = Config {
             model: Some("deepseek/deepseek-v4-pro".to_string()),
-            mode: None,
             provider: std::collections::HashMap::from([(
                 "deepseek".to_string(),
                 crate::core::config::ProviderConfig {
@@ -316,9 +305,8 @@ mod tests {
         };
 
         let prompt =
-            SystemPrompt::from_config(&config, &provider, Some("plan".to_string())).unwrap();
+            SystemPrompt::from_config(&config, &provider).unwrap();
 
-        assert_eq!(prompt.mode, "plan");
         assert_eq!(prompt.provider, "deepseek");
         assert_eq!(prompt.model, "deepseek-v4-pro");
     }
@@ -334,7 +322,7 @@ mod tests {
             options: None,
         };
 
-        assert!(SystemPrompt::from_config(&config, &provider, Some("plan".to_string())).is_err());
+        assert!(SystemPrompt::from_config(&config, &provider).is_err());
     }
 
     #[test]

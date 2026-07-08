@@ -17,7 +17,7 @@ impl SessionView {
         self.view_mode = ViewMode::Session;
         if let Some(store) = &self.store {
             let agent = self.default_agent_id();
-            let _ = store.ensure_session(&self.session_id, None);
+            let _ = store.ensure_session(&self.session_id);
             let _ = store.set_session_agent(&self.session_id, agent.clone());
         }
         self.note(format!("session: created {}", self.session_id));
@@ -120,7 +120,6 @@ impl SessionView {
         let system = crate::system_prompt::SystemPrompt::from_config(
             &self.config,
             &resolved,
-            self.config.mode.clone(),
         )?
         .render();
 

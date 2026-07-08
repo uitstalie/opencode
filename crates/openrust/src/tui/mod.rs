@@ -74,7 +74,6 @@ pub fn run(script: Option<PathBuf>, prompt: Option<String>) -> anyhow::Result<()
                 let system = crate::system_prompt::SystemPrompt::from_config(
                     &config,
                     &resolved,
-                    config.mode.clone(),
                 )
                 .ok()
                 .map(|prompt| prompt.render())
@@ -159,7 +158,7 @@ impl SessionView {
             }
         };
         if let Some(store) = &store {
-            let _ = store.ensure_session(&session_id, None);
+            let _ = store.ensure_session(&session_id);
             let cleanup_age = 30 * 24 * 60 * 60;
             match store.cleanup_old_sessions(cleanup_age) {
                 Ok(0) => {}

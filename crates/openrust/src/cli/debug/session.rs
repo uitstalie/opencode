@@ -32,7 +32,6 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
                 "Title:   {}",
                 session.title.as_deref().unwrap_or("(untitled)")
             );
-            println!("Mode:    {}", session.mode.as_deref().unwrap_or("(unset)"));
             println!("Created: {}", session.created_at);
             println!("Updated: {}", session.updated_at);
             println!();
@@ -59,10 +58,9 @@ fn print_list(sessions: &[crate::core::session::SessionSummary]) {
 
     for session in sessions {
         println!(
-            "{}  messages={}  mode={}  agent={}  title={}  updated={}",
+            "{}  messages={}  agent={}  title={}  updated={}",
             session.id,
             session.message_count,
-            session.mode.as_deref().unwrap_or("(unset)"),
             session.agent.as_deref().unwrap_or("(default)"),
             session.title.as_deref().unwrap_or("(untitled)"),
             session.updated_at,
@@ -81,7 +79,6 @@ mod tests {
             id: "session-1".to_string(),
             title: Some("Build".to_string()),
             summary: None,
-            mode: Some("build".to_string()),
             agent: Some("review".to_string()),
             message_count: 2,
             created_at: "1".to_string(),
