@@ -86,16 +86,26 @@ impl SessionView {
             .or_else(|| self.default_agent_id())
     }
 
+    /// Single `load_agents()` call that resolves the current session's agent.
+    /// All per-turn agent lookups (system, max_steps, mode) go through here.
+    fn current_agent_info(&self) -> Option<agent::AgentInfo> {
+        let agents = agent::load_agents(&self.cwd).ok()?;
+        let agent_id = self
+            .store
+            .as_ref()
+            .and_then(|s| s.get_session_agent(&self.session_id).ok().flatten())
+            .or_else(|| agent::default_agent_id(&agents))?;
+        agents.into_iter().find(|a| a.id == agent_id)
+    }
+
     pub(super) fn effective_system(&self) -> String {
         let mut system = self.system.clone();
-        let Some(agent_id) = self.current_session_agent() else {
-            return system;
-        };
-        let Some(agent_system) = self.agent_system(&agent_id) else {
-            return system;
-        };
-        system.push_str("\n\n");
-        system.push_str(&agent_system);
+        if let Some(info) = self.current_agent_info() {
+            if !info.system.is_empty() {
+                system.push_str("\n\n");
+                system.push_str(&info.system);
+            }
+        }
         system
     }
 
@@ -130,36 +140,13 @@ impl SessionView {
         Ok(())
     }
 
-    pub(super) fn agent_system(&self, agent_id: &str) -> Option<String> {
-        let agents = agent::load_agents(&self.cwd).ok()?;
-        if let Some(agent) = agents.iter().find(|item| item.id == agent_id) {
-            return Some(agent.system.clone());
-        }
-        agent::builtin_agent_system(agent_id).map(str::to_string)
-    }
-
     pub(super) fn current_agent_max_steps(&self) -> u32 {
-        let agent_id = self.current_session_agent();
-        if let Some(id) = agent_id {
-            if let Ok(agents) = agent::load_agents(&self.cwd) {
-                if let Some(info) = agents.iter().find(|item| item.id == id) {
-                    return info.max_steps;
-                }
-            }
-        }
-        50
+        self.current_agent_info().map_or(50, |a| a.max_steps)
     }
 
     pub(super) fn current_agent_mode(&self) -> String {
-        let agent_id = self.current_session_agent();
-        if let Some(id) = agent_id {
-            if let Ok(agents) = agent::load_agents(&self.cwd) {
-                if let Some(info) = agents.iter().find(|item| item.id == id) {
-                    return info.mode.clone();
-                }
-            }
-        }
-        "all".to_string()
+        self.current_agent_info()
+            .map_or("primary".to_string(), |a| a.mode)
     }
 
     pub(super) fn current_context_window(&self) -> u64 {
