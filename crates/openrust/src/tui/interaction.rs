@@ -4,7 +4,7 @@ use crossterm::event::{self, KeyCode, KeyModifiers, MouseButton, MouseEvent, Mou
 use ratatui::{Terminal, backend::CrosstermBackend};
 use ratatui::{style::Modifier, text::{Line, Span}};
 
-use super::{SessionRenderLine, SessionView, ThinkingMode, display_message_lines};
+use super::{SessionRenderLine, SessionView, ThinkingMode, ToolState, display_message_lines};
 
 impl SessionView {
     pub(super) fn handle_global_copy_key(&mut self, key: event::KeyEvent) -> anyhow::Result<bool> {
@@ -12,11 +12,10 @@ impl SessionView {
             return Ok(false);
         }
 
-        if key.modifiers.contains(KeyModifiers::SHIFT) {
-            if self.copy_current_input()? {
+        if key.modifiers.contains(KeyModifiers::SHIFT)
+            && self.copy_current_input()? {
                 return Ok(true);
             }
-        }
 
         if self.copy_selected_session_text()? {
             return Ok(true);
@@ -257,8 +256,8 @@ impl SessionView {
             }
         }
 
-        if self.ai_running && !self.thinking_preview.trim().is_empty() {
-            if self.thinking_mode == ThinkingMode::Show {
+        if self.ai_running && !self.thinking_preview.trim().is_empty()
+            && self.thinking_mode == ThinkingMode::Show {
                 all_rows.push(SessionRenderLine {
                     line: Line::from(vec![Span::styled(
                         "thinking".to_string(),
@@ -276,7 +275,6 @@ impl SessionView {
                     });
                 }
             }
-        }
 
         if self.ai_running && !self.assistant_preview.trim().is_empty() {
             all_rows.push(SessionRenderLine {
@@ -295,6 +293,37 @@ impl SessionView {
                     tool_message_index: None,
                 });
             }
+        }
+
+        // Live tool-call cards: created/running, before results land.
+        for tool in &self.pending_tool_calls {
+            let frame = spinner_frame();
+            let label = match tool.state {
+                ToolState::Created => "created",
+                ToolState::Running => "running",
+            };
+            all_rows.push(SessionRenderLine {
+                line: Line::from(Span::styled(
+                    "tool".to_string(),
+                    self.theme.tool_style().add_modifier(Modifier::BOLD),
+                )),
+                text: "tool".to_string(),
+                tool_message_index: None,
+            });
+            all_rows.push(SessionRenderLine {
+                line: Line::from(vec![
+                    Span::styled(format!("{frame} "), self.theme.tool_style()),
+                    Span::styled(tool.name.clone(), self.theme.tool_style()),
+                    Span::styled(format!("  [{label}]"), self.theme.muted_style()),
+                ]),
+                text: format!("{frame} {}  [{label}]", tool.name),
+                tool_message_index: None,
+            });
+            all_rows.push(SessionRenderLine {
+                line: Line::from(""),
+                text: String::new(),
+                tool_message_index: None,
+            });
         }
 
         if all_rows.is_empty() {
@@ -377,4 +406,13 @@ impl SessionView {
             result
         }
     }
+}
+
+fn spinner_frame() -> char {
+    const FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    FRAMES[(ms / 100) as usize % FRAMES.len()]
 }

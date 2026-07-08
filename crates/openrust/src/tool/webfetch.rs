@@ -184,15 +184,13 @@ fn strip_html(html: &str) -> String {
             in_tag = false;
             let end = i.min(lower.len() - 1);
             let ctx = &lower[i.saturating_sub(10)..=end];
-            if ctx.contains("</p")
+            if (ctx.contains("</p")
                 || ctx.contains("</div")
                 || ctx.contains("</h")
-                || ctx.contains("<br")
-            {
-                if !out.ends_with('\n') {
+                || ctx.contains("<br"))
+                && !out.ends_with('\n') {
                     out.push('\n');
                 }
-            }
             continue;
         }
         if in_tag || in_script || in_style {

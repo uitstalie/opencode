@@ -17,22 +17,23 @@ impl SystemPrompt {
         let shell_kind = crate::tool::shell::detect_shell_kind();
         let cwd = std::path::Path::new(&self.cwd);
         let skills = crate::tool::skill::list_skills_for_cwd(cwd);
-        let mut sections = Vec::new();
-        sections.push(render_section("constraint", &render_constraint()));
-        sections.push(render_section(
-            "identity",
-            &render_identity(&self.provider, &self.model, &self.mode),
-        ));
-        sections.push(render_section("environment", &render_environment(self)));
-        sections.push(render_section(
-            "instructions",
-            &render_instructions(&self.config_path),
-        ));
-        sections.push(render_section(
-            "capabilities",
-            &render_capabilities(shell_kind, &skills),
-        ));
-        sections.push(render_section("style", &render_style()));
+        let sections = [
+            render_section("constraint", &render_constraint()),
+            render_section(
+                "identity",
+                &render_identity(&self.provider, &self.model, &self.mode),
+            ),
+            render_section("environment", &render_environment(self)),
+            render_section(
+                "instructions",
+                &render_instructions(&self.config_path),
+            ),
+            render_section(
+                "capabilities",
+                &render_capabilities(shell_kind, &skills),
+            ),
+            render_section("style", &render_style()),
+        ];
         sections.join("\n\n")
     }
 
@@ -226,6 +227,7 @@ mod tests {
                     options: None,
                 },
             )]),
+            presets: std::collections::HashMap::new(),
         };
         let provider = ResolvedProvider {
             name: "deepseek".to_string(),

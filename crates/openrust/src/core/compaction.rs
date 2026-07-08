@@ -183,7 +183,7 @@ pub fn trim_history(
         while i > 0 {
             i -= 1;
             let m = &messages[i];
-            if m.role == "assistant" && m.tool_calls.as_ref().map_or(false, |tc| !tc.is_empty()) {
+            if m.role == "assistant" && m.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty()) {
                 keep_from = i;
                 found = true;
                 break;
@@ -205,7 +205,7 @@ pub fn trim_history(
             crate::core::provider::Message {
                 role: "system".to_string(),
                 content: crate::core::provider::MessageContent::text(
-                    &format!("[history trimmed: {trimmed} older messages removed to fit context window]"),
+                    format!("[history trimmed: {trimmed} older messages removed to fit context window]"),
                 ),
                 name: None,
                 tool_call_id: None,

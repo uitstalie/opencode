@@ -174,30 +174,73 @@ pub fn create_tool(name: &str, undo_store: Option<Arc<UndoStore>>) -> Option<Box
     }
 }
 
-const WRITE_TOOLS: &[&str] = &["write", "edit", "rm", "apply_patch", "bash"];
 const SUBTASK_EXCLUDE: &[&str] = &["task", "question"];
 
-/// Returns the tool names that should be available for a given agent mode and
-/// subagent context. Plan mode strips write tools; subagents strip task/question.
-pub fn tools_for_mode(mode: &str, is_subagent: bool) -> Vec<&'static ToolMeta> {
-    let is_plan = mode == "plan" || mode == "explore";
-    TOOL_CATALOG
-        .iter()
-        .filter(|meta| {
-            if is_plan && WRITE_TOOLS.contains(&meta.name) {
-                return false;
-            }
-            if is_subagent && SUBTASK_EXCLUDE.contains(&meta.name) {
-                return false;
-            }
-            true
-        })
+/// Resolve a frontmatter `tools` spec into concrete tool metadata.
+///
+/// `spec` accepts:
+/// - empty or `"all"` — every tool
+/// - `"none"` — no tools
+/// - a builtin preset: `read_only`, `no_write`, `no_internet`
+/// - a custom preset from config `presets` (overrides builtins on key clash)
+/// - an explicit bracketed list: `[read, grep, bash]`
+/// - a single tool name
+///
+/// When `is_subagent` is true, `task` and `question` are always excluded.
+pub fn resolve_tool_names(
+    spec: &str,
+    custom_presets: &std::collections::HashMap<String, Vec<String>>,
+    is_subagent: bool,
+) -> Vec<&'static ToolMeta> {
+    resolve_preset_names(spec, custom_presets)
+        .into_iter()
+        .filter_map(tool_meta)
+        .filter(|meta| !(is_subagent && SUBTASK_EXCLUDE.contains(&meta.name)))
         .collect()
+}
+
+fn resolve_preset_names(
+    spec: &str,
+    custom_presets: &std::collections::HashMap<String, Vec<String>>,
+) -> Vec<&'static str> {
+    let trimmed = spec.trim();
+
+    // Explicit list: [read, grep, bash]
+    if let Some(inner) = trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        return inner
+            .split(',')
+            .map(|s| s.trim().trim_matches('"').trim_matches('\''))
+            .filter_map(|name| tool_meta(name).map(|meta| meta.name))
+            .collect();
+    }
+
+    let all_names: Vec<&'static str> = TOOL_CATALOG.iter().map(|meta| meta.name).collect();
+    let exclude = |drop: &[&str]| -> Vec<&'static str> {
+        all_names.iter().filter(|n| !drop.contains(n)).copied().collect()
+    };
+
+    // Config preset overlays builtins.
+    if let Some(list) = custom_presets.get(trimmed) {
+        return list
+            .iter()
+            .filter_map(|name| tool_meta(name.as_str()).map(|meta| meta.name))
+            .collect();
+    }
+
+    match trimmed {
+        "" | "all" => all_names,
+        "none" => Vec::new(),
+        "read_only" => exclude(&["write", "edit", "apply_patch", "rm", "bash"]),
+        "no_write" => exclude(&["write", "edit", "apply_patch", "rm"]),
+        "no_internet" => exclude(&["webfetch", "websearch"]),
+        other => tool_meta(other).map(|meta| vec![meta.name]).unwrap_or_default(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn tool_names_cover_all_catalog_entries() {
@@ -228,5 +271,74 @@ mod tests {
                 |(category, names)| *category == ToolCategory::Shell && names.contains(&"bash")
             )
         );
+    }
+
+    #[test]
+    fn read_only_strips_write_and_shell_tools() {
+        let tools = resolve_tool_names("read_only", &HashMap::new(), false);
+        let names: Vec<&str> = tools.iter().map(|t| t.name).collect();
+        assert!(!names.contains(&"write"));
+        assert!(!names.contains(&"edit"));
+        assert!(!names.contains(&"bash"));
+        assert!(names.contains(&"read"));
+        assert!(names.contains(&"grep"));
+        assert!(names.contains(&"webfetch"));
+    }
+
+    #[test]
+    fn all_preset_keeps_write_tools() {
+        let tools = resolve_tool_names("all", &HashMap::new(), false);
+        let names: Vec<&str> = tools.iter().map(|t| t.name).collect();
+        assert!(names.contains(&"write"));
+        assert!(names.contains(&"read"));
+    }
+
+    #[test]
+    fn empty_spec_defaults_to_all() {
+        let tools = resolve_tool_names("", &HashMap::new(), false);
+        assert_eq!(tools.len(), TOOL_CATALOG.len());
+    }
+
+    #[test]
+    fn none_preset_is_empty() {
+        let tools = resolve_tool_names("none", &HashMap::new(), false);
+        assert!(tools.is_empty());
+    }
+
+    #[test]
+    fn explicit_list_resolves_named_tools() {
+        let tools = resolve_tool_names("[read, grep, bash]", &HashMap::new(), false);
+        let names: Vec<&str> = tools.iter().map(|t| t.name).collect();
+        assert_eq!(names, vec!["read", "grep", "bash"]);
+    }
+
+    #[test]
+    fn custom_preset_defines_new_set() {
+        let mut presets = HashMap::new();
+        presets.insert(
+            "research".to_string(),
+            vec!["read".to_string(), "grep".to_string()],
+        );
+        let tools = resolve_tool_names("research", &presets, false);
+        let names: Vec<&str> = tools.iter().map(|t| t.name).collect();
+        assert_eq!(names, vec!["read", "grep"]);
+    }
+
+    #[test]
+    fn custom_preset_overrides_builtin() {
+        let mut presets = HashMap::new();
+        presets.insert("read_only".to_string(), vec!["read".to_string()]);
+        let tools = resolve_tool_names("read_only", &presets, false);
+        let names: Vec<&str> = tools.iter().map(|t| t.name).collect();
+        assert_eq!(names, vec!["read"]);
+    }
+
+    #[test]
+    fn subagent_excludes_task_and_question() {
+        let tools = resolve_tool_names("all", &HashMap::new(), true);
+        let names: Vec<&str> = tools.iter().map(|t| t.name).collect();
+        assert!(!names.contains(&"task"));
+        assert!(!names.contains(&"question"));
+        assert!(names.contains(&"read"));
     }
 }

@@ -139,14 +139,13 @@ fn list_skills_impl(dirs: &[PathBuf]) -> Vec<SkillEntry> {
             if !skill_file.exists() {
                 continue;
             }
-            if let Some(name) = skill_path.file_name().and_then(|n| n.to_str()) {
-                if seen.insert(name.to_string()) {
+            if let Some(name) = skill_path.file_name().and_then(|n| n.to_str())
+                && seen.insert(name.to_string()) {
                     entries.push(SkillEntry {
                         name: name.to_string(),
                         path: skill_file,
                     });
                 }
-            }
         }
     }
     entries.sort_by(|a, b| a.name.cmp(&b.name));

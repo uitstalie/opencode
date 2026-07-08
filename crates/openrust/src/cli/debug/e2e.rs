@@ -45,7 +45,7 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn load_run_config(cwd: &std::path::PathBuf) -> anyhow::Result<E2eRunConfig> {
+fn load_run_config(cwd: &std::path::Path) -> anyhow::Result<E2eRunConfig> {
     let project_path = cwd.join("openrust.json");
     if project_path.exists() {
         Config::load_file(&project_path)?;
@@ -109,7 +109,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("openrust.json"), "{ nope").unwrap();
 
-        let err = load_run_config(&dir.path().to_path_buf()).unwrap_err();
+        let err = load_run_config(dir.path()).unwrap_err();
 
         assert_ne!(err.to_string(), "No provider configured");
     }
@@ -128,6 +128,7 @@ mod tests {
                     options: None,
                 },
             )]),
+            presets: HashMap::new(),
         })
         .unwrap_err();
 
@@ -148,6 +149,7 @@ mod tests {
                     options: None,
                 },
             )]),
+            presets: HashMap::new(),
         })
         .unwrap();
 
@@ -169,6 +171,7 @@ mod tests {
                 model: None,
                 mode: None,
                 provider: HashMap::new(),
+                presets: HashMap::new(),
             },
             provider_name: "deepseek".to_string(),
             resolved: crate::core::config::ResolvedProvider {

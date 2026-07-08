@@ -6,7 +6,7 @@ use std::io::IsTerminal;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -87,7 +87,7 @@ pub fn run(script: Option<PathBuf>, prompt: Option<String>) -> anyhow::Result<()
 
     let script_lines = script
         .as_ref()
-        .map(|path| load_script(path))
+        .map(load_script)
         .transpose()?
         .unwrap_or_default();
 
@@ -127,7 +127,11 @@ struct SessionView {
     diff_visible: bool,
     last_diff: Option<(String, String, String)>,
     prompt_job: Option<PromptJob>,
+    /// In-flight tool calls awaiting results, shown live with a spinner.
+    pending_tool_calls: Vec<PendingTool>,
     shutdown: Arc<AtomicBool>,
+    /// Per-turn abort flag; set by ESC to interrupt the in-flight worker.
+    abort: Arc<AtomicBool>,
     assistant_preview: String,
     thinking_preview: String,
     render: RenderState,
@@ -206,7 +210,9 @@ impl SessionView {
             diff_visible: false,
             last_diff: None,
             prompt_job: None,
+            pending_tool_calls: Vec::new(),
             shutdown: Arc::new(AtomicBool::new(false)),
+            abort: Arc::new(AtomicBool::new(false)),
             assistant_preview: String::new(),
             thinking_preview: String::new(),
             render: RenderState {
@@ -290,27 +296,25 @@ impl SessionView {
             let mut needs_render = self.pump_prompt_job()?;
             needs_render |= self.poll_ask_request();
             needs_render |= self.poll_permission_request();
-            if self.sidebar_visible {
-                if let Some(tree) = &mut self.sidebar {
+            if self.sidebar_visible
+                && let Some(tree) = &mut self.sidebar {
                     needs_render |= tree.poll_refresh();
                 }
-            }
             self.maybe_start_next_prompt(terminal)?;
             self.status = self.default_status_message();
-            if let Some(deadline) = self.ui.toast_deadline {
-                if Instant::now() >= deadline {
+            if let Some(deadline) = self.ui.toast_deadline
+                && Instant::now() >= deadline {
                     self.ui.toast = None;
                     self.ui.toast_deadline = None;
                     needs_render = true;
                 }
-            }
-            let poll_timeout = if self.prompt_job.is_some() || self.ai_running {
-                Duration::from_millis(1)
-            } else {
-                Duration::from_millis(33)
-            };
+            // 30fps tick: drives animation (tool spinner) while the AI is
+            // running, keeps input latency low while idle. On poll timeout we
+            // force a redraw when the AI is active so live elements keep
+            // animating even without new worker events.
+            let poll_timeout = Duration::from_millis(33);
             if !event::poll(poll_timeout)? {
-                if needs_render {
+                if needs_render || self.ai_running {
                     self.render_terminal(terminal)?;
                 }
                 continue;
@@ -350,6 +354,10 @@ impl SessionView {
                             handled_input = true;
                         } else {
                             match key.code {
+                                KeyCode::Esc if self.ai_running => {
+                                    self.abort_current_turn();
+                                    handled_input = true;
+                                }
                                 KeyCode::Esc if self.ui.dialog.is_some() => {
                                     self.ui.dialog = None;
                                     handled_input = true;
@@ -456,13 +464,12 @@ impl SessionView {
                                     handled_input = true;
                                 }
                                 KeyCode::Char(_) => {
-                                    if !key.modifiers.contains(KeyModifiers::CONTROL) {
-                                        if self.input_editor.input(textarea_input_from_key_event(key)) {
+                                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                                        && self.input_editor.input(textarea_input_from_key_event(key)) {
                                             self.sync_input_state();
                                             self.sync_slash_help();
                                             handled_input = true;
                                         }
-                                    }
                                 }
                                 KeyCode::Tab => {
                                     self.cycle_agent();
@@ -536,6 +543,13 @@ impl SessionView {
         self.ui.toast_deadline = Some(Instant::now() + Duration::from_secs(4));
     }
 
+    fn abort_current_turn(&mut self) {
+        if self.prompt_job.is_some() {
+            self.abort.store(true, Ordering::SeqCst);
+            self.note("aborting…".to_string());
+        }
+    }
+
     fn sync_slash_help(&mut self) {
         if !self.input.starts_with('/') {
             if matches!(
@@ -596,8 +610,24 @@ impl SessionView {
                     self.status = "AI thinking".to_string();
                     needs_render = true;
                 }
-                PromptEvent::ToolCall { name, .. } => {
+                PromptEvent::ToolCallStart { id, name } => {
+                    self.pending_tool_calls.push(PendingTool {
+                        id,
+                        name: name.clone(),
+                        state: ToolState::Created,
+                    });
                     self.status = format!("tool call: {}", name);
+                    needs_render = true;
+                }
+                PromptEvent::ToolRunning { id } => {
+                    if let Some(tool) = self
+                        .pending_tool_calls
+                        .iter_mut()
+                        .rev()
+                        .find(|t| t.id == id)
+                    {
+                        tool.state = ToolState::Running;
+                    }
                     needs_render = true;
                 }
                 PromptEvent::ToolBatch {
@@ -605,6 +635,7 @@ impl SessionView {
                     tool_calls,
                     results,
                 } => {
+                    self.pending_tool_calls.clear();
                     self.persist_message_detail(
                         "assistant",
                         &assistant,
@@ -688,10 +719,43 @@ impl SessionView {
                 PromptEvent::Error(err) => {
                     tracing::error!(error = %err, "prompt worker error");
                     self.note(format!("provider error: {}", err));
+                    self.pending_tool_calls.clear();
                     self.ai_running = false;
                     self.prompt_job = None;
                     self.assistant_preview.clear();
                     self.thinking_preview.clear();
+                    needs_render = true;
+                    self.generate_summary();
+                }
+                PromptEvent::Aborted => {
+                    // Salvage whatever assistant text streamed so far, drop the
+                    // queued prompts, then return to ready.
+                    if self.thinking_mode == ThinkingMode::Show
+                        && !self.thinking_preview.trim().is_empty()
+                    {
+                        self.display
+                            .push(render::DisplayMessage::new("thinking", &self.thinking_preview));
+                    }
+                    self.thinking_preview.clear();
+                    let assistant = self.assistant_preview.trim().to_string();
+                    if !assistant.is_empty() {
+                        self.messages.push(Message {
+                            role: "assistant".to_string(),
+                            content: MessageContent::text(assistant.clone()),
+                            name: None,
+                            tool_call_id: None,
+                            tool_calls: None,
+                        });
+                        self.persist_message("assistant", &assistant);
+                        self.display
+                            .push(render::DisplayMessage::new("assistant", &assistant));
+                    }
+                    self.pending_tool_calls.clear();
+                    self.ai_running = false;
+                    self.prompt_job = None;
+                    self.assistant_preview.clear();
+                    self.pending_prompts.clear();
+                    self.note("aborted".to_string());
                     needs_render = true;
                     self.generate_summary();
                 }

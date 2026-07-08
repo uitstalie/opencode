@@ -70,10 +70,12 @@ impl SessionView {
             .map(|index| (index + 1) % agents.len())
             .unwrap_or(0);
         let agent_id = Some(agents[next].id.clone());
+        let tools = agents[next].tools.clone();
         match store.set_session_agent(&self.session_id, agent_id.clone()) {
             Ok(()) => self.note(format!(
-                "agent: {}",
-                agent_id.as_deref().unwrap_or("default")
+                "agent: {} (tools: {})",
+                agent_id.as_deref().unwrap_or("default"),
+                tools
             )),
             Err(err) => self.note(format!("failed to set agent: {}", err)),
         }
@@ -141,25 +143,21 @@ impl SessionView {
 
     pub(super) fn current_agent_max_steps(&self) -> u32 {
         let agent_id = self.current_session_agent();
-        if let Some(id) = agent_id {
-            if let Ok(agents) = agent::load_agents(&self.cwd) {
-                if let Some(info) = agents.iter().find(|item| item.id == id) {
+        if let Some(id) = agent_id
+            && let Ok(agents) = agent::load_agents(&self.cwd)
+                && let Some(info) = agents.iter().find(|item| item.id == id) {
                     return info.max_steps;
                 }
-            }
-        }
         50
     }
 
-    pub(super) fn current_agent_mode(&self) -> String {
+    pub(super) fn current_agent_tools(&self) -> String {
         let agent_id = self.current_session_agent();
-        if let Some(id) = agent_id {
-            if let Ok(agents) = agent::load_agents(&self.cwd) {
-                if let Some(info) = agents.iter().find(|item| item.id == id) {
-                    return info.mode.clone();
+        if let Some(id) = agent_id
+            && let Ok(agents) = agent::load_agents(&self.cwd)
+                && let Some(info) = agents.iter().find(|item| item.id == id) {
+                    return info.tools.clone();
                 }
-            }
-        }
         "all".to_string()
     }
 
@@ -248,7 +246,7 @@ impl SessionView {
                     llm_clone.as_ref(),
                     &model,
                     &system,
-                    "subagent",
+                    "none",
                     5,
                     None,
                     vec![provider::Message::user(prompt)],
@@ -341,7 +339,7 @@ impl SessionView {
                 llm_clone.as_ref(),
                 &model,
                 &system,
-                "subagent",
+                "none",
                 3,
                 None,
                 vec![provider::Message::user(user_text)],
@@ -389,7 +387,7 @@ impl SessionView {
                 llm_clone.as_ref(),
                 &model,
                 &system,
-                "subagent",
+                "none",
                 3,
                 None,
                 vec![provider::Message::user(conversation)],

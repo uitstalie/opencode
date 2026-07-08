@@ -18,11 +18,10 @@ pub fn html_to_text(html: &str) -> String {
     while i < chars.len() {
         if chars[i] == '<' {
             let (tag, is_closing, _, end) = parse_tag(&chars, i);
-            if !is_closing && is_block_tag(&tag) {
-                if !result.is_empty() && !result.ends_with('\n') {
+            if !is_closing && is_block_tag(&tag)
+                && !result.is_empty() && !result.ends_with('\n') {
                     result.push('\n');
                 }
-            }
             i = end;
         } else if chars[i] == '&' {
             let (decoded, next) = decode_entity(&chars, i);
@@ -185,16 +184,14 @@ fn decode_entity(chars: &[char], start: usize) -> (String, usize) {
                 .strip_prefix('x')
                 .or_else(|| stripped.strip_prefix('X'))
             {
-                if let Ok(code) = u32::from_str_radix(hex, 16) {
-                    if let Some(c) = char::from_u32(code) {
+                if let Ok(code) = u32::from_str_radix(hex, 16)
+                    && let Some(c) = char::from_u32(code) {
                         return (c.to_string(), next);
                     }
-                }
-            } else if let Ok(code) = stripped.parse::<u32>() {
-                if let Some(c) = char::from_u32(code) {
+            } else if let Ok(code) = stripped.parse::<u32>()
+                && let Some(c) = char::from_u32(code) {
                     return (c.to_string(), next);
                 }
-            }
         }
 
         if let Some(s) = named_entity(&entity) {

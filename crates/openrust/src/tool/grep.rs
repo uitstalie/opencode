@@ -56,11 +56,10 @@ impl Tool for GrepTool {
                 if !entry.file_type().is_file() {
                     continue;
                 }
-                if let Some(inc) = include {
-                    if !match_ext(inc, &entry.file_name().to_string_lossy()) {
+                if let Some(inc) = include
+                    && !match_ext(inc, &entry.file_name().to_string_lossy()) {
                         continue;
                     }
-                }
                 search_file(entry.path(), &re, &mut results);
             }
         }

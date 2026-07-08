@@ -169,19 +169,16 @@ impl Vault {
             return;
         };
 
-        if let Some(p) = raw.get_mut("provider").and_then(|pv| pv.get_mut(provider)) {
-            if let Some(obj) = p.as_object_mut() {
-                if obj.remove("api_key").is_some() {
-                    if let Ok(json) = serde_json::to_string_pretty(&raw) {
+        if let Some(p) = raw.get_mut("provider").and_then(|pv| pv.get_mut(provider))
+            && let Some(obj) = p.as_object_mut()
+                && obj.remove("api_key").is_some()
+                    && let Ok(json) = serde_json::to_string_pretty(&raw) {
                         let _ = std::fs::write(&path, json);
                         tracing::info!(
                             "Removed plaintext api_key from config.json for '{}'",
                             provider
                         );
                     }
-                }
-            }
-        }
     }
 
     #[cfg(unix)]

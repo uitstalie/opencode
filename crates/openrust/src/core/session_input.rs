@@ -11,18 +11,15 @@ use serde::{Deserialize, Serialize};
 /// Delivery mode for a prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum Delivery {
     /// Immediate — injected into the active turn.
+    #[default]
     Steer,
     /// Queued — processed after the active turn settles.
     Queue,
 }
 
-impl Default for Delivery {
-    fn default() -> Self {
-        Delivery::Steer
-    }
-}
 
 /// An admitted (durable) session input row.
 #[derive(Debug, Clone, Serialize, Deserialize)]

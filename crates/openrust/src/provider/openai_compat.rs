@@ -197,18 +197,16 @@ impl LlmProvider for OpenAICompatProvider {
                         }
 
                         // Text content
-                        if let Some(content) = delta["content"].as_str() {
-                            if !content.is_empty() {
+                        if let Some(content) = delta["content"].as_str()
+                            && !content.is_empty() {
                                 yield Ok(StreamChunk::TextDelta(content.to_string()));
                             }
-                        }
 
                         // Reasoning content
-                        if let Some(reasoning) = delta["reasoning_content"].as_str() {
-                            if !reasoning.is_empty() {
+                        if let Some(reasoning) = delta["reasoning_content"].as_str()
+                            && !reasoning.is_empty() {
                                 yield Ok(StreamChunk::ReasoningDelta(reasoning.to_string()));
                             }
-                        }
 
                         // Finish reason
                         if choice["finish_reason"].as_str().is_some() {

@@ -85,11 +85,10 @@ impl SessionView {
                     .and_then(|v| v.as_str())
             });
         if let Some(p) = path {
-            if name == "read" {
-                if let Some((start, end)) = read_line_span(result) {
+            if name == "read"
+                && let Some((start, end)) = read_line_span(result) {
                     return format!("read {} L{}-{}", p, start, end);
                 }
-            }
             return format!("{} {}", name, p);
         }
         let preview = result.lines().next().unwrap_or("");

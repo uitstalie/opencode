@@ -82,13 +82,11 @@ impl UndoStore {
 
         if let Ok(entries) = std::fs::read_dir(&self.dir) {
             for entry in entries.flatten() {
-                if let Ok(meta) = entry.metadata() {
-                    if let Ok(modified) = meta.modified() {
-                        if modified < cutoff {
+                if let Ok(meta) = entry.metadata()
+                    && let Ok(modified) = meta.modified()
+                        && modified < cutoff {
                             let _ = std::fs::remove_file(entry.path());
                         }
-                    }
-                }
             }
         }
     }

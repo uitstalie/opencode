@@ -169,6 +169,10 @@ impl SessionView {
         let mut textarea = input.editor.clone();
         textarea.set_style(self.theme.dialog_selected_style());
         textarea.set_cursor_line_style(ratatui::style::Style::default());
+        // Soft cursor disabled: the hardware cursor is pinned via
+        // set_cursor_position in render_modal_layer, so showing both would
+        // produce a double-cursor artifact.
+        textarea.set_cursor_style(ratatui::style::Style::default());
         textarea.set_placeholder_text("输入后 Enter 保存 · Esc 取消");
         textarea.set_placeholder_style(self.theme.muted_style());
         textarea.set_block(
@@ -186,6 +190,9 @@ impl SessionView {
         let mut textarea = self.input_editor.clone();
         textarea.set_style(self.theme.input_style());
         textarea.set_cursor_line_style(ratatui::style::Style::default());
+        // Soft cursor disabled: the hardware cursor is pinned via
+        // set_cursor_position in place_input_cursor.
+        textarea.set_cursor_style(ratatui::style::Style::default());
         textarea.set_placeholder_text(if self.view_mode == ViewMode::Home {
             home_input_hint()
         } else {

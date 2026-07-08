@@ -261,6 +261,19 @@ pub(super) enum SlashCommand {
     Diff,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ToolState {
+    Created,
+    Running,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct PendingTool {
+    pub(super) id: String,
+    pub(super) name: String,
+    pub(super) state: ToolState,
+}
+
 pub(super) struct CacheStats {
     pub(super) hits: usize,
     pub(super) total: usize,

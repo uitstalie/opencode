@@ -26,7 +26,7 @@ mod tests {
     #[test]
     fn short_text() {
         let tokens = estimate("hello world");
-        assert!(tokens >= 2 && tokens <= 5);
+        assert!((2..=5).contains(&tokens));
     }
 
     #[test]
@@ -40,6 +40,6 @@ mod tests {
     fn code_snippet() {
         let code = "fn main() { println!(\"hello\"); }";
         let tokens = estimate(code);
-        assert!(tokens >= 8 && tokens <= 15);
+        assert!((8..=15).contains(&tokens));
     }
 }

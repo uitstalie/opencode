@@ -270,11 +270,10 @@ fn apply_hunk(ctx: &ToolContext, hunk: &Hunk) -> Result<String, String> {
         }
         Hunk::Delete { path } => {
             let resolved = resolve_path(ctx, path);
-            if let Some(store) = &ctx.undo_store {
-                if let Ok(existing) = std::fs::read_to_string(&resolved) {
+            if let Some(store) = &ctx.undo_store
+                && let Ok(existing) = std::fs::read_to_string(&resolved) {
                     store.save_snapshot(&resolved, &existing);
                 }
-            }
             std::fs::remove_file(&resolved).map_err(|e| format!("{}: {}", path, e))?;
             Ok(format!("D {}", path))
         }

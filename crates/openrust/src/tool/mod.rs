@@ -187,6 +187,8 @@ pub struct ToolContext {
     pub llm: Option<Arc<dyn crate::core::provider::LlmProvider>>,
     pub model: Option<String>,
     pub reasoning_effort: Option<String>,
+    /// Tool presets for resolving agent `tools` specs (config overlay + builtins).
+    pub presets: std::collections::HashMap<String, Vec<String>>,
 }
 
 impl ToolContext {
@@ -204,6 +206,7 @@ impl ToolContext {
             llm: None,
             model: None,
             reasoning_effort: None,
+            presets: std::collections::HashMap::new(),
         }
     }
 
@@ -335,6 +338,12 @@ pub trait Tool: Send + Sync {
 
 pub struct ToolRegistry {
     tools: HashMap<String, Box<dyn Tool>>,
+}
+
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ToolRegistry {

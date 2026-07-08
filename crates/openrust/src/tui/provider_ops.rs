@@ -134,9 +134,9 @@ impl SessionView {
 
     pub(super) fn reload_config(&mut self) {
         if let Ok(config) = Config::load(&self.cwd) {
-            if let Some((provider_name, model)) = config.resolve_provider_model() {
-                if let Some(resolved) = config.get_provider(&provider_name) {
-                    if let Some(llm) = provider::create_provider(&resolved) {
+            if let Some((provider_name, model)) = config.resolve_provider_model()
+                && let Some(resolved) = config.get_provider(&provider_name)
+                    && let Some(llm) = provider::create_provider(&resolved) {
                         self.provider_name = provider_name;
                         self.model = model;
                         if let Ok(system) = crate::system_prompt::SystemPrompt::from_config(
@@ -148,8 +148,6 @@ impl SessionView {
                         }
                         self.llm = Some(Arc::from(llm));
                     }
-                }
-            }
             self.config = config;
         }
     }
