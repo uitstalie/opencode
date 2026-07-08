@@ -259,6 +259,7 @@ pub(super) enum SlashCommand {
     Models(Vec<String>),
     Files,
     Diff,
+    Reload,
 }
 
 pub(super) struct CacheStats {

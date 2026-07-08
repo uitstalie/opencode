@@ -7,7 +7,7 @@ use super::diff;
 use super::render::{self, centered_rect};
 use super::util::{now_micros, single_line_textarea};
 use super::{ConnectDraft, PendingTextInput, SessionView, ThinkingModeCommand};
-use crate::core::{agent, config::{ModelConfig, ProviderConfig}, vault::Vault};
+use crate::core::{config::{ModelConfig, ProviderConfig}, vault::Vault};
 
 impl SessionView {
     pub(super) fn open_thinking_dialog(&mut self, mode: ThinkingModeCommand) {
@@ -167,16 +167,12 @@ impl SessionView {
                 }
             }
             _ => {
-                let Some(agents) = agent::load_agents(&self.cwd).ok() else {
-                    self.note("agent registry unavailable".to_string());
-                    return;
-                };
                 let mut options = vec![DialogOption::new(
                     "__default__",
                     "Default agent",
                     "Clear the session agent and use the default workflow.",
                 )];
-                options.extend(agents.iter().enumerate().map(|(index, info)| {
+                options.extend(self.agents.iter().enumerate().map(|(index, info)| {
                     let active =
                         if self.current_session_agent().as_deref() == Some(info.id.as_str()) {
                             "● "

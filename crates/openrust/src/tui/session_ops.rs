@@ -15,6 +15,7 @@ impl SessionView {
         self.display.clear();
         self.session_scroll = 0;
         self.view_mode = ViewMode::Session;
+        self.reload_agents();
         if let Some(store) = &self.store {
             let agent = self.default_agent_id();
             let _ = store.ensure_session(&self.session_id);
@@ -31,12 +32,11 @@ impl SessionView {
         let agent_id = if target == "__default__" {
             None
         } else {
-            let agents = agent::load_agents(&self.cwd).unwrap_or_default();
             let resolved = target
                 .parse::<usize>()
                 .ok()
                 .and_then(|index| {
-                    agents
+                    self.agents
                         .get(index.saturating_sub(1))
                         .map(|agent| agent.id.clone())
                 })
@@ -57,8 +57,7 @@ impl SessionView {
             self.note("session store unavailable".to_string());
             return;
         };
-        let loaded_agents = agent::load_agents(&self.cwd).unwrap_or_default();
-        let agents = agent::visible_agents(&loaded_agents);
+        let agents = agent::visible_agents(&self.agents);
         if agents.is_empty() {
             self.note("no visible agents available".to_string());
             return;
@@ -86,16 +85,14 @@ impl SessionView {
             .or_else(|| self.default_agent_id())
     }
 
-    /// Single `load_agents()` call that resolves the current session's agent.
-    /// All per-turn agent lookups (system, max_steps, mode) go through here.
-    fn current_agent_info(&self) -> Option<agent::AgentInfo> {
-        let agents = agent::load_agents(&self.cwd).ok()?;
+    /// Resolve the current session's agent from the cached `self.agents`.
+    fn current_agent_info(&self) -> Option<&agent::AgentInfo> {
         let agent_id = self
             .store
             .as_ref()
             .and_then(|s| s.get_session_agent(&self.session_id).ok().flatten())
-            .or_else(|| agent::default_agent_id(&agents))?;
-        agents.into_iter().find(|a| a.id == agent_id)
+            .or_else(|| agent::default_agent_id(&self.agents))?;
+        self.agents.iter().find(|a| a.id == agent_id)
     }
 
     pub(super) fn effective_system(&self) -> String {
@@ -140,13 +137,45 @@ impl SessionView {
         Ok(())
     }
 
+    /// Reload agents from disk (used on session create/switch).
+    fn reload_agents(&mut self) {
+        self.agents = agent::load_agents(&self.cwd).unwrap_or_default();
+    }
+
+    /// Hot-reload all file-based resources: config, agents, rules, AGENTS.md, skills.
+    /// Triggered by `/reload` command.
+    pub(super) fn reload_resources(&mut self) {
+        if let Ok(config) = crate::core::config::Config::load(&self.cwd) {
+            self.config = config;
+        }
+        self.reload_agents();
+
+        if let Some((provider_name, model)) = self.config.resolve_provider_model() {
+            if let Some(resolved) = self.config.get_provider(&provider_name) {
+                if let Ok(prompt) =
+                    crate::system_prompt::SystemPrompt::from_config(&self.config, &resolved)
+                {
+                    self.system = prompt.render();
+                    self.provider_name = provider_name;
+                    self.model = model;
+                    if let Some(new_llm) = provider::create_provider(&resolved) {
+                        self.llm = Some(Arc::from(new_llm));
+                    }
+                }
+            }
+        }
+
+        let agent_count = self.agents.len();
+        self.note(format!("reloaded config, agents ({agent_count}), rules, skills"));
+    }
+
     pub(super) fn current_agent_max_steps(&self) -> u32 {
         self.current_agent_info().map_or(50, |a| a.max_steps)
     }
 
     pub(super) fn current_agent_mode(&self) -> String {
         self.current_agent_info()
-            .map_or("primary".to_string(), |a| a.mode)
+            .map_or("primary".to_string(), |a| a.mode.clone())
     }
 
     pub(super) fn current_context_window(&self) -> u64 {
@@ -154,8 +183,7 @@ impl SessionView {
     }
 
     pub(super) fn default_agent_id(&self) -> Option<String> {
-        let agents = agent::load_agents(&self.cwd).ok()?;
-        agent::default_agent_id(&agents)
+        agent::default_agent_id(&self.agents)
     }
 
     pub(super) fn set_session_agent(&mut self, agent: Option<String>) {
@@ -417,6 +445,7 @@ impl SessionView {
         self.session_id = id.clone();
         self.session_scroll = 0;
         self.view_mode = ViewMode::Session;
+        self.reload_agents();
         self.messages = history
             .iter()
             .filter(|message| {

@@ -315,6 +315,10 @@ impl SessionView {
                 self.toggle_diff();
                 true
             }
+            SlashCommand::Reload => {
+                self.reload_resources();
+                true
+            }
         }
     }
 }

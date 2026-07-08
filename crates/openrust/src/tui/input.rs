@@ -39,6 +39,7 @@ pub(super) fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "/models" | "/model" => Some(SlashCommand::Models(parts.map(str::to_string).collect())),
         "/files" | "/tree" => Some(SlashCommand::Files),
         "/diff" => Some(SlashCommand::Diff),
+        "/reload" => Some(SlashCommand::Reload),
         _ => None,
     }
 }
