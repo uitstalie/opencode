@@ -98,14 +98,15 @@ impl Tool for SkillTool {
     }
 }
 
+fn skill_dirs(cwd: &Path) -> Vec<PathBuf> {
+    vec![
+        cwd.join(".openrust").join("skills"),
+        PlatformPaths::detect().config_dir().join("skills"),
+    ]
+}
+
 pub fn skill_directories(ctx: &ToolContext) -> Vec<PathBuf> {
-    let mut dirs = vec![
-        ctx.cwd.join(".openrust").join("skills"),
-        ctx.cwd.join(".opencode").join("skills"),
-        ctx.cwd.join("skills"),
-    ];
-    dirs.push(PlatformPaths::detect().config_dir().join("skills"));
-    dirs
+    skill_dirs(&ctx.cwd)
 }
 
 pub fn list_skill_names(ctx: &ToolContext) -> Vec<String> {
@@ -126,13 +127,7 @@ pub fn list_skills(ctx: &ToolContext) -> Vec<SkillEntry> {
 }
 
 pub fn list_skills_for_cwd(cwd: &Path) -> Vec<SkillEntry> {
-    let dirs = vec![
-        cwd.join(".openrust").join("skills"),
-        cwd.join(".opencode").join("skills"),
-        cwd.join("skills"),
-        PlatformPaths::detect().config_dir().join("skills"),
-    ];
-    list_skills_impl(&dirs)
+    list_skills_impl(&skill_dirs(cwd))
 }
 
 fn list_skills_impl(dirs: &[PathBuf]) -> Vec<SkillEntry> {
@@ -257,7 +252,7 @@ mod tests {
     #[tokio::test]
     async fn loads_skill_body() {
         let root = temp_dir();
-        let skill = root.join(".opencode").join("skills").join("demo");
+        let skill = root.join(".openrust").join("skills").join("demo");
         std::fs::create_dir_all(&skill).unwrap();
         std::fs::write(
             skill.join("SKILL.md"),
@@ -277,7 +272,7 @@ mod tests {
     #[tokio::test]
     async fn missing_skill_reports_available() {
         let root = temp_dir();
-        let skill = root.join("skills").join("present");
+        let skill = root.join(".openrust").join("skills").join("present");
         std::fs::create_dir_all(&skill).unwrap();
         std::fs::write(skill.join("SKILL.md"), "body").unwrap();
 
@@ -296,7 +291,7 @@ mod tests {
     async fn skill_from_skills_dir_overrides_global() {
         let root = temp_dir();
 
-        let project_dir = root.join("skills").join("dual");
+        let project_dir = root.join(".openrust").join("skills").join("dual");
         std::fs::create_dir_all(&project_dir).unwrap();
         std::fs::write(project_dir.join("SKILL.md"), "project content").unwrap();
 
@@ -350,7 +345,7 @@ mod tests {
     #[tokio::test]
     async fn list_skills_includes_description() {
         let root = temp_dir();
-        let skill = root.join(".opencode").join("skills").join("demo");
+        let skill = root.join(".openrust").join("skills").join("demo");
         std::fs::create_dir_all(&skill).unwrap();
         std::fs::write(
             skill.join("SKILL.md"),

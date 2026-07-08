@@ -76,14 +76,7 @@ pub fn visible_agents(agents: &[AgentInfo]) -> Vec<&AgentInfo> {
 }
 
 fn candidate_directories(cwd: &Path) -> Vec<PathBuf> {
-    [
-        cwd.join(".openrust").join("agents"),
-        cwd.join("agents"),
-        cwd.join("agent"),
-        cwd.join("modes"),
-    ]
-    .into_iter()
-    .collect()
+    vec![cwd.join(".openrust").join("agents")]
 }
 
 fn collect_markdown(
@@ -129,7 +122,6 @@ fn collect_markdown(
             .unwrap_or(false);
         let max_steps = frontmatter
             .get("steps")
-            .or_else(|| frontmatter.get("maxSteps"))
             .and_then(|value| value.parse().ok())
             .unwrap_or(50);
         agents.push(AgentInfo {
@@ -392,7 +384,7 @@ mod tests {
     #[test]
     fn loads_markdown_agents_from_known_dirs() {
         let dir = tempfile::tempdir().unwrap();
-        let agents = dir.path().join("agents");
+        let agents = dir.path().join(".openrust").join("agents");
         std::fs::create_dir_all(&agents).unwrap();
         std::fs::write(agents.join("custom.md"), "# Build\nBuild agent.").unwrap();
 
@@ -406,7 +398,7 @@ mod tests {
     #[test]
     fn preserves_nested_agent_paths() {
         let dir = tempfile::tempdir().unwrap();
-        let agents = dir.path().join("agents").join("nested");
+        let agents = dir.path().join(".openrust").join("agents").join("nested");
         std::fs::create_dir_all(&agents).unwrap();
         std::fs::write(agents.join("custom-review.md"), "# Review\nReview agent.").unwrap();
 
@@ -420,7 +412,7 @@ mod tests {
     #[test]
     fn parses_frontmatter_title_description_and_system() {
         let dir = tempfile::tempdir().unwrap();
-        let agents = dir.path().join("agents");
+        let agents = dir.path().join(".openrust").join("agents");
         std::fs::create_dir_all(&agents).unwrap();
         std::fs::write(
             agents.join("custom-plan.md"),
@@ -445,7 +437,7 @@ mod tests {
             hidden: false,
             max_steps: 50,
             system: String::new(),
-            path: PathBuf::from("agents/build.md"),
+            path: PathBuf::from(".openrust/agents/build.md"),
             content: String::new(),
         }];
 
@@ -464,7 +456,7 @@ mod tests {
                 hidden: false,
                 max_steps: 50,
                 system: String::new(),
-                path: PathBuf::from("agents/review.md"),
+                path: PathBuf::from(".openrust/agents/review.md"),
                 content: String::new(),
             },
             AgentInfo {
@@ -475,7 +467,7 @@ mod tests {
                 hidden: false,
                 max_steps: 50,
                 system: String::new(),
-                path: PathBuf::from("agents/build.md"),
+                path: PathBuf::from(".openrust/agents/build.md"),
                 content: String::new(),
             },
         ];
@@ -486,7 +478,7 @@ mod tests {
     #[test]
     fn parses_max_steps_from_frontmatter() {
         let dir = tempfile::tempdir().unwrap();
-        let agents = dir.path().join("agents");
+        let agents = dir.path().join(".openrust").join("agents");
         std::fs::create_dir_all(&agents).unwrap();
         std::fs::write(
             agents.join("limited.md"),
@@ -500,25 +492,9 @@ mod tests {
     }
 
     #[test]
-    fn max_steps_falls_back_to_maxsteps_field() {
-        let dir = tempfile::tempdir().unwrap();
-        let agents = dir.path().join("agents");
-        std::fs::create_dir_all(&agents).unwrap();
-        std::fs::write(
-            agents.join("legacy.md"),
-            "---\ntitle: Legacy\nmaxSteps: 10\n---\n# System\nLegacy agent.",
-        )
-        .unwrap();
-
-        let list = load_agents(dir.path()).unwrap();
-        let agent = agent_by_id(&list, "legacy").unwrap();
-        assert_eq!(agent.max_steps, 10);
-    }
-
-    #[test]
     fn max_steps_defaults_to_50() {
         let dir = tempfile::tempdir().unwrap();
-        let agents = dir.path().join("agents");
+        let agents = dir.path().join(".openrust").join("agents");
         std::fs::create_dir_all(&agents).unwrap();
         std::fs::write(
             agents.join("default.md"),

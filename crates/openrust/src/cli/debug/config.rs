@@ -193,7 +193,7 @@ fn render_paths(
     [
         format!(
             "Project config:  {}",
-            cwd.join("openrust.json").display()
+            cwd.join(".openrust").join("config.jsonc").display()
         ),
         format!("Global config:   {}", paths.global_config_path().display()),
         format!("Vault (enc):     {}", paths.credentials_path().display()),
@@ -226,7 +226,7 @@ mod tests {
 
         let lines = render_paths(&cwd, &paths);
 
-        assert!(lines[0].contains("Project config:") && lines[0].ends_with("openrust.json"));
+        assert!(lines[0].contains("Project config:") && lines[0].ends_with("config.jsonc"));
         assert!(lines[1].contains("Global config:") && lines[1].ends_with("config.json"));
         assert!(
             lines[2].contains("Vault (enc):") && lines[2].ends_with("credentials.enc")

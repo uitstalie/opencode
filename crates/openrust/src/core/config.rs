@@ -1,7 +1,8 @@
-//! Configuration loading from openrust.json.
+//! Configuration loading from `.openrust/config.jsonc` (project) and
+//! `~/.config/openrust/config.json` (global).
 //!
-//! Supports the openrust.json format:
-//! ```json
+//! Supports JSONC format (comments allowed):
+//! ```jsonc
 //! {
 //!   "model": "deepseek/deepseek-v4-pro",
 //!   "provider": {
@@ -80,25 +81,16 @@ impl Config {
         // Load global config (~/.config/openrust/config.json)
         let global_path = Self::global_config_path();
         if global_path.exists() {
-            if let Ok(c) = Self::load_file(&global_path) {
-                // Migrate any plaintext api_keys to encrypted vault
-                Self::migrate_api_keys(&c);
-                config.merge(c);
-            }
+            let c = Self::load_file(&global_path)?;
+            Self::migrate_api_keys(&c);
+            config.merge(c);
         }
 
-        // Load project config (.openrust/config.jsonc preferred, openrust.json legacy)
-        let project_paths = [
-            project_dir.join(".openrust").join("config.jsonc"),
-            project_dir.join("openrust.json"),
-        ];
-        for project_path in &project_paths {
-            if project_path.exists() {
-                if let Ok(c) = Self::load_file(project_path) {
-                    config.merge(c);
-                }
-                break;
-            }
+        // Load project config (.openrust/config.jsonc)
+        let project_path = project_dir.join(".openrust").join("config.jsonc");
+        if project_path.exists() {
+            let c = Self::load_file(&project_path)?;
+            config.merge(c);
         }
 
         Ok(config)
@@ -415,9 +407,11 @@ mod tests {
         let home_dir = dir.path().join("home");
         let global_dir = home_dir.join(".config").join("openrust");
         let global_path = global_dir.join("config.json");
-        let project_path = dir.path().join("openrust.json");
+        let project_dir = dir.path().join(".openrust");
+        let project_path = project_dir.join("config.jsonc");
 
         fs::create_dir_all(&global_dir).unwrap();
+        fs::create_dir_all(&project_dir).unwrap();
         fs::write(
             &global_path,
             r#"{

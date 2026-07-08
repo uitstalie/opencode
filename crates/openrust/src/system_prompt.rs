@@ -144,10 +144,7 @@ fn render_capabilities(
     }
 
     lines.push("## Agents".to_string());
-    lines.push(
-        "- agents are loaded from local markdown directories such as agents/, agent/, and modes/"
-            .to_string(),
-    );
+    lines.push("- agents are loaded from .openrust/agents/*.md".to_string());
     lines.push(String::new());
     lines.push("## Tasks".to_string());
     lines.push(

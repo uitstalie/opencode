@@ -14,7 +14,7 @@ const SKIP_DIRS: &[&str] = &[
     ".git",
     "target",
     "node_modules",
-    ".opencode",
+    ".openrust",
     "dist",
     ".cache",
 ];

@@ -72,7 +72,7 @@ mod tests {
             hidden: false,
             max_steps: 50,
             system: String::new(),
-            path: std::path::PathBuf::from("agents/build.md"),
+            path: std::path::PathBuf::from(".openrust/agents/build.md"),
             content: String::new(),
         }];
         print_list(&agents);

@@ -46,10 +46,6 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
 }
 
 fn load_run_config(cwd: &std::path::PathBuf) -> anyhow::Result<E2eRunConfig> {
-    let project_path = cwd.join("openrust.json");
-    if project_path.exists() {
-        Config::load_file(&project_path)?;
-    }
     resolve_run_config(Config::load(cwd)?)
 }
 
@@ -107,7 +103,8 @@ mod tests {
     #[test]
     fn load_run_config_surfaces_malformed_project_config() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("openrust.json"), "{ nope").unwrap();
+        std::fs::create_dir_all(dir.path().join(".openrust")).unwrap();
+        std::fs::write(dir.path().join(".openrust").join("config.jsonc"), "{ nope").unwrap();
 
         let err = load_run_config(&dir.path().to_path_buf()).unwrap_err();
 
