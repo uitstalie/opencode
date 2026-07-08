@@ -244,21 +244,16 @@ pub fn resolve_path(ctx: &ToolContext, path: &str) -> PathBuf {
     ctx.cwd.join(candidate)
 }
 
-#[derive(Debug, Clone)]
-pub enum Permission {
-    Allow,
-    Deny(String),
-    Ask(String),
-}
+use crate::core::permission::Decision;
 
 /// Check if a tool is allowed. Delegates to the core permission policy.
-/// For multi-path tools (apply_patch), checks every target — the first
+/// For multi-path tools (apply_patch, bash), checks every target — the first
 /// out-of-scope path triggers Ask/Deny.
 pub fn check_permission(
     tool_name: &str,
     params: &serde_json::Value,
     ctx: &ToolContext,
-) -> Permission {
+) -> Decision {
     let targets = crate::core::permission::target_paths(params);
     for target in &targets {
         match crate::core::permission::evaluate(
@@ -267,12 +262,11 @@ pub fn check_permission(
             ctx.project_root(),
             ctx.interactive,
         ) {
-            crate::core::permission::Decision::Allow => continue,
-            crate::core::permission::Decision::Deny(reason) => return Permission::Deny(reason),
-            crate::core::permission::Decision::Ask(reason) => return Permission::Ask(reason),
+            Decision::Allow => continue,
+            other => return other,
         }
     }
-    Permission::Allow
+    Decision::Allow
 }
 
 /// Execute a tool by name against a context (parsing raw JSON args), returning
@@ -298,11 +292,11 @@ pub trait Tool: Send + Sync {
 
     /// Execute with permission check. The canonical entry point for tool invocation.
     async fn execute_checked(&self, params: ToolParams, ctx: &ToolContext) -> ToolResult {
-        let raw = params.raw_value().clone(); // cheap clone for permission check
+        let raw = params.raw_value().clone();
         match check_permission(self.name(), &raw, ctx) {
-            Permission::Allow => self.execute(params, ctx).await,
-            Permission::Deny(reason) => ToolResult::error(reason),
-            Permission::Ask(reason) => {
+            Decision::Allow => self.execute(params, ctx).await,
+            Decision::Deny(reason) => ToolResult::error(reason),
+            Decision::Ask(reason) => {
                 let Some(permission_tx) = &ctx.permission_tx else {
                     return ToolResult::error(format!("{}: {} (denied)", self.name(), reason));
                 };
