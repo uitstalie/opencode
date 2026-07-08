@@ -22,7 +22,7 @@ impl Tool for WriteTool {
                 "filePath": { "type": "string", "description": "Legacy alias for path" },
                 "content": { "type": "string", "description": "Content to write" }
             },
-            "required": ["content"]
+            "required": ["path", "content"]
         })
     }
 

@@ -115,7 +115,7 @@ impl Tool for WebFetchTool {
         let (out, truncated) = if content.len() > 100_000 {
             let preview = format!(
                 "{}...\n\n[truncated at 100K / {} total]",
-                &content[..100_000],
+                crate::tool::truncate_str(&content, 100_000),
                 content.len()
             );
             (preview, true)
@@ -144,10 +144,27 @@ fn validate_url(url_str: &str) -> Result<(), String> {
     // Block internal/localhost IPs
     if let Some(host) = parsed.host_str() {
         let h = host.to_lowercase();
-        if h == "localhost" || h == "127.0.0.1" || h == "::1"
+        if h == "localhost" || h == "127.0.0.1" || h == "[::1]"
             || h.starts_with("192.168.")
             || h.starts_with("10.")
+            || h.starts_with("169.254.")
+            || h == "0.0.0.0"
             || h.starts_with("172.16.")
+            || h.starts_with("172.17.")
+            || h.starts_with("172.18.")
+            || h.starts_with("172.19.")
+            || h.starts_with("172.20.")
+            || h.starts_with("172.21.")
+            || h.starts_with("172.22.")
+            || h.starts_with("172.23.")
+            || h.starts_with("172.24.")
+            || h.starts_with("172.25.")
+            || h.starts_with("172.26.")
+            || h.starts_with("172.27.")
+            || h.starts_with("172.28.")
+            || h.starts_with("172.29.")
+            || h.starts_with("172.30.")
+            || h.starts_with("172.31.")
         {
             return Err(format!(
                 "Internal/private address '{}' is not allowed.",

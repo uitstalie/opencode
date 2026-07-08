@@ -23,6 +23,7 @@ impl Tool for UndoEditTool {
             "type": "object",
             "properties": {
                 "filePath": { "type": "string", "description": "Absolute path to restore" },
+                "path": { "type": "string", "description": "Alias for filePath" },
                 "undoHash": { "type": "string", "description": "Undo hash from the prior write/edit" }
             },
             "required": ["filePath", "undoHash"]
@@ -30,7 +31,10 @@ impl Tool for UndoEditTool {
     }
 
     async fn execute(&self, p: ToolParams, ctx: &ToolContext) -> ToolResult {
-        let path_str = require_str!(p, "filePath");
+        let path_str = match p.opt_str("filePath").or_else(|| p.opt_str("path")) {
+            Some(s) => s,
+            None => return ToolResult::error("undo_edit: missing required parameter: filePath"),
+        };
         let hash = require_str!(p, "undoHash");
         let path = Path::new(path_str);
 

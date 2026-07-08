@@ -93,7 +93,7 @@ impl SessionView {
             return format!("{} {}", name, p);
         }
         let preview = result.lines().next().unwrap_or("");
-        let preview = &preview[..preview.len().min(60)];
+        let preview = crate::tool::truncate_str(preview, 60);
         format!("{}: {}", name, preview)
     }
 

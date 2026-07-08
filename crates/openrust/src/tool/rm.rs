@@ -66,6 +66,11 @@ impl Tool for RmTool {
             ));
             ToolResult::text(format!("Deleted directory {}", canonical.display()))
         } else {
+            if let Some(store) = &ctx.undo_store {
+                if let Ok(existing) = std::fs::read_to_string(&canonical) {
+                    store.save_snapshot(&canonical, &existing);
+                }
+            }
             try_tool!(std::fs::remove_file(&canonical), |e| format!(
                 "Delete: {}",
                 e

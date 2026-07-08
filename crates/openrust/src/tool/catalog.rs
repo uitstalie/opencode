@@ -174,7 +174,7 @@ pub fn create_tool(name: &str, undo_store: Option<Arc<UndoStore>>) -> Option<Box
     }
 }
 
-const WRITE_TOOLS: &[&str] = &["write", "edit", "rm", "apply_patch", "bash"];
+const WRITE_TOOLS: &[&str] = &["write", "edit", "rm", "apply_patch", "bash", "undo_edit"];
 const SUBTASK_EXCLUDE: &[&str] = &["task", "question"];
 
 /// Returns the tool names that should be available for a given agent mode and

@@ -16,7 +16,7 @@ pub enum Decision {
 
 /// Tools that can mutate the filesystem or run commands outside the project.
 pub fn is_scope_restricted(tool: &str) -> bool {
-    matches!(tool, "rm" | "write" | "edit" | "bash" | "apply_patch")
+    matches!(tool, "rm" | "write" | "edit" | "bash" | "apply_patch" | "undo_edit")
 }
 
 /// Expand a leading `$PROJECT` / `${PROJECT}` token to the project root.
@@ -32,13 +32,32 @@ pub fn expand_project(path: &str, project_root: &Path) -> String {
 }
 
 /// The scope-relevant target path from raw tool params.
-pub fn target_path(params: &serde_json::Value) -> &str {
-    params["target"]
-        .as_str()
-        .or_else(|| params["filePath"].as_str())
-        .or_else(|| params["path"].as_str())
-        .or_else(|| params["workdir"].as_str())
-        .unwrap_or("")
+pub fn target_path(params: &serde_json::Value) -> String {
+    if let Some(s) = params["target"].as_str() {
+        return s.to_string();
+    }
+    if let Some(s) = params["filePath"].as_str() {
+        return s.to_string();
+    }
+    if let Some(s) = params["path"].as_str() {
+        return s.to_string();
+    }
+    if let Some(s) = params["workdir"].as_str() {
+        return s.to_string();
+    }
+    // apply_patch stores all paths inside patchText — extract the first one
+    // so the scope check can evaluate it.
+    if let Some(patch) = params["patchText"].as_str() {
+        for line in patch.lines() {
+            let trimmed = line.trim();
+            for marker in &["*** Add File: ", "*** Update File: ", "*** Delete File: "] {
+                if let Some(rest) = trimmed.strip_prefix(marker) {
+                    return rest.trim().to_string();
+                }
+            }
+        }
+    }
+    String::new()
 }
 
 /// Evaluate a tool invocation against project scope.

@@ -85,7 +85,7 @@ fn search_file(path: &std::path::Path, re: &Regex, out: &mut Vec<String>) {
     for (i, line) in content.lines().enumerate() {
         if re.is_match(line) {
             let display = if line.len() > 200 {
-                format!("{}...", &line[..200])
+                format!("{}...", crate::tool::truncate_str(line, 200))
             } else {
                 line.to_string()
             };

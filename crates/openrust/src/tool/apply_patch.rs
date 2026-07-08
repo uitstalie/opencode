@@ -260,6 +260,11 @@ fn apply_hunk(ctx: &ToolContext, hunk: &Hunk) -> Result<String, String> {
             if let Some(parent) = resolved.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| format!("{}: {}", path, e))?;
             }
+            if let Some(store) = &ctx.undo_store {
+                if let Ok(existing) = std::fs::read_to_string(&resolved) {
+                    store.save_snapshot(&resolved, &existing);
+                }
+            }
             let body = if contents.ends_with('\n') || contents.is_empty() {
                 contents.clone()
             } else {

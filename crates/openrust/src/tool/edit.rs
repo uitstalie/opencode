@@ -24,7 +24,7 @@ impl Tool for EditTool {
                 "newString": { "type": "string", "description": "Replacement text (must differ from oldString)" },
                 "replaceAll": { "type": "boolean", "description": "Replace all occurrences (default false)" }
             },
-            "required": ["oldString", "newString"]
+            "required": ["path", "oldString", "newString"]
         })
     }
 

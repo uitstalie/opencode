@@ -37,6 +37,19 @@ pub mod write;
 
 // ── Helpers: early-return macros for ToolResult ─────
 
+/// Truncate a string to at most `max_bytes` bytes, backing off to the
+/// nearest UTF-8 char boundary to avoid panics on multibyte content.
+pub fn truncate_str(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 /// `try_tool!(expression, |e| format!("...{}", e))` — early-return `ToolResult::Error` on Err.
 #[macro_export]
 macro_rules! try_tool {
@@ -246,7 +259,7 @@ pub fn check_permission(
 ) -> Permission {
     match crate::core::permission::evaluate(
         tool_name,
-        crate::core::permission::target_path(params),
+        &crate::core::permission::target_path(params),
         ctx.project_root(),
         ctx.interactive,
     ) {

@@ -261,7 +261,7 @@ pub(super) fn spawn_prompt_worker(
                 let mut thinking_text = String::new();
                 let mut pending_tools: Vec<(String, String, String)> = Vec::new();
                 let mut executed_tools: Vec<provider::ToolCall> = Vec::new();
-                let mut tool_outputs: Vec<(String, String, String, String, bool)> = Vec::new();
+                let mut tool_outputs: Vec<(String, String, String, String, bool, Option<(String, String)>)> = Vec::new();
                 let mut finish_seen = false;
 
                 while let Some(chunk) = stream.next().await {
@@ -300,6 +300,10 @@ pub(super) fn spawn_prompt_worker(
                             };
                             let tool_output = crate::tool::run_tool(&name, &args, &tool_ctx).await;
                             let has_image = matches!(&tool_output, crate::tool::ToolResult::Image { .. });
+                            let image_b64 = match &tool_output {
+                                crate::tool::ToolResult::Image { base64_data, mime_type, .. } => Some((base64_data.clone(), mime_type.clone())),
+                                _ => None,
+                            };
                             let tool_text = tool_output.into_text();
                             executed_tools.push(provider::ToolCall {
                                 id: call_id.clone(),
@@ -309,7 +313,7 @@ pub(super) fn spawn_prompt_worker(
                                     arguments: args.clone(),
                                 },
                             });
-                            tool_outputs.push((call_id, name, args, tool_text, has_image));
+                            tool_outputs.push((call_id, name, args, tool_text, has_image, image_b64));
                         }
                         StreamChunk::Finish { usage } => {
                             finish_seen = true;
@@ -343,7 +347,7 @@ pub(super) fn spawn_prompt_worker(
 
                     let results: Vec<ToolBatchItem> = tool_outputs
                         .iter()
-                        .map(|(call_id, name, args, tool_text, _)| ToolBatchItem {
+                        .map(|(call_id, name, args, tool_text, _, _)| ToolBatchItem {
                             id: call_id.clone(),
                             name: name.clone(),
                             args: args.clone(),
@@ -366,12 +370,16 @@ pub(super) fn spawn_prompt_worker(
                     };
                     history.push(assistant);
 
-                    for (call_id, name, _args, tool_text, has_image) in &tool_outputs {
-                        if *has_image && llm.supports_images(&model) {
-                            history.push(provider::Message::user_with_images(
-                                format!("(image read by {} tool)", name),
-                                vec![],
-                            ));
+                    for (call_id, name, _args, tool_text, has_image, image_b64) in &tool_outputs {
+                        if let Some((b64, mime)) = image_b64 {
+                            if *has_image && llm.supports_images(&model) {
+                                history.push(provider::Message::user_with_images(
+                                    format!("(image read by {} tool)", name),
+                                    vec![provider::ContentPart::image_url(
+                                        format!("data:{};base64,{}", mime, b64),
+                                    )],
+                                ));
+                            }
                         }
                         history.push(provider::Message {
                             role: "tool".to_string(),

@@ -116,11 +116,12 @@ impl Tool for ReadTool {
         if end < lines.len() {
             out.push_str(&format!("\n... ({} lines remaining)", lines.len() - end));
         }
-        let mut metadata = HashMap::new();
-        metadata.insert("path".to_string(), serde_json::json!(path));
-        metadata.insert("lines".to_string(), serde_json::json!(lines.len()));
-        metadata.insert("bytes".to_string(), serde_json::json!(metadata.len()));
-        ToolResult::Structured { content: out, metadata }
+        let file_size = metadata.len();
+        let mut meta_map = HashMap::new();
+        meta_map.insert("path".to_string(), serde_json::json!(path));
+        meta_map.insert("lines".to_string(), serde_json::json!(lines.len()));
+        meta_map.insert("bytes".to_string(), serde_json::json!(file_size));
+        ToolResult::Structured { content: out, metadata: meta_map }
     }
 }
 

@@ -14,14 +14,13 @@ impl Tool for BashTool {
         "bash"
     }
     fn description(&self) -> &'static str {
-        crate::tool::shell::shell_tool_prompt(crate::tool::shell::detect_shell_kind())
+        "Execute a shell command with timeout. Output is captured and returned."
     }
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
             "properties": {
                 "command": { "type": "string", "description": "Command to execute" },
-                "description": { "type": "string", "description": "Short description (5-10 words)" },
                 "timeout": { "type": "integer", "description": "Timeout in ms (default 120000)" },
                 "workdir": { "type": "string", "description": "Working directory" }
             },
@@ -53,17 +52,37 @@ impl Tool for BashTool {
             |e| format!("Spawn failed: {}", e)
         );
 
+        // Drain stdout/stderr in separate threads to prevent pipe-buffer
+        // deadlock when the child writes more than ~64 KB.
+        let stdout_handle = {
+            let pipe = child.stdout.take();
+            std::thread::spawn(move || {
+                use std::io::Read;
+                let mut buf = String::new();
+                if let Some(mut p) = pipe {
+                    let _ = p.read_to_string(&mut buf);
+                }
+                buf
+            })
+        };
+        let stderr_handle = {
+            let pipe = child.stderr.take();
+            std::thread::spawn(move || {
+                use std::io::Read;
+                let mut buf = String::new();
+                if let Some(mut p) = pipe {
+                    let _ = p.read_to_string(&mut buf);
+                }
+                buf
+            })
+        };
+
         let deadline = Instant::now() + Duration::from_millis(timeout_ms);
         loop {
             match child.try_wait() {
                 Ok(Some(status)) => {
-                    let out = child.wait_with_output().unwrap_or(std::process::Output {
-                        status,
-                        stdout: vec![],
-                        stderr: vec![],
-                    });
-                    let stdout = String::from_utf8_lossy(&out.stdout);
-                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    let stdout = stdout_handle.join().unwrap_or_default();
+                    let stderr = stderr_handle.join().unwrap_or_default();
                     let mut result = String::new();
                     if !stdout.is_empty() {
                         result.push_str(&stdout);

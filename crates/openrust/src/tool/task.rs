@@ -28,7 +28,7 @@ impl Tool for TaskTool {
                 "prompt": { "type": "string", "description": "The task for the sub-agent to perform" },
                 "subagent_type": { "type": "string", "description": "The agent id to run (e.g. general, explore, plan)" }
             },
-            "required": ["description", "prompt", "subagent_type"]
+            "required": ["prompt", "subagent_type"]
         })
     }
 
@@ -128,7 +128,7 @@ pub async fn run_agent(
             return Ok(last_assistant);
         }
 
-        let is_last_step = step_count == max_steps;
+        let is_last_step = step_count >= max_steps;
         if is_last_step {
             history.push(Message::assistant(
                 agent::MAX_STEPS_PROMPT.to_string(),

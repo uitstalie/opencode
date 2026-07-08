@@ -101,14 +101,24 @@ fn is_drive_root(s: &str) -> bool {
 
 /// Check whether a path is within the project root.
 pub fn is_within_project(target: &str, project_root: &Path) -> bool {
-    let Ok(target_canon) = Path::new(target).canonicalize() else {
-        return false;
-    };
+    let path = Path::new(target);
     let Ok(proot_canon) = project_root.canonicalize() else {
         return false;
     };
 
-    target_canon.starts_with(&proot_canon) && target_canon != proot_canon
+    // Existing path — canonicalize and compare directly.
+    if let Ok(target_canon) = path.canonicalize() {
+        return target_canon.starts_with(&proot_canon) && target_canon != proot_canon;
+    }
+
+    // Non-existent path (new file) — canonicalize the parent and check membership.
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    let Ok(parent_canon) = parent.canonicalize() else {
+        return false;
+    };
+    parent_canon.starts_with(&proot_canon)
 }
 
 #[cfg(test)]
