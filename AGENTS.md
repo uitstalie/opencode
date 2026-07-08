@@ -164,6 +164,32 @@ The crate follows a flat module tree under `crates/openrust/src/`:
 
 When adding a module, follow the existing `mod.rs` + sibling-file pattern. Keep `tool/` and `tui/` Location-scoped; do not let model resolution or tool registry leak into the UI layer.
 
+## Project Configuration Layout
+
+openrust uses a unified `.openrust/` directory for project-level configuration:
+
+```
+project-root/
+├── AGENTS.md              # Project-level AI instructions (injected into system prompt)
+├── .openrust/
+│   ├── config.jsonc       # Project config override (JSONC, replaces openrust.json)
+│   ├── agents/            # Custom agent definitions (markdown with frontmatter)
+│   │   └── *.md
+│   └── skills/            # Custom skills
+│       └── */SKILL.md
+```
+
+**Loading priorities** (first match wins):
+
+| Resource | Search order |
+|----------|-------------|
+| AGENTS.md | `<cwd>/AGENTS.md` (only) |
+| Config | `.openrust/config.jsonc` → `openrust.json` (legacy) → global `~/.config/openrust/config.json` |
+| Agents | `.openrust/agents/` → `agents/` → `agent/` → `modes/` (latter three are legacy) |
+| Skills | `.openrust/skills/` → `.opencode/skills/` (legacy) → `skills/` → global `config_dir/skills/` |
+
+AGENTS.md is injected into the system prompt's `<instructions>` section wrapped in `<project-instructions>` tags.
+
 ## Testing
 
 - Avoid mocks as much as possible; test actual implementations.

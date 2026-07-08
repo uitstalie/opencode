@@ -87,11 +87,17 @@ impl Config {
             }
         }
 
-        // Load project config (./openrust.json)
-        let project_path = project_dir.join("openrust.json");
-        if project_path.exists() {
-            if let Ok(c) = Self::load_file(&project_path) {
-                config.merge(c);
+        // Load project config (.openrust/config.jsonc preferred, openrust.json legacy)
+        let project_paths = [
+            project_dir.join(".openrust").join("config.jsonc"),
+            project_dir.join("openrust.json"),
+        ];
+        for project_path in &project_paths {
+            if project_path.exists() {
+                if let Ok(c) = Self::load_file(project_path) {
+                    config.merge(c);
+                }
+                break;
             }
         }
 

@@ -100,6 +100,7 @@ impl Tool for SkillTool {
 
 pub fn skill_directories(ctx: &ToolContext) -> Vec<PathBuf> {
     let mut dirs = vec![
+        ctx.cwd.join(".openrust").join("skills"),
         ctx.cwd.join(".opencode").join("skills"),
         ctx.cwd.join("skills"),
     ];
@@ -126,6 +127,7 @@ pub fn list_skills(ctx: &ToolContext) -> Vec<SkillEntry> {
 
 pub fn list_skills_for_cwd(cwd: &Path) -> Vec<SkillEntry> {
     let dirs = vec![
+        cwd.join(".openrust").join("skills"),
         cwd.join(".opencode").join("skills"),
         cwd.join("skills"),
         PlatformPaths::detect().config_dir().join("skills"),

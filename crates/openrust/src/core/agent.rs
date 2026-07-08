@@ -76,10 +76,14 @@ pub fn visible_agents(agents: &[AgentInfo]) -> Vec<&AgentInfo> {
 }
 
 fn candidate_directories(cwd: &Path) -> Vec<PathBuf> {
-    ["agents", "agent", "modes"]
-        .into_iter()
-        .map(|name| cwd.join(name))
-        .collect()
+    [
+        cwd.join(".openrust").join("agents"),
+        cwd.join("agents"),
+        cwd.join("agent"),
+        cwd.join("modes"),
+    ]
+    .into_iter()
+    .collect()
 }
 
 fn collect_markdown(

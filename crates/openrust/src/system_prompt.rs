@@ -10,6 +10,7 @@ pub struct SystemPrompt {
     pub home: String,
     pub platform: String,
     pub config_path: String,
+    pub agents_md: String,
 }
 
 impl SystemPrompt {
@@ -26,7 +27,7 @@ impl SystemPrompt {
         sections.push(render_section("environment", &render_environment(self)));
         sections.push(render_section(
             "instructions",
-            &render_instructions(&self.config_path),
+            &render_instructions(&self.config_path, &self.agents_md),
         ));
         sections.push(render_section(
             "capabilities",
@@ -64,6 +65,7 @@ impl SystemPrompt {
             home,
             platform,
             config_path: Config::global_config_path().display().to_string(),
+            agents_md: load_agents_md(&std::env::current_dir().unwrap_or_default()),
         })
     }
 }
@@ -104,13 +106,23 @@ fn render_environment(prompt: &SystemPrompt) -> String {
     .join("\n")
 }
 
-fn render_instructions(path: &str) -> String {
-    [
-        format!("<!-- source: {} -->", path),
-        "使用简体中文回复；术语、命令、路径、变量名和代码标识符可保留英文。".to_string(),
-        "修改源码后需编译、替换二进制并重启。".to_string(),
-    ]
-    .join("\n\n")
+fn render_instructions(path: &str, agents_md: &str) -> String {
+    let mut parts = vec![format!("<!-- source: {} -->", path)];
+
+    if !agents_md.trim().is_empty() {
+        parts.push("<project-instructions>".to_string());
+        parts.push(agents_md.trim().to_string());
+        parts.push("</project-instructions>".to_string());
+    }
+
+    parts.join("\n\n")
+}
+
+/// Load AGENTS.md from the project root.
+/// Returns empty string if not found.
+fn load_agents_md(cwd: &std::path::Path) -> String {
+    let path = cwd.join("AGENTS.md");
+    std::fs::read_to_string(&path).unwrap_or_default()
 }
 
 fn render_capabilities(
@@ -196,6 +208,7 @@ mod tests {
             home: "/home/test".to_string(),
             platform: "linux-x86_64".to_string(),
             config_path: "/home/test/.config/openrust/config.json".to_string(),
+            agents_md: String::new(),
         }
         .render();
 
@@ -259,5 +272,23 @@ mod tests {
         };
 
         assert!(SystemPrompt::from_config(&config, &provider, Some("plan".to_string())).is_err());
+    }
+
+    #[test]
+    fn instructions_empty_when_no_agents_md() {
+        let rendered = render_instructions("/path/to/config.json", "");
+        assert!(rendered.contains("source:"));
+        assert!(!rendered.contains("<project-instructions>"));
+    }
+
+    #[test]
+    fn instructions_includes_agents_md() {
+        let rendered = render_instructions(
+            "/path/to/config.json",
+            "# My Project\nBuild with cargo.\n",
+        );
+        assert!(rendered.contains("<project-instructions>"));
+        assert!(rendered.contains("Build with cargo."));
+        assert!(rendered.contains("</project-instructions>"));
     }
 }
