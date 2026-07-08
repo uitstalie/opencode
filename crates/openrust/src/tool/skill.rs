@@ -270,6 +270,38 @@ Agent system prompt text here.
 4. Write the file with valid frontmatter and a clear system prompt body.
 5. The agent ID = filename without `.md` (case-sensitive). No subdirectories.
 
+## Body format
+
+The body is appended after the base system prompt, which already includes environment info (cwd, platform, model), tool list, project rules, and AGENTS.md. Write **only** what is unique about this agent.
+
+**Simple agent** — one-line role statement:
+```
+You are a general-purpose agent for researching complex questions and executing multi-step tasks.
+```
+
+**Guided agent** — role + behavioral guidelines:
+```
+You are a planning agent. Help the user organize work into clear steps.
+
+Guidelines:
+- Keep the plan concise and actionable
+- Identify dependencies and unknowns
+- Do not write code unless the user explicitly asks
+```
+
+**Structured agent** — role + XML sections (for fixed-output tasks like title generation):
+```
+You are a title generator. Output ONLY a title.
+
+<rules>
+- Use the same language as the user message
+- <= 50 characters
+- No explanations
+</rules>
+```
+
+Do NOT repeat in the body: environment info, tool capabilities, project instructions. These are already injected.
+
 ## Overlay semantics
 
 When overriding a built-in agent (e.g. creating `.openrust/agents/build.md`):
@@ -313,6 +345,36 @@ is invoked with the skill name.
 3. The `description` frontmatter field is required.
 4. The body (after frontmatter) is the skill's instruction content — write clear, actionable steps.
 5. When modifying an existing skill, preserve the description unless the user asks to change it.
+
+## Body format
+
+The body is injected into the conversation when the skill tool is invoked. It should be self-contained instructions the LLM can follow immediately.
+
+**Good skill body** — concrete, scoped, actionable:
+```
+# deploy-checklist
+
+Run through this checklist before deploying:
+
+1. Run `npm run typecheck` — fix any errors.
+2. Run `npm test` — all tests must pass.
+3. Check `git status` for uncommitted changes.
+4. Verify the build: `npm run build`.
+
+If any step fails, stop and report the error. Do not attempt to fix it.
+```
+
+**Bad skill body** — vague, no actions:
+```
+This skill helps with deployment. Make sure everything is ready before you deploy.
+```
+
+Principles:
+- Start with a `#` heading naming the skill.
+- Use numbered steps for sequential workflows.
+- Specify exact commands when possible.
+- State what to do on failure (stop, report, retry?).
+- Keep it under ~50 lines. If longer, split into multiple skills.
 
 ## Workflow
 

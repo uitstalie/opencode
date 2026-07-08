@@ -91,7 +91,7 @@ pub const TOOL_CATALOG: &[ToolMeta] = &[
         name: "todowrite",
         category: ToolCategory::Interaction,
         description: "Maintain the session todo list.",
-        prompt_hint: "Use to plan and track multi-step work.",
+        prompt_hint: "State machine: create list → mark first in_progress → complete → advance.",
     },
     ToolMeta {
         name: "skill",

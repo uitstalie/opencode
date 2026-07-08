@@ -204,7 +204,16 @@ fn render_capabilities(
     lines.push(String::new());
     lines.push("## Tasks".to_string());
     lines.push(
-        "- task and todo state are session-scoped and persisted in the session database"
+        "- todo list is a state machine: pending → in_progress → completed"
+            .to_string(),
+    );
+    lines.push("- create a todo list BEFORE starting multi-step work".to_string());
+    lines.push(
+        "- keep exactly ONE item in_progress; mark it completed before advancing"
+            .to_string(),
+    );
+    lines.push(
+        "- current todo state is injected after each tool batch — follow it"
             .to_string(),
     );
     lines.push(String::new());

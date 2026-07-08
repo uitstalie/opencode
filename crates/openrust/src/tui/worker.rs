@@ -389,6 +389,24 @@ pub(super) fn spawn_prompt_worker(
                             tool_calls: None,
                         });
                     }
+                    // Inject TODO state machine reminder so the LLM stays on track.
+                    if let (Some(store), Some(session_id)) =
+                        (store_clone.as_ref(), session_id_clone.as_ref())
+                    {
+                        if let Ok(tasks) = store.list_tasks(session_id) {
+                            let reminder = crate::tool::todowrite::todo_reminder(&tasks);
+                            if !reminder.is_empty() {
+                                history.push(provider::Message {
+                                    role: "system".to_string(),
+                                    content: provider::MessageContent::text(reminder),
+                                    name: None,
+                                    tool_call_id: None,
+                                    tool_calls: None,
+                                });
+                            }
+                        }
+                    }
+
                     tool_outputs.clear();
                     pending_tools.clear();
                     finish_seen = false;
