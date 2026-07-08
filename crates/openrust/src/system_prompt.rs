@@ -122,7 +122,11 @@ fn render_capabilities(
     if !skills.is_empty() {
         lines.push("## Skills".to_string());
         for skill in skills {
-            lines.push(format!("- {}: loaded from {}", skill.name, skill.path.display()));
+            if skill.description.is_empty() {
+                lines.push(format!("- {}", skill.name));
+            } else {
+                lines.push(format!("- {}: {}", skill.name, skill.description));
+            }
         }
         lines.push(String::new());
     }

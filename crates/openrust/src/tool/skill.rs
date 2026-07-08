@@ -31,6 +31,13 @@ impl Tool for SkillTool {
     async fn execute(&self, p: ToolParams, ctx: &ToolContext) -> ToolResult {
         let name = require_str!(p, "name");
 
+        if name.contains('/') || name.contains('\\') || name.contains("..") {
+            return ToolResult::error(format!(
+                "skill '{}' contains invalid path characters",
+                name
+            ));
+        }
+
         let mut found: Option<(PathBuf, String, String)> = None; // (path, body, frontmatter_errors)
 
         for dir in skill_directories(ctx) {
@@ -109,6 +116,7 @@ pub fn list_skill_names(ctx: &ToolContext) -> Vec<String> {
 
 pub struct SkillEntry {
     pub name: String,
+    pub description: String,
     pub path: PathBuf,
 }
 
@@ -141,8 +149,13 @@ fn list_skills_impl(dirs: &[PathBuf]) -> Vec<SkillEntry> {
             }
             if let Some(name) = skill_path.file_name().and_then(|n| n.to_str()) {
                 if seen.insert(name.to_string()) {
+                    let description = std::fs::read_to_string(&skill_file)
+                        .ok()
+                        .map(|content| extract_description(&content))
+                        .unwrap_or_default();
                     entries.push(SkillEntry {
                         name: name.to_string(),
+                        description,
                         path: skill_file,
                     });
                 }
@@ -151,6 +164,26 @@ fn list_skills_impl(dirs: &[PathBuf]) -> Vec<SkillEntry> {
     }
     entries.sort_by(|a, b| a.name.cmp(&b.name));
     entries
+}
+
+/// Extract the `description` field from a SKILL.md's frontmatter.
+fn extract_description(content: &str) -> String {
+    let Some(rest) = content
+        .strip_prefix("---\n")
+        .or_else(|| content.strip_prefix("---\r\n"))
+    else {
+        return String::new();
+    };
+    let end = match rest.find("\n---\n").or_else(|| rest.find("\r\n---\r\n")) {
+        Some(o) => o,
+        None => return String::new(),
+    };
+    for line in rest[..end].lines() {
+        if let Some(value) = line.trim().strip_prefix("description:") {
+            return value.trim().trim_matches('"').trim_matches('\'').to_string();
+        }
+    }
+    String::new()
 }
 
 /// Parse and strip a leading `---` YAML frontmatter block.
@@ -287,5 +320,46 @@ mod tests {
         let (body, errors) = parse_frontmatter("---\nkey: value\nmore body\n");
         assert!(errors.contains("missing closing"));
         assert!(body.contains("---"));
+    }
+
+    #[test]
+    fn extract_description_from_frontmatter() {
+        let content = "---\nname: demo\ndescription: A skill for testing\n---\nBody";
+        assert_eq!(extract_description(content), "A skill for testing");
+    }
+
+    #[test]
+    fn extract_description_missing_returns_empty() {
+        assert_eq!(extract_description("---\nname: demo\n---\nBody"), "");
+        assert_eq!(extract_description("No frontmatter at all"), "");
+    }
+
+    #[tokio::test]
+    async fn rejects_path_traversal_in_skill_name() {
+        let root = temp_dir();
+        let ctx = ToolContext::new(root);
+        let result = SkillTool
+            .execute(ToolParams::new(serde_json::json!({ "name": "../etc/passwd" })), &ctx)
+            .await;
+        assert!(matches!(result, ToolResult::Error(_)));
+        assert!(result.into_text().contains("invalid path characters"));
+    }
+
+    #[tokio::test]
+    async fn list_skills_includes_description() {
+        let root = temp_dir();
+        let skill = root.join(".opencode").join("skills").join("demo");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(
+            skill.join("SKILL.md"),
+            "---\nname: demo\ndescription: My cool skill\n---\nBody",
+        )
+        .unwrap();
+
+        let ctx = ToolContext::new(root);
+        let skills = list_skills(&ctx);
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "demo");
+        assert_eq!(skills[0].description, "My cool skill");
     }
 }
