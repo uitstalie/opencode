@@ -229,7 +229,7 @@ fn builtin_agents() -> Vec<AgentInfo> {
         AgentInfo {
             id: "general".to_string(),
             title: "General".to_string(),
-            description: "General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel.".to_string(),
+            description: "General-purpose agent for researching complex questions and executing multi-step tasks.".to_string(),
             mode: "subagent".to_string(),
             hidden: false,
             max_steps: 25,
@@ -241,7 +241,7 @@ fn builtin_agents() -> Vec<AgentInfo> {
             id: "explore".to_string(),
             title: "Explore".to_string(),
             description: "Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns, search code for keywords, or answer questions about the codebase.".to_string(),
-            mode: "subagent".to_string(),
+            mode: "explore".to_string(),
             hidden: false,
             max_steps: 25,
             system: BUILTIN_EXPLORE_SYSTEM.to_string(),
@@ -286,7 +286,7 @@ fn builtin_agents() -> Vec<AgentInfo> {
 
 const BUILTIN_BUILD_SYSTEM: &str = "You are an AI coding agent. Help the user accomplish software engineering tasks by inspecting the workspace, making targeted changes, and using tools according to the configured permissions.";
 
-const BUILTIN_GENERAL_SYSTEM: &str = "You are a general-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel.";
+const BUILTIN_GENERAL_SYSTEM: &str = "You are a general-purpose agent for researching complex questions and executing multi-step tasks.";
 
 const BUILTIN_EXPLORE_SYSTEM: &str = r#"You are a file search specialist. You excel at thoroughly navigating and exploring codebases.
 

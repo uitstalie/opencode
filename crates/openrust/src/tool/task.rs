@@ -152,10 +152,16 @@ pub async fn run_agent(
 
         let mut assistant_text = String::new();
         let mut pending: Vec<(String, String, String)> = Vec::new();
+        let mut executed_calls: Vec<provider::ToolCall> = Vec::new();
+        let mut tool_outputs: Vec<(String, String)> = Vec::new();
         let mut finish_seen = false;
-        let mut tool_executed = false;
 
         while let Some(chunk) = stream.next().await {
+            if let Some(flag) = &tool_ctx.shutdown {
+                if flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    return Ok(last_assistant);
+                }
+            }
             match chunk? {
                 StreamChunk::TextDelta(text) => assistant_text.push_str(&text),
                 StreamChunk::ReasoningDelta(_) => {}
@@ -171,37 +177,37 @@ pub async fn run_agent(
                         buffer.push_str(&args);
                     }
                 }
-                StreamChunk::ToolCallEnd { id } => {
-                    let Some((_, name, args)) = pending
-                        .iter()
-                        .find(|(call_id, _, _)| call_id == &id)
-                        .cloned()
-                    else {
-                        continue;
-                    };
-                    let output = run_tool(&name, &args, tool_ctx).await.into_text();
-                    history.push(Message {
-                        role: "assistant".to_string(),
-                        content: MessageContent::text(assistant_text.clone()),
-                        name: None,
-                        tool_call_id: None,
-                        tool_calls: Some(vec![provider::ToolCall {
-                            id: id.clone(),
-                            kind: "function".to_string(),
-                            function: provider::ToolCallFunction {
-                                name: name.clone(),
-                                arguments: args.clone(),
-                            },
-                        }]),
-                    });
-                    history.push(Message::tool(output, id));
-                    assistant_text.clear();
-                    pending.clear();
-                    tool_executed = true;
-                    break;
-                }
+                StreamChunk::ToolCallEnd { id: _ } => {}
                 StreamChunk::Finish { .. } => finish_seen = true,
             }
+        }
+
+        for (id, name, args) in &pending {
+            let output = run_tool(name, args, tool_ctx).await.into_text();
+            executed_calls.push(provider::ToolCall {
+                id: id.clone(),
+                kind: "function".to_string(),
+                function: provider::ToolCallFunction {
+                    name: name.clone(),
+                    arguments: args.clone(),
+                },
+            });
+            tool_outputs.push((id.clone(), output));
+        }
+
+        if !executed_calls.is_empty() {
+            last_assistant = assistant_text.clone();
+            history.push(Message {
+                role: "assistant".to_string(),
+                content: MessageContent::text(assistant_text.clone()),
+                name: None,
+                tool_call_id: None,
+                tool_calls: Some(executed_calls),
+            });
+            for (call_id, output) in &tool_outputs {
+                history.push(Message::tool(output.clone(), call_id.clone()));
+            }
+            continue;
         }
 
         if !assistant_text.trim().is_empty() {
@@ -209,14 +215,7 @@ pub async fn run_agent(
             history.push(Message::assistant(assistant_text));
         }
 
-        if tool_executed {
-            continue;
-        }
-
-        if pending.is_empty() {
-            if finish_seen || !last_assistant.is_empty() {
-                return Ok(last_assistant);
-            }
+        if pending.is_empty() && finish_seen {
             return Ok(last_assistant);
         }
     }

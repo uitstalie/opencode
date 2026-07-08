@@ -187,6 +187,8 @@ pub struct ToolContext {
     pub llm: Option<Arc<dyn crate::core::provider::LlmProvider>>,
     pub model: Option<String>,
     pub reasoning_effort: Option<String>,
+    /// Shared shutdown flag — checked by nested agent loops (task tool).
+    pub shutdown: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl ToolContext {
@@ -204,6 +206,7 @@ impl ToolContext {
             llm: None,
             model: None,
             reasoning_effort: None,
+            shutdown: None,
         }
     }
 

@@ -120,7 +120,11 @@ impl LlmProvider for OpenAICompatProvider {
         let stream = response.bytes_stream();
 
         let chunk_stream = async_stream::stream! {
-            let mut tool_call_id: Option<String> = None;
+            // Tracks active tool calls by (streaming index, call id).
+            // OpenAI interleaves parallel tool calls using an `index` field
+            // on each delta — args for different calls arrive in the same
+            // SSE chunk, so we route by index, not a single pointer.
+            let mut call_ids: Vec<(usize, String)> = Vec::new();
             let mut buffer = String::new();
 
             for await chunk in stream {
@@ -144,11 +148,12 @@ impl LlmProvider for OpenAICompatProvider {
 
                     let data = &line[6..];
                     if data == "[DONE]" {
-                        if let Some(prev_id) = tool_call_id.take() {
+                        for (_, id) in &call_ids {
                             yield Ok(StreamChunk::ToolCallEnd {
-                                id: prev_id,
+                                id: id.clone(),
                             });
                         }
+                        call_ids.clear();
                         yield Ok(StreamChunk::Finish { usage: None });
                         break;
                     }
@@ -171,25 +176,28 @@ impl LlmProvider for OpenAICompatProvider {
                         // Tool calls
                         if let Some(tool_calls) = delta["tool_calls"].as_array() {
                             for tc in tool_calls {
+                                let index = tc["index"].as_u64().unwrap_or(0) as usize;
                                 let id = tc["id"].as_str().unwrap_or("").to_string();
                                 let fn_name = tc["function"]["name"].as_str().unwrap_or("").to_string();
                                 let args = tc["function"]["arguments"].as_str().unwrap_or("");
 
-                                if !id.is_empty() && tool_call_id.as_deref() != Some(&id) {
-                                    if let Some(prev_id) = tool_call_id.take() {
-                                        yield Ok(StreamChunk::ToolCallEnd {
-                                            id: prev_id,
-                                        });
-                                    }
-                                    tool_call_id = Some(id.clone());
+                                if !id.is_empty() {
+                                    call_ids.push((index, id.clone()));
                                     yield Ok(StreamChunk::ToolCallStart {
                                         id: id.clone(),
-                                        name: fn_name.clone(),
+                                        name: fn_name,
                                     });
                                 }
+
                                 if !args.is_empty() {
+                                    let routed_id = call_ids
+                                        .iter()
+                                        .rev()
+                                        .find(|(idx, _)| *idx == index)
+                                        .map(|(_, id)| id.clone())
+                                        .unwrap_or_default();
                                     yield Ok(StreamChunk::ToolCallDelta {
-                                        id: tool_call_id.clone().unwrap_or_default(),
+                                        id: routed_id,
                                         args: args.to_string(),
                                     });
                                 }
@@ -229,21 +237,22 @@ impl LlmProvider for OpenAICompatProvider {
                                     prompt_cache_hit_tokens: cache_hit,
                                 }
                             });
-                            if let Some(prev_id) = tool_call_id.take() {
+                            for (_, id) in &call_ids {
                                 yield Ok(StreamChunk::ToolCallEnd {
-                                    id: prev_id,
+                                    id: id.clone(),
                                 });
                             }
+                            call_ids.clear();
                             yield Ok(StreamChunk::Finish { usage });
                         }
                     }
                 }
             }
 
-            // Flush any pending tool call
-            if let Some(prev_id) = tool_call_id.take() {
+            // Flush any pending tool calls (connection-drop safety net)
+            for (_, id) in &call_ids {
                 yield Ok(StreamChunk::ToolCallEnd {
-                    id: prev_id,
+                    id: id.clone(),
                 });
             }
         };

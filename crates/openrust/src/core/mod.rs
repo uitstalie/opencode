@@ -7,6 +7,5 @@ pub mod permission;
 pub mod platform;
 pub mod provider;
 pub mod session;
-pub mod session_input;
 pub mod token;
 pub mod vault;

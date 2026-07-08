@@ -53,28 +53,51 @@ impl Tool for TodoWriteTool {
         };
 
         let now = now_string();
+
+        let existing = store.list_tasks(session_id).unwrap_or_default();
+        let title_to_id: std::collections::HashMap<&str, &str> = existing
+            .iter()
+            .map(|t| (t.title.as_str(), t.id.as_str()))
+            .collect();
+        let mut next_id = existing
+            .iter()
+            .filter_map(|t| t.id.parse::<usize>().ok())
+            .max()
+            .unwrap_or(0)
+            + 1;
+
         let tasks: Vec<Task> = items
             .iter()
-            .enumerate()
-            .map(|(index, item)| Task {
-                id: format!("{}", index + 1),
-                agent: None,
-                title: item
+            .map(|item| {
+                let title = item
                     .get("content")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
-                    .to_string(),
-                status: item
-                    .get("status")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("pending")
-                    .to_string(),
-                priority: item
-                    .get("priority")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string()),
-                created_at: now.clone(),
-                updated_at: now.clone(),
+                    .to_string();
+                let id = title_to_id
+                    .get(title.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| {
+                        let s = format!("{}", next_id);
+                        next_id += 1;
+                        s
+                    });
+                Task {
+                    id,
+                    agent: None,
+                    title,
+                    status: item
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("pending")
+                        .to_string(),
+                    priority: item
+                        .get("priority")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    created_at: now.clone(),
+                    updated_at: now.clone(),
+                }
             })
             .collect();
 

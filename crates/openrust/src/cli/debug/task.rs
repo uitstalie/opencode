@@ -1,18 +1,40 @@
 use clap::Subcommand;
 
-use crate::core::session::SessionStore;
+use crate::core::session::{SessionStore, TaskSummary};
+
+fn now_micros() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros()
+}
 
 #[derive(Subcommand)]
 pub enum Cmd {
     /// List tasks for a session
     List {
-        /// Session id
         #[arg(long)]
         session: String,
     },
+    /// Add a task to a session
+    Add {
+        #[arg(long)]
+        session: String,
+        /// Task title
+        title: String,
+        /// Initial status (default: pending)
+        #[arg(long, default_value = "pending")]
+        status: String,
+    },
+    /// Delete a task from a session
+    Delete {
+        #[arg(long)]
+        session: String,
+        /// Task id
+        id: String,
+    },
     /// Mark a task completed
     Done {
-        /// Session id
         #[arg(long)]
         session: String,
         /// Task id
@@ -28,6 +50,30 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
             print_list(&session, &store.list_tasks(&session)?);
             Ok(())
         }
+        Cmd::Add {
+            session,
+            title,
+            status,
+        } => {
+            store.ensure_session(&session, None)?;
+            let id = format!("task-{}", now_micros());
+            store.upsert_task(
+                &session,
+                &id,
+                None,
+                title.clone(),
+                status,
+            )?;
+            println!("Task added: {}", title);
+            Ok(())
+        }
+        Cmd::Delete { session, id } => match store.delete_task(&session, &id)? {
+            true => {
+                println!("Task deleted: {}", id);
+                Ok(())
+            }
+            false => anyhow::bail!("Task '{}' not found in session '{}'", id, session),
+        },
         Cmd::Done { session, id } => match store.update_task_status(&session, &id, "completed")? {
             Some(task) => {
                 println!("Task completed: {} [{}]", task.id, task.title);
@@ -38,7 +84,7 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
     }
 }
 
-fn print_list(session: &str, tasks: &[crate::core::session::TaskSummary]) {
+fn print_list(session: &str, tasks: &[TaskSummary]) {
     if tasks.is_empty() {
         println!("No tasks for session {}.", session);
         return;

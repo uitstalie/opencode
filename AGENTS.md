@@ -3,7 +3,7 @@
 基于 [uitstalie/opencode](https://github.com/uitstalie/opencode.git) fork，进行完整 Rust 重写。
 原 TypeScript 实现已全部移除，单一 Rust 二进制 `openrust`，零 TS/Node/Bun 依赖，无 gRPC sidecar。
 
-- **默认分支**：`dev`（当前 Rust TUI 工作分支：`opencode-rust-tui`）
+- **默认分支**：`dev`（当前 Rust TUI 工作分支：`rust`，镜像于 `origin/rust`）
 - **工作区**：本仓库即为可直接编辑的源码，Rust 代码在 `crates/openrust/`
 - 修改源码后需 编译 → 替换二进制 → 重启 opencode
 
@@ -16,8 +16,9 @@ Follow these steps exactly and in order.
 
 ### Platform
 
-- OS: Linux, Arch: x64
-- Install path: `~/.opencode/bin/openrust`
+- Cross-platform: Linux (x64) and Windows (x64)
+- Install path: platform-aware via `core::platform::PlatformPaths` (e.g. `~/.local/share/openrust/` on Linux, `%APPDATA%\openrust\` on Windows)
+- Binary path: `<data_dir>/bin/openrust` (Linux) or `<data_dir>\bin\openrust.exe` (Windows)
 - Build tool: cargo (in `crates/openrust/`)
 - Binary name: `openrust`
 
@@ -36,6 +37,8 @@ cd crates/openrust && cargo build --release && \
   cp ~/.opencode/bin/openrust ~/.opencode/bin/openrust.bak && \
   cp target/release/openrust ~/.opencode/bin/openrust
 ```
+
+On Windows, use `copy` instead of `cp` and adjust the install path (typically `%APPDATA%\openrust\bin\openrust.exe`).
 
 After replacement, the user must **restart opencode** for the new binary to take effect.
 
@@ -63,12 +66,12 @@ When user says "update opencode" or "pull latest and rebuild":
 
 - **build fails**: run `cd crates/openrust && cargo check` for detailed errors. Dependencies are fetched automatically by cargo; no separate install step.
 - **clippy warnings**: run `cd crates/openrust && cargo clippy` and fix before committing.
-- **binary doesn't start**: check `~/.opencode/bin/openrust --version`, verify arch matches (`uname -m` should be x86_64).
+- **binary doesn't start**: check `<data_dir>/bin/openrust --version`, verify arch matches (`uname -m` should be x86_64 on Linux).
 - **push blocked by hooks**: pre-push hooks were removed with the TS toolchain. If a hook is re-added later and fails on unrelated errors, use `git push --no-verify` with user confirmation.
 
 ---
 
-- The default branch in this repo is `dev`; the Rust TUI work currently lives on `opencode-rust-tui` (and is mirrored to `origin/rust`).
+- The default branch in this repo is `dev`; the Rust TUI work currently lives on `rust` (mirrored to `origin/rust`).
 - Local `main` ref may not exist; use `dev` or `origin/dev` for diffs.
 
 ## Branch Names
@@ -153,10 +156,10 @@ fn foo(cond: bool) -> u32 {
 The crate follows a flat module tree under `crates/openrust/src/`:
 
 - `cli/` — CLI entrypoint and `debug` subcommands (debug-first strategy: core logic is verified via `opencode debug <subcommand>` before TUI integration).
-- `core/` — session, config, provider, vault, compaction, permission, paths.
+- `core/` — session, config, provider (trait + types), vault, crypto, compaction, permission, paths, platform, agent, session_input, token.
 - `tool/` — tool registry and individual tools.
 - `tui/` — ratatui/crossterm terminal UI, worker, rendering.
-- `provider/` — LLM provider trait and OpenAI-compatible adapter.
+- `provider/` — concrete LLM provider implementations (the `LlmProvider` trait itself lives in `core/provider.rs`).
 - `system_prompt.rs` — system prompt assembly (kept out of `core/` to avoid layering violations into `tool/`).
 
 When adding a module, follow the existing `mod.rs` + sibling-file pattern. Keep `tool/` and `tui/` Location-scoped; do not let model resolution or tool registry leak into the UI layer.

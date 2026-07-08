@@ -141,6 +141,7 @@ pub(super) fn spawn_prompt_worker(
                 llm: Some(Arc::clone(&llm)),
                 model: Some(model.clone()),
                 reasoning_effort: reasoning_effort.clone(),
+                shutdown: Some(Arc::clone(&shutdown)),
                 ..ToolContext::new(std::path::PathBuf::new())
             };
 
@@ -206,11 +207,13 @@ pub(super) fn spawn_prompt_worker(
                         .unwrap_or_else(|_| "compaction failed".to_string());
 
                         if !summary.trim().is_empty() {
-                            let _ = store_clone.as_ref().unwrap().append_compaction(
-                                session_id_clone.as_deref().unwrap_or("unknown"),
-                                summary.trim().to_string(),
-                                recent.join("\n"),
-                            );
+                            if let Some(store) = store_clone.as_ref() {
+                                let _ = store.append_compaction(
+                                    session_id_clone.as_deref().unwrap_or("unknown"),
+                                    summary.trim().to_string(),
+                                    recent.join("\n"),
+                                );
+                            }
                             history.drain(..compact_cutoff);
                             history.insert(
                                 0,

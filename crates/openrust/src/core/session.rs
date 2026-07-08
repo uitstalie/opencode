@@ -492,6 +492,17 @@ impl SessionStore {
         format!("{session_id}:{task_id}")
     }
 
+    pub fn delete_task(&self, session_id: &str, id: &str) -> anyhow::Result<bool> {
+        let tree = self.db.open_tree("tasks")?;
+        let key = self.task_key(session_id, id);
+        let existed = tree.get(key.as_bytes())?.is_some();
+        if existed {
+            tree.remove(key.as_bytes())?;
+            self.touch_session(session_id)?;
+        }
+        Ok(existed)
+    }
+
     fn db_path() -> std::path::PathBuf {
         crate::core::platform::PlatformPaths::detect().sessions_db_path()
     }
