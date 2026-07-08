@@ -37,6 +37,10 @@ impl Tool for WriteTool {
         let content = require_str!(p, "content");
         let path = resolve_path(ctx, path_str);
 
+        if let Err(reason) = crate::core::paths::check_protected(&path) {
+            return ToolResult::error(format!("Refusing to write {}: {}", path.display(), reason));
+        }
+
         let undo_hash = ctx.undo_store.as_ref().and_then(|store| {
             std::fs::read_to_string(&path)
                 .ok()
@@ -138,5 +142,28 @@ mod tests {
             )
             .await;
         assert!(r.into_text().contains("Missing required parameter"));
+    }
+
+    #[tokio::test]
+    async fn refuses_protected_path() {
+        let protected = if cfg!(windows) {
+            r"C:\Windows\System32\drivers\etc\hosts"
+        } else {
+            "/etc/passwd"
+        };
+        let r = WriteTool
+            .execute(
+                ToolParams::new(serde_json::json!({
+                    "filePath": protected, "content": "hacked"
+                })),
+                &ctx(None),
+            )
+            .await;
+        let text = r.into_text();
+        assert!(
+            text.contains("Refusing"),
+            "expected Refusing, got: {}",
+            text
+        );
     }
 }

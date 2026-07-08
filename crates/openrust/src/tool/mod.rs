@@ -252,21 +252,27 @@ pub enum Permission {
 }
 
 /// Check if a tool is allowed. Delegates to the core permission policy.
+/// For multi-path tools (apply_patch), checks every target — the first
+/// out-of-scope path triggers Ask/Deny.
 pub fn check_permission(
     tool_name: &str,
     params: &serde_json::Value,
     ctx: &ToolContext,
 ) -> Permission {
-    match crate::core::permission::evaluate(
-        tool_name,
-        &crate::core::permission::target_path(params),
-        ctx.project_root(),
-        ctx.interactive,
-    ) {
-        crate::core::permission::Decision::Allow => Permission::Allow,
-        crate::core::permission::Decision::Deny(reason) => Permission::Deny(reason),
-        crate::core::permission::Decision::Ask(reason) => Permission::Ask(reason),
+    let targets = crate::core::permission::target_paths(params);
+    for target in &targets {
+        match crate::core::permission::evaluate(
+            tool_name,
+            target,
+            ctx.project_root(),
+            ctx.interactive,
+        ) {
+            crate::core::permission::Decision::Allow => continue,
+            crate::core::permission::Decision::Deny(reason) => return Permission::Deny(reason),
+            crate::core::permission::Decision::Ask(reason) => return Permission::Ask(reason),
+        }
     }
+    Permission::Allow
 }
 
 /// Execute a tool by name against a context (parsing raw JSON args), returning

@@ -31,33 +31,33 @@ pub fn expand_project(path: &str, project_root: &Path) -> String {
     path.to_string()
 }
 
-/// The scope-relevant target path from raw tool params.
-pub fn target_path(params: &serde_json::Value) -> String {
-    if let Some(s) = params["target"].as_str() {
-        return s.to_string();
+/// The scope-relevant target paths from raw tool params.
+/// Returns multiple paths for multi-file tools (apply_patch).
+pub fn target_paths(params: &serde_json::Value) -> Vec<String> {
+    for key in &["target", "filePath", "path", "workdir"] {
+        if let Some(s) = params[key].as_str() {
+            if !s.is_empty() {
+                return vec![s.to_string()];
+            }
+        }
     }
-    if let Some(s) = params["filePath"].as_str() {
-        return s.to_string();
-    }
-    if let Some(s) = params["path"].as_str() {
-        return s.to_string();
-    }
-    if let Some(s) = params["workdir"].as_str() {
-        return s.to_string();
-    }
-    // apply_patch stores all paths inside patchText — extract the first one
-    // so the scope check can evaluate it.
+    // apply_patch stores all paths inside patchText — extract every one.
     if let Some(patch) = params["patchText"].as_str() {
+        let mut paths = Vec::new();
         for line in patch.lines() {
             let trimmed = line.trim();
             for marker in &["*** Add File: ", "*** Update File: ", "*** Delete File: "] {
                 if let Some(rest) = trimmed.strip_prefix(marker) {
-                    return rest.trim().to_string();
+                    let p = rest.trim().to_string();
+                    if !p.is_empty() {
+                        paths.push(p);
+                    }
                 }
             }
         }
+        return paths;
     }
-    String::new()
+    Vec::new()
 }
 
 /// Evaluate a tool invocation against project scope.

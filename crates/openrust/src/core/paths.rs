@@ -55,15 +55,19 @@ pub fn is_protected_path(canonical: &Path) -> Option<&'static str> {
 
     // Exact match against system prefixes
     for prefix in SYSTEM_PROTECTED {
-        if s == *prefix {
+        if has_component(s, prefix) {
             return Some("protected system path");
         }
     }
 
-    // Windows: drive root (e.g. C:\) or Windows system directory
+    // Windows: drive root (e.g. C:\) or Windows system directory (case-insensitive)
     #[cfg(windows)]
     {
-        if is_drive_root(s) || s.eq_ignore_ascii_case("C:\\Windows") {
+        let lower = s.to_ascii_lowercase();
+        if is_drive_root(s)
+            || lower == "c:\\windows"
+            || lower.starts_with("c:\\windows\\")
+        {
             return Some("protected system path");
         }
     }
@@ -98,6 +102,30 @@ fn is_drive_root(s: &str) -> bool {
 }
 
 // ── Project scope ───────────────────────────────────
+
+/// Canonicalize a path, handling non-existent files by canonicalizing the
+/// parent directory and appending the filename. Returns `None` if even the
+/// parent cannot be canonicalized.
+pub fn canonicalize_safe(path: &Path) -> Option<PathBuf> {
+    if let Ok(c) = path.canonicalize() {
+        return Some(c);
+    }
+    let parent = path.parent()?;
+    let parent_canon = parent.canonicalize().ok()?;
+    let filename = path.file_name()?;
+    Some(parent_canon.join(filename))
+}
+
+/// Check if a path is protected. Returns `Err(reason)` if it is.
+/// Handles non-existent paths via `canonicalize_safe`.
+pub fn check_protected(path: &Path) -> Result<(), &'static str> {
+    if let Some(canon) = canonicalize_safe(path) {
+        if let Some(reason) = is_protected_path(&canon) {
+            return Err(reason);
+        }
+    }
+    Ok(())
+}
 
 /// Check whether a path is within the project root.
 pub fn is_within_project(target: &str, project_root: &Path) -> bool {

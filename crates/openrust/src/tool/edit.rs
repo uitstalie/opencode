@@ -45,6 +45,11 @@ impl Tool for EditTool {
         }
 
         let path = resolve_path(ctx, path_str);
+
+        if let Err(reason) = crate::core::paths::check_protected(&path) {
+            return ToolResult::error(format!("Refusing to edit {}: {}", path.display(), reason));
+        }
+
         let content = try_tool!(std::fs::read_to_string(&path), |e| format!(
             "Cannot read: {}",
             e

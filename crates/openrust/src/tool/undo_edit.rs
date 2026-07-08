@@ -38,6 +38,10 @@ impl Tool for UndoEditTool {
         let hash = require_str!(p, "undoHash");
         let path = Path::new(path_str);
 
+        if let Err(reason) = crate::core::paths::check_protected(path) {
+            return ToolResult::error(format!("Refusing to restore {}: {}", path_str, reason));
+        }
+
         let store = try_opt!(ctx.undo_store.as_ref(), "Undo store not available");
         let blob = match store.read_blob(hash) {
             Some(b) => b,

@@ -66,6 +66,14 @@ impl Tool for ApplyPatchTool {
 
         let mut applied: Vec<String> = Vec::new();
         for hunk in &hunks {
+            let resolved = resolve_path(ctx, hunk_path(hunk));
+            if let Err(reason) = crate::core::paths::check_protected(&resolved) {
+                return ToolResult::error(format!(
+                    "Refusing to modify {}: {}",
+                    resolved.display(),
+                    reason
+                ));
+            }
             match apply_hunk(ctx, hunk) {
                 Ok(label) => applied.push(label),
                 Err(err) => {
@@ -90,6 +98,12 @@ impl Tool for ApplyPatchTool {
 }
 
 // ── Patch model ────────────────────────────────────
+
+fn hunk_path(hunk: &Hunk) -> &str {
+    match hunk {
+        Hunk::Add { path, .. } | Hunk::Delete { path } | Hunk::Update { path, .. } => path,
+    }
+}
 
 enum Hunk {
     Add {
@@ -485,5 +499,26 @@ mod tests {
             )
             .await;
         assert!(r.into_text().contains("Failed to find expected lines"));
+    }
+
+    #[tokio::test]
+    async fn refuses_protected_path_in_patch() {
+        let protected = if cfg!(windows) {
+            r"C:\Windows\System32\fake_test.txt"
+        } else {
+            "/etc/fake_test_xyz"
+        };
+        let patch = format!(
+            "*** Begin Patch\n*** Add File: {}\n+evil\n*** End Patch",
+            protected
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let r = ApplyPatchTool
+            .execute(
+                ToolParams::new(serde_json::json!({"patchText": patch})),
+                &ctx(dir.path()),
+            )
+            .await;
+        assert!(r.into_text().contains("Refusing"));
     }
 }
