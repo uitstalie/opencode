@@ -11,3 +11,6 @@
 - `todowrite`/`question`/`skill` 工具暂缓移植：它们依赖 session/交互上下文，超出当前 `ToolContext` 能力，需先扩展 `ToolContext`（加 sessionID 等）再逐个补 #decision #confirmed
 - `task` 子 agent 用可复用 `run_agent()` headless 循环实现，`ToolContext` 注入 `llm`/`model`；子 agent 上下文清空 llm 与交互通道防止递归调用 #architecture #decision #confirmed
 - 权限交互：scope 受限工具在交互模式下经 `permission_tx` 往返弹 `[A]/[D]` 确认；无确认通道时默认拒绝（安全优先），废弃旧的 auto-allow-in-debug #architecture #decision #confirmed
+- ESC 中断保留流式传输的部分助手文本（而非丢弃），中断时丢弃 pending 提示队列（干净中断）；跟进消息用独立 channel（followup_tx），不复用 pending_prompts——主循环持久化消息，worker 仅在当前回合注入 #architecture #decision #confirmed
+- 30fps 统一轮询（33ms poll_timeout）：AI 运行时 poll 超时强制重绘驱动 spinner，非运行时省 CPU——替代之前 1ms 空轮询 #decision #confirmed
+- `mode` 字段语义混乱根因：它被当作 primary/subagent 分类用，但 `tools_for_mode` 期望工具集语义（plan/explore/all），导致 write 过滤从未生效（builtin plan agent mode="primary" ≠ "plan"）——需彻底删除 #decision #confirmed

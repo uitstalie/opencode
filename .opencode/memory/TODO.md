@@ -12,6 +12,7 @@
 - [x] **Rust TUI Phase 1 收尾**：`task` 子 agent（可复用 `run_agent`）+ 真实权限弹窗 `[A]/[D]` + `core/permission.rs`（scope + `$PROJECT`）+ `debug permission check` / `debug e2e` 命令；14 工具齐全，113 测试全绿
 - [x] **Rust TUI Phase 2**：Markdown 渲染（pulldown-cmark 自研）+ 语法高亮（syntect 纯 Rust）+ Diff 查看器（similar last-turn）+ 文件树侧边栏（notify）
 - [ ] nudge 内容动态化：从 constraint 规则自动生成 nudge，替代 `request.ts` 硬编码
+- [ ] **mode → read_only 迁移（8 步）**：①还原 agent.rs 临时 mode 变更 → ②删除 AgentInfo.mode 字段 → ③添加 read_only: bool + frontmatter 解析（默认 false）→ ④重写 tools_for_mode→tools_for(read_only, is_subagent)：read_only=true 过滤 WRITE_TOOLS → ⑤更新 worker.rs/task.rs 调用方 → ⑥general/explore 设 hidden=true（修复 Tab 误切）→ ⑦更新 frontmatter 解析测试 + tools_for/visible_agents 测试 → ⑧cargo test + cargo clippy
 
 ## 中优先级
 - [ ] 清理 `doc/` 设计文档中标记的 TODO/待接入点
