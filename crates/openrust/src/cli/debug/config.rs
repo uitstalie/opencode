@@ -198,11 +198,11 @@ fn render_paths(
         format!("Global config:   {}", paths.global_config_path().display()),
         format!(
             "Global rules:    {}",
-            paths.config_dir().join("rules.md").display()
+            paths.config_dir().join("rules").join("*.md").display()
         ),
         format!(
             "Project rules:   {}",
-            cwd.join(".openrust").join("rules.md").display()
+            cwd.join(".openrust").join("rules").join("*.md").display()
         ),
         format!("Vault (enc):     {}", paths.credentials_path().display()),
         format!("Undo store:      {}", paths.undo_dir().display()),
@@ -236,8 +236,8 @@ mod tests {
 
         assert!(lines[0].contains("Project config:") && lines[0].ends_with("config.jsonc"));
         assert!(lines[1].contains("Global config:") && lines[1].ends_with("config.json"));
-        assert!(lines[2].contains("Global rules:") && lines[2].ends_with("rules.md"));
-        assert!(lines[3].contains("Project rules:") && lines[3].ends_with("rules.md"));
+        assert!(lines[2].contains("Global rules:") && lines[2].ends_with("*.md"));
+        assert!(lines[3].contains("Project rules:") && lines[3].ends_with("*.md"));
         assert!(
             lines[4].contains("Vault (enc):") && lines[4].ends_with("credentials.enc")
         );

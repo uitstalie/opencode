@@ -150,18 +150,43 @@ fn load_agents_md(cwd: &std::path::Path) -> String {
     std::fs::read_to_string(&path).unwrap_or_default()
 }
 
-/// Load global rules from `~/.config/openrust/rules.md`.
+/// Load global rules from all `*.md` files in `~/.config/openrust/rules/`.
+/// Files are sorted alphabetically for deterministic ordering.
 fn load_global_rules() -> String {
-    let path = crate::core::platform::PlatformPaths::detect()
+    let dir = crate::core::platform::PlatformPaths::detect()
         .config_dir()
-        .join("rules.md");
-    std::fs::read_to_string(&path).unwrap_or_default()
+        .join("rules");
+    load_rules_dir(&dir)
 }
 
-/// Load project rules from `.openrust/rules.md`.
+/// Load project rules from all `*.md` files in `.openrust/rules/`.
 fn load_project_rules(cwd: &std::path::Path) -> String {
-    let path = cwd.join(".openrust").join("rules.md");
-    std::fs::read_to_string(&path).unwrap_or_default()
+    let dir = cwd.join(".openrust").join("rules");
+    load_rules_dir(&dir)
+}
+
+/// Read all `*.md` files from `dir`, sorted by filename, concatenated.
+fn load_rules_dir(dir: &std::path::Path) -> String {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return String::new();
+    };
+    let mut files: Vec<_> = entries
+        .flatten()
+        .filter(|e| {
+            e.path().extension().is_some_and(|ext| ext == "md")
+        })
+        .collect();
+    files.sort_by_key(|e| e.file_name());
+
+    let mut parts = Vec::new();
+    for entry in &files {
+        if let Ok(content) = std::fs::read_to_string(entry.path()) {
+            if !content.trim().is_empty() {
+                parts.push(content.trim().to_string());
+            }
+        }
+    }
+    parts.join("\n\n")
 }
 
 fn render_capabilities(
@@ -373,5 +398,36 @@ mod tests {
         let project_pos = rendered.find("<project-rules>").unwrap();
         assert!(global_pos < agents_pos);
         assert!(agents_pos < project_pos);
+    }
+
+    #[test]
+    fn load_rules_dir_concatenates_sorted_md_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "openrust-rules-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("b_second.md"), "Second rule").unwrap();
+        std::fs::write(dir.join("a_first.md"), "First rule").unwrap();
+        std::fs::write(dir.join("c_ignore.txt"), "Not markdown").unwrap();
+
+        let content = load_rules_dir(&dir);
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert!(content.contains("First rule"));
+        assert!(content.contains("Second rule"));
+        assert!(!content.contains("Not markdown"));
+        let first_pos = content.find("First rule").unwrap();
+        let second_pos = content.find("Second rule").unwrap();
+        assert!(first_pos < second_pos);
+    }
+
+    #[test]
+    fn load_rules_dir_empty_when_no_dir() {
+        let content = load_rules_dir(std::path::Path::new("/nonexistent/rules/dir"));
+        assert!(content.is_empty());
     }
 }
