@@ -63,6 +63,27 @@ impl SessionView {
     pub(super) fn render_session_frame(&self, frame: &mut Frame, regions: render::LayoutRegions) {
         let session_area = if self.sidebar_visible && self.sidebar.is_some() {
             let (side, main) = render::split_sidebar(regions.session);
+
+            let tasks: Vec<_> = self
+                .store
+                .as_ref()
+                .and_then(|s| s.list_tasks(&self.session_id).ok())
+                .unwrap_or_default();
+
+            let (files_area, todo_area) = if tasks.is_empty() {
+                (side, None)
+            } else {
+                let todo_height = (tasks.len() as u16 + 2).min(side.height / 2).max(4);
+                let chunks = ratatui::layout::Layout::default()
+                    .direction(ratatui::layout::Direction::Vertical)
+                    .constraints([
+                        ratatui::layout::Constraint::Min(5),
+                        ratatui::layout::Constraint::Length(todo_height),
+                    ])
+                    .split(side);
+                (chunks[0], Some(chunks[1]))
+            };
+
             if let Some(tree) = &self.sidebar {
                 let sidebar = Paragraph::new(tree.lines(&self.theme))
                     .style(self.theme.panel_style())
@@ -74,8 +95,40 @@ impl SessionView {
                             .border_style(self.theme.border_style()),
                     )
                     .wrap(Wrap { trim: false });
-                frame.render_widget(sidebar, side);
+                frame.render_widget(sidebar, files_area);
             }
+
+            if let Some(todo_area) = todo_area {
+                let completed = tasks.iter().filter(|t| t.status == "completed").count();
+                let total = tasks.len();
+                let todo_lines: Vec<Line<'static>> = tasks
+                    .iter()
+                    .map(|t| {
+                        let (mark, style) = match t.status.as_str() {
+                            "completed" => ("[x]", self.theme.muted_style()),
+                            "in_progress" => ("[~]", self.theme.assistant_style()),
+                            "cancelled" => ("[-]", self.theme.muted_style()),
+                            _ => ("[ ]", self.theme.panel_style()),
+                        };
+                        Line::from(Span::styled(
+                            format!("{mark} {}", t.title),
+                            style,
+                        ))
+                    })
+                    .collect();
+                let todo = Paragraph::new(todo_lines)
+                    .style(self.theme.panel_style())
+                    .block(
+                        Block::default()
+                            .title(format!(" TODO {completed}/{total} "))
+                            .title_style(self.theme.title_style())
+                            .borders(Borders::ALL)
+                            .border_style(self.theme.border_style()),
+                    )
+                    .wrap(Wrap { trim: false });
+                frame.render_widget(todo, todo_area);
+            }
+
             main
         } else {
             regions.session

@@ -56,8 +56,11 @@ impl SessionView {
             .store
             .as_ref()
             .and_then(|store| store.list_tasks(&self.session_id).ok())
-            .map(|tasks| format!("tasks: {}", tasks.len()))
-            .unwrap_or_else(|| "tasks: n/a".to_string());
+            .map(|tasks| {
+                let done = tasks.iter().filter(|t| t.status == "completed").count();
+                format!("tasks: {}/{}", done, tasks.len())
+            })
+            .unwrap_or_else(|| "tasks: 0".to_string());
         Line::from(vec![
             Span::styled(
                 "OpenRust",
