@@ -23,44 +23,85 @@ pub fn is_scope_restricted(tool: &str) -> bool {
 /// Commands that are inherently destructive — ALWAYS require `Ask`, even in
 /// interactive mode, even if a future config rule tries to allow them.
 ///
-/// These are commands where the action itself is dangerous regardless of
-/// arguments (disk wipe, system power, firewall rules, etc.).
+/// Covers POSIX/Linux, Windows CMD, and PowerShell. The `.exe` / `.com`
+/// suffix is stripped before matching, so `"shutdown"` catches both
+/// `shutdown` and `shutdown.exe`.
 const DANGEROUS_COMMANDS: &[&str] = &[
-    // System power / control
+    // ── POSIX / Linux ────────────────────────────────
     "shutdown", "reboot", "halt", "poweroff", "init", "telinit",
-    // Disk / partition destruction
-    "dd", "mkfs", "fdisk", "parted", "format",
-    // Bootloader
+    "dd", "mkfs", "fdisk", "parted",
     "grub-install", "update-grub",
-    // Firewall / network security
-    "iptables", "ip6tables", "ufw", "firewall-cmd", "nft",
-    // System service control (can stop critical services)
-    "systemctl", "service",
-    // User / privilege escalation
+    "iptables", "ip6tables", "ufw", "firewall-cmd", "nft", "ebtables",
+    "systemctl", "service", "rcctl", "sv",
     "useradd", "userdel", "usermod", "passwd", "chage",
     "visudo", "sudoedit",
+    "cryptsetup", "lvremove", "vgremove", "pvremove",
+    "wipefs", "blkid",
+
+    // ── Windows CMD / external executables ───────────
+    "diskpart", "reg", "regedt32", "regedit",
+    "sc", "net", "netsh",
+    "cipher", "sfc", "bcdedit",
+    "wbadmin", "vssadmin",
+    "shutdown", "format", // shared name with POSIX; harmless to list twice
+
+    // ── PowerShell cmdlets ───────────────────────────
+    "Stop-Computer", "Restart-Computer",
+    "Set-ExecutionPolicy",
+    "Format-Volume", "Clear-Disk", "Remove-Partition", "Initialize-Disk",
+    "Disable-WSMan", "Set-Service", "Stop-Service",
+    "Remove-Item", "Clear-Content", "Clear-Item",
+    "Set-ItemProperty", // when targeting registry
 ];
 
-/// Check if a bash command starts with a dangerous command (after sudo strip).
+/// Strip `.exe` / `.com` suffix from a command name (Windows external commands).
+fn strip_exe_suffix(cmd: &str) -> &str {
+    for ext in [".exe", ".com", ".bat", ".cmd", ".ps1"] {
+        if let Some(stripped) = cmd.strip_suffix(ext) {
+            return stripped;
+        }
+    }
+    cmd
+}
+
+/// True if `token` is a pipe / sequence boundary that separates sub-commands.
+fn is_segment_boundary(token: &str) -> bool {
+    matches!(token, "|" | ";" | "&&" | "||")
+}
+
+/// Check if *any* sub-command in the pipeline is dangerous.
+/// Handles `sudo`/env prefixes, `.exe` suffix stripping, and pipe/`;`/`&&`/`||`
+/// segment boundaries so that `echo foo | shutdown` is caught.
 fn is_dangerous_command(command: &str) -> bool {
     let tokens = tokenize_command(command);
     let mut i = 0;
-    // Skip sudo / env assignments
-    while i < tokens.len() && (tokens[i] == "sudo" || tokens[i].contains('=')) {
+    loop {
+        // Skip sudo / env assignments at the start of each segment
+        while i < tokens.len() && (tokens[i] == "sudo" || tokens[i].contains('=')) {
+            i += 1;
+        }
+        if i >= tokens.len() {
+            break;
+        }
+        let cmd = strip_exe_suffix(&tokens[i]);
+        let cmd_lower = cmd.to_ascii_lowercase();
+        // Exact match (case-insensitive)
+        if DANGEROUS_COMMANDS.iter().any(|c| c.eq_ignore_ascii_case(cmd)) {
+            return true;
+        }
+        // mkfs.* family (mkfs.ext4, mkfs.ntfs, mkfs.vfat, …)
+        if cmd_lower.starts_with("mkfs.") {
+            return true;
+        }
+        // Advance past remaining tokens in this segment
         i += 1;
-    }
-    if i >= tokens.len() {
-        return false;
-    }
-    let cmd = &tokens[i];
-    let cmd_lower = cmd.to_ascii_lowercase();
-    // Exact match (case-insensitive)
-    if DANGEROUS_COMMANDS.iter().any(|c| c.eq_ignore_ascii_case(cmd)) {
-        return true;
-    }
-    // mkfs.* family (mkfs.ext4, mkfs.ntfs, mkfs.vfat, …)
-    if cmd_lower.starts_with("mkfs.") {
-        return true;
+        while i < tokens.len() && !is_segment_boundary(&tokens[i]) {
+            i += 1;
+        }
+        // Skip the boundary token itself
+        if i < tokens.len() {
+            i += 1;
+        }
     }
     false
 }
@@ -68,9 +109,10 @@ fn is_dangerous_command(command: &str) -> bool {
 /// Evaluate a bash command for permission.
 ///
 /// Flow:
-/// 1. Dangerous command → always `Ask` (interactive) or `Deny` (non-interactive)
-/// 2. Extracted paths out of project scope → `Ask` / `Deny`
-/// 3. Everything else → `Allow`
+/// 1. Dangerous command → always `Ask` (interactive) / `Deny` (non-interactive)
+/// 2. Extracted path hits a protected system path → always `Ask` / `Deny`
+/// 3. Extracted path out of project scope → `Ask` / `Deny`
+/// 4. Everything else → `Allow`
 pub fn evaluate_bash(command: &str, project_root: &Path, interactive: bool) -> Decision {
     if is_dangerous_command(command) {
         return if interactive {
@@ -82,10 +124,20 @@ pub fn evaluate_bash(command: &str, project_root: &Path, interactive: bool) -> D
             ))
         };
     }
-    // Scope-check extracted file paths
+    // Check extracted file paths
     for path in extract_command_paths(command) {
+        // Protected path → always Ask (cannot be overridden by future config)
+        let expanded = expand_project(&path, project_root);
+        if crate::core::paths::check_protected(Path::new(&expanded)).is_err() {
+            return if interactive {
+                Decision::Ask(format!("protected path: {} ({})", path, command))
+            } else {
+                Decision::Deny(format!("protected path: {} ({})", path, command))
+            };
+        }
+        // Normal scope check
         match evaluate("bash", &path, project_root, interactive) {
-            Decision::Allow => continue,
+            Decision::Allow => {}
             other => return other,
         }
     }
@@ -530,5 +582,111 @@ mod tests {
         assert!(!is_dangerous_command("git commit -m msg"));
         assert!(!is_dangerous_command("cargo test"));
         assert!(!is_dangerous_command("rm -rf target/"));
+    }
+
+    // ── cross-shell dangerous command detection ──────
+
+    #[test]
+    fn dangerous_windows_diskpart() {
+        assert!(is_dangerous_command("diskpart"));
+        assert!(is_dangerous_command("diskpart.exe"));
+    }
+
+    #[test]
+    fn dangerous_windows_reg() {
+        assert!(is_dangerous_command("reg add HKLM\\Software\\Foo"));
+        assert!(is_dangerous_command("reg.exe query HKLM\\Software"));
+    }
+
+    #[test]
+    fn dangerous_windows_netsh() {
+        assert!(is_dangerous_command("netsh firewall set opmode disable"));
+    }
+
+    #[test]
+    fn dangerous_powershell_stop_computer() {
+        assert!(is_dangerous_command("Stop-Computer -Force"));
+    }
+
+    #[test]
+    fn dangerous_powershell_format_volume() {
+        assert!(is_dangerous_command("Format-Volume -DriveLetter D -FileSystem NTFS"));
+    }
+
+    #[test]
+    fn dangerous_powershell_set_execution_policy() {
+        assert!(is_dangerous_command("Set-ExecutionPolicy Unrestricted"));
+    }
+
+    #[test]
+    fn dangerous_via_pipe() {
+        // `echo foo | shutdown` — shutdown is in a piped segment
+        assert!(is_dangerous_command("echo foo | shutdown -h now"));
+    }
+
+    #[test]
+    fn dangerous_via_semicolon() {
+        assert!(is_dangerous_command("echo ok; reboot"));
+    }
+
+    #[test]
+    fn dangerous_via_and_and() {
+        assert!(is_dangerous_command("cd /tmp && mkfs.ext4 /dev/sda1"));
+    }
+
+    #[test]
+    fn dangerous_exe_suffix_stripped() {
+        assert!(is_dangerous_command("shutdown.exe /s /t 0"));
+        assert!(is_dangerous_command("format.com D: /fs:NTFS"));
+    }
+
+    #[test]
+    fn normal_powershell_not_dangerous() {
+        assert!(!is_dangerous_command("Get-ChildItem -Path src"));
+        assert!(!is_dangerous_command("Write-Host hello"));
+    }
+
+    // ── dangerous path detection in bash ─────────────
+
+    #[test]
+    fn bash_protected_path_always_asks() {
+        // rm of a protected system path → Ask even though rm is not a "dangerous command"
+        assert!(matches!(
+            evaluate_bash("rm -rf /etc", &root(), true),
+            Decision::Ask(_)
+        ));
+    }
+
+    #[test]
+    fn bash_protected_path_denies_non_interactive() {
+        assert!(matches!(
+            evaluate_bash("rm -rf /etc", &root(), false),
+            Decision::Deny(_)
+        ));
+    }
+
+    #[test]
+    fn bash_write_to_protected_path_asks() {
+        assert!(matches!(
+            evaluate_bash("echo evil > /etc/passwd", &root(), true),
+            Decision::Ask(_)
+        ));
+    }
+
+    #[test]
+    fn bash_protected_dotgit_asks() {
+        assert!(matches!(
+            evaluate_bash("rm -rf .git", &root(), true),
+            Decision::Ask(_)
+        ));
+    }
+
+    #[test]
+    fn normal_rm_in_scope_still_allowed() {
+        // After adding protected path checks, normal in-project rm should still work
+        assert_eq!(
+            evaluate_bash("rm target/debug/test", &root(), true),
+            Decision::Allow
+        );
     }
 }

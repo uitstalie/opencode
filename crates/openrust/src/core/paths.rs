@@ -60,14 +60,29 @@ pub fn is_protected_path(canonical: &Path) -> Option<&'static str> {
         }
     }
 
-    // Windows: drive root (e.g. C:\) or Windows system directory (case-insensitive)
-    #[cfg(windows)]
+    // Windows system paths (case-insensitive, won't match on POSIX)
+    let lower = s.to_ascii_lowercase();
+    // Any drive root: C:\, D:\, etc.
+    if lower.len() == 3
+        && lower.as_bytes()[1] == b':'
+        && matches!(lower.as_bytes()[2], b'\\' | b'/')
+        && lower.as_bytes()[0].is_ascii_alphabetic()
     {
-        let lower = s.to_ascii_lowercase();
-        if is_drive_root(s)
-            || lower == "c:\\windows"
-            || lower.starts_with("c:\\windows\\")
-        {
+        return Some("protected system path");
+    }
+    let windows_system = [
+        "c:\\windows",
+        "c:\\program files",
+        "c:\\program files (x86)",
+        "c:\\programdata",
+        "c:\\system volume information",
+        "c:\\recovery",
+        "c:\\perflogs",
+        "c:\\$recycle.bin",
+        "c:\\boot",
+    ];
+    for dir in windows_system {
+        if lower == dir || lower.starts_with(&format!("{}\\", dir)) {
             return Some("protected system path");
         }
     }
@@ -91,14 +106,6 @@ pub fn is_protected_path(canonical: &Path) -> Option<&'static str> {
     }
 
     None
-}
-
-#[cfg(windows)]
-fn is_drive_root(s: &str) -> bool {
-    s.len() == 3
-        && s.as_bytes()[1] == b':'
-        && s.as_bytes()[2] == b'\\'
-        && s.as_bytes()[0].is_ascii_alphabetic()
 }
 
 // ── Project scope ───────────────────────────────────
