@@ -16,6 +16,10 @@ pub struct SystemPrompt {
 
 impl SystemPrompt {
     pub fn render(&self) -> String {
+        self.render_with_mode("primary")
+    }
+
+    pub fn render_with_mode(&self, mode: &str) -> String {
         let shell_kind = crate::tool::shell::detect_shell_kind();
         let cwd = std::path::Path::new(&self.cwd);
         let skills = crate::tool::skill::list_skills_for_cwd(cwd);
@@ -37,7 +41,7 @@ impl SystemPrompt {
         ));
         sections.push(render_section(
             "capabilities",
-            &render_capabilities(shell_kind, &skills),
+            &render_capabilities(shell_kind, &skills, mode),
         ));
         sections.push(render_section("style", &render_style()));
         sections.join("\n\n")
@@ -71,6 +75,28 @@ impl SystemPrompt {
             agents_md: load_agents_md(&std::env::current_dir().unwrap_or_default()),
             project_rules: load_project_rules(&std::env::current_dir().unwrap_or_default()),
         })
+    }
+
+    pub fn fallback(provider: &str, model: &str) -> Self {
+        let cwd = std::env::current_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("."))
+            .display()
+            .to_string();
+        let home = crate::core::platform::PlatformPaths::detect()
+            .home
+            .display()
+            .to_string();
+        Self {
+            provider: provider.to_string(),
+            model: model.to_string(),
+            cwd,
+            home,
+            platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+            config_path: Config::global_config_path().display().to_string(),
+            global_rules: load_global_rules(),
+            agents_md: load_agents_md(&std::env::current_dir().unwrap_or_default()),
+            project_rules: load_project_rules(&std::env::current_dir().unwrap_or_default()),
+        }
     }
 }
 
@@ -184,6 +210,7 @@ fn load_rules_dir(dir: &std::path::Path) -> String {
 fn render_capabilities(
     shell_kind: crate::tool::shell::ShellKind,
     skills: &[crate::tool::skill::SkillEntry],
+    mode: &str,
 ) -> String {
     let mut lines = Vec::new();
 
@@ -225,7 +252,7 @@ fn render_capabilities(
         ),
     );
 
-    lines.extend(crate::tool::catalog::TOOL_CATALOG.iter().map(|tool| {
+    lines.extend(crate::tool::catalog::tools_for_mode(mode, false).iter().map(|tool| {
         format!(
             "- {} [{}]: {}",
             tool.name,

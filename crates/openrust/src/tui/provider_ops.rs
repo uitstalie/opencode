@@ -140,11 +140,11 @@ impl SessionView {
                     if let Some(llm) = provider::create_provider(&resolved) {
                         self.provider_name = provider_name;
                         self.model = model;
-                        if let Ok(system) = crate::system_prompt::SystemPrompt::from_config(
+                        if let Ok(prompt) = crate::system_prompt::SystemPrompt::from_config(
                             &config,
                             &resolved,
                         ) {
-                            self.system = system.render();
+                            self.system_prompt = prompt;
                         }
                         self.llm = Some(Arc::from(llm));
                     }

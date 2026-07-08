@@ -93,11 +93,13 @@ impl SessionView {
         let Some((start, end)) = self.render.selection else {
             return Ok(false);
         };
-        let lines = self.render.lines.borrow();
+        let lines = self.render.all_lines.borrow();
         if lines.is_empty() {
             return Ok(false);
         }
         let (from, to) = if start <= end { (start, end) } else { (end, start) };
+        let from = from.min(lines.len() - 1);
+        let to = to.min(lines.len() - 1);
         let text = lines[from..=to]
             .iter()
             .map(|line| line.text.clone())
@@ -214,12 +216,14 @@ impl SessionView {
         if row < top || row >= top.saturating_add(height) {
             return None;
         }
-        let index = row.saturating_sub(top) as usize;
-        self.render.lines.borrow().get(index).map(|_| index)
+        let visible_index = row.saturating_sub(top) as usize;
+        let absolute_index = visible_index + self.render.scroll_offset.get();
+        let all_lines = self.render.all_lines.borrow();
+        (absolute_index < all_lines.len()).then_some(absolute_index)
     }
 
     fn is_tool_row(&self, index: usize) -> bool {
-        self.render.lines
+        self.render.all_lines
             .borrow()
             .get(index)
             .and_then(|row| row.tool_message_index)
@@ -228,7 +232,7 @@ impl SessionView {
 
     fn toggle_tool_at_index(&mut self, index: usize) {
         let tool_message_index = {
-            let rows = self.render.lines.borrow();
+            let rows = self.render.all_lines.borrow();
             rows.get(index).and_then(|row| row.tool_message_index)
         };
         let Some(tool_message_index) = tool_message_index else {
@@ -239,8 +243,7 @@ impl SessionView {
         }
     }
 
-    fn session_render_rows(&self, region_height: usize, region_width: usize) -> Vec<SessionRenderLine> {
-        let visible_height = region_height.saturating_sub(2).max(1);
+    fn session_render_rows(&self, _region_height: usize, region_width: usize) -> Vec<SessionRenderLine> {
         let mut all_rows = Vec::new();
 
         for (message_index, message) in self.display.iter().enumerate() {
@@ -325,15 +328,30 @@ impl SessionView {
             })
             .collect();
 
-        let max_scroll = all_rows.len().saturating_sub(visible_height);
-        let scroll = self.session_scroll.min(max_scroll);
-        let start = all_rows.len().saturating_sub(visible_height + scroll);
-        all_rows.into_iter().skip(start).take(visible_height).collect()
+        all_rows
     }
 
     pub(super) fn session_render_lines_for_area(&self, region_height: usize, region_width: usize) {
-        let rows = self.session_render_rows(region_height, region_width);
-        *self.render.lines.borrow_mut() = rows;
+        let all_rows = self.session_render_rows(region_height, region_width);
+        let visible_height = region_height.saturating_sub(2).max(1);
+
+        let max_scroll = all_rows.len().saturating_sub(visible_height);
+        let scroll = self.session_scroll.min(max_scroll);
+        let start = all_rows.len().saturating_sub(visible_height + scroll);
+
+        self.render.scroll_offset.set(start);
+        *self.render.all_lines.borrow_mut() = all_rows;
+
+        let visible: Vec<_> = self
+            .render
+            .all_lines
+            .borrow()
+            .iter()
+            .skip(start)
+            .take(visible_height)
+            .cloned()
+            .collect();
+        *self.render.lines.borrow_mut() = visible;
     }
 
     fn flatten_line(line: &Line<'static>) -> String {

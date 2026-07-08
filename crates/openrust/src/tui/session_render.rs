@@ -134,14 +134,16 @@ impl SessionView {
             regions.session
         };
         self.session_render_lines_for_area(session_area.height as usize, session_area.width as usize);
+        let scroll_offset = self.render.scroll_offset.get();
         let rows = self.render.lines.borrow();
         let lines: Vec<Line<'static>> = rows
             .iter()
             .enumerate()
             .map(|(index, row)| {
+                let abs_index = index + scroll_offset;
                 if self.render.selection.is_some_and(|(start, end)| {
                     let (from, to) = if start <= end { (start, end) } else { (end, start) };
-                    index >= from && index <= to
+                    abs_index >= from && abs_index <= to
                 }) {
                     Line::from(vec![Span::styled(
                         row.text.clone(),

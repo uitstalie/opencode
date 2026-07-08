@@ -279,6 +279,8 @@ impl CacheStats {
 
 pub(super) struct RenderState {
     pub(super) lines: RefCell<Vec<SessionRenderLine>>,
+    pub(super) all_lines: RefCell<Vec<SessionRenderLine>>,
+    pub(super) scroll_offset: Cell<usize>,
     pub(super) selection: Option<(usize, usize)>,
     pub(super) mouse_down_row: Option<usize>,
     pub(super) mouse_dragging: bool,

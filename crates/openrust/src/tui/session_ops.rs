@@ -96,7 +96,8 @@ impl SessionView {
     }
 
     pub(super) fn effective_system(&self) -> String {
-        let mut system = self.system.clone();
+        let mode = self.current_agent_mode();
+        let mut system = self.system_prompt.render_with_mode(&mode);
         if let Some(info) = self.current_agent_info() {
             if !info.system.is_empty() {
                 system.push_str("\n\n");
@@ -124,15 +125,14 @@ impl SessionView {
             .ok_or_else(|| anyhow::anyhow!("Provider '{}' not found", provider_name))?;
         let llm = provider::create_provider(&resolved)
             .ok_or_else(|| anyhow::anyhow!("Failed to create provider '{}'", provider_name))?;
-        let system = crate::system_prompt::SystemPrompt::from_config(
+        let system_prompt = crate::system_prompt::SystemPrompt::from_config(
             &self.config,
             &resolved,
-        )?
-        .render();
+        )?;
 
         self.provider_name = provider_name;
         self.model = model;
-        self.system = system;
+        self.system_prompt = system_prompt;
         self.llm = Some(Arc::from(llm));
         Ok(())
     }
@@ -155,7 +155,7 @@ impl SessionView {
                 if let Ok(prompt) =
                     crate::system_prompt::SystemPrompt::from_config(&self.config, &resolved)
                 {
-                    self.system = prompt.render();
+                    self.system_prompt = prompt;
                     self.provider_name = provider_name;
                     self.model = model;
                     if let Some(new_llm) = provider::create_provider(&resolved) {

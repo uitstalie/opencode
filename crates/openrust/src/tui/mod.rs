@@ -67,22 +67,23 @@ pub fn run(script: Option<PathBuf>, prompt: Option<String>) -> anyhow::Result<()
     let (provider_name, model) = config
         .resolve_provider_model()
         .unwrap_or_else(|| ("unconfigured".to_string(), "unconfigured".to_string()));
-    let (llm, system) = config
+    let (llm, system_prompt) = config
         .get_provider(&provider_name)
         .and_then(|resolved| {
             provider::create_provider(&resolved).map(|llm| {
-                let system = crate::system_prompt::SystemPrompt::from_config(
+                let prompt = crate::system_prompt::SystemPrompt::from_config(
                     &config,
                     &resolved,
                 )
-                .ok()
-                .map(|prompt| prompt.render())
-                .unwrap_or_default();
-                (Arc::from(llm), system)
+                .unwrap_or_else(|e| {
+                    tracing::error!(error = %e, "system prompt build failed");
+                    crate::system_prompt::SystemPrompt::fallback(&provider_name, &model)
+                });
+                (Arc::from(llm), prompt)
             })
         })
-        .map(|(llm, system)| (Some(llm), system))
-        .unwrap_or((None, String::new()));
+        .map(|(llm, prompt)| (Some(llm), prompt))
+        .unwrap_or((None, crate::system_prompt::SystemPrompt::fallback(&provider_name, &model)));
 
     let script_lines = script
         .as_ref()
@@ -90,7 +91,7 @@ pub fn run(script: Option<PathBuf>, prompt: Option<String>) -> anyhow::Result<()
         .transpose()?
         .unwrap_or_default();
 
-    let mut session = SessionView::new(provider_name, model, system, llm, config, cwd);
+    let mut session = SessionView::new(provider_name, model, system_prompt, llm, config, cwd);
     session.bootstrap(prompt, script_lines)?;
     session.run()
 }
@@ -98,7 +99,7 @@ pub fn run(script: Option<PathBuf>, prompt: Option<String>) -> anyhow::Result<()
 struct SessionView {
     provider_name: String,
     model: String,
-    system: String,
+    system_prompt: crate::system_prompt::SystemPrompt,
     agents: Vec<crate::core::agent::AgentInfo>,
     llm: Option<Arc<dyn provider::LlmProvider>>,
     config: Config,
@@ -137,7 +138,7 @@ impl SessionView {
     fn new(
         provider_name: String,
         model: String,
-        system: String,
+    system_prompt: crate::system_prompt::SystemPrompt,
         llm: Option<Arc<dyn provider::LlmProvider>>,
         config: Config,
         cwd: PathBuf,
@@ -170,7 +171,7 @@ impl SessionView {
         Self {
             provider_name,
             model,
-            system,
+            system_prompt,
             agents: crate::core::agent::load_agents(&cwd).unwrap_or_default(),
             llm,
             config,
@@ -212,6 +213,8 @@ impl SessionView {
             thinking_preview: String::new(),
             render: RenderState {
                 lines: RefCell::new(Vec::new()),
+                all_lines: RefCell::new(Vec::new()),
+                scroll_offset: Cell::new(0),
                 selection: None,
                 mouse_down_row: None,
                 mouse_dragging: false,
@@ -794,7 +797,7 @@ mod tests {
         let mut view = SessionView::new(
             "unconfigured".to_string(),
             "unconfigured".to_string(),
-            String::new(),
+            crate::system_prompt::SystemPrompt::fallback("unconfigured", "unconfigured"),
             None,
             Config::default(),
             std::env::current_dir().unwrap(),
@@ -817,7 +820,7 @@ mod tests {
         let view = SessionView::new(
             "unconfigured".to_string(),
             "unconfigured".to_string(),
-            String::new(),
+            crate::system_prompt::SystemPrompt::fallback("unconfigured", "unconfigured"),
             None,
             Config::default(),
             std::env::current_dir().unwrap(),
@@ -834,7 +837,7 @@ mod tests {
         let view = SessionView::new(
             "unconfigured".to_string(),
             "unconfigured".to_string(),
-            String::new(),
+            crate::system_prompt::SystemPrompt::fallback("unconfigured", "unconfigured"),
             None,
             Config::default(),
             std::env::current_dir().unwrap(),
