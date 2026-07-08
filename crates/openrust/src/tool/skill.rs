@@ -38,7 +38,8 @@ impl Tool for SkillTool {
             ));
         }
 
-        let mut found: Option<(PathBuf, String, String)> = None; // (path, body, frontmatter_errors)
+        // Check user skills first (project > global)
+        let mut found: Option<(PathBuf, String, String)> = None;
 
         for dir in skill_directories(ctx) {
             let path = dir.join(name).join("SKILL.md");
@@ -59,6 +60,20 @@ impl Tool for SkillTool {
                         err
                     ));
                 }
+            }
+        }
+
+        // Fallback: built-in skill
+        if found.is_none() {
+            if let Some(body) = builtin_skill_body(name) {
+                let mut metadata = HashMap::new();
+                metadata.insert("name".to_string(), serde_json::json!(name));
+                metadata.insert("path".to_string(), serde_json::json!(format!("builtin/{}", name)));
+                metadata.insert("frontmatter_ok".to_string(), serde_json::json!(true));
+                return ToolResult::Structured {
+                    content: body.to_string(),
+                    metadata,
+                };
             }
         }
 
@@ -131,10 +146,16 @@ pub fn list_skills_for_cwd(cwd: &Path) -> Vec<SkillEntry> {
 }
 
 fn list_skills_impl(dirs: &[PathBuf]) -> Vec<SkillEntry> {
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut entries = Vec::new();
+    let mut map: HashMap<String, SkillEntry> = HashMap::new();
 
-    for dir in dirs {
+    // Layer 1: built-in skills (lowest priority)
+    for skill in builtin_skills() {
+        map.insert(skill.name.clone(), skill);
+    }
+
+    // Layer 2+: user skills. dirs = [project, global].
+    // Iterate in reverse so project overwrites global overwrites built-in.
+    for dir in dirs.iter().rev() {
         let Ok(read_dir) = std::fs::read_dir(dir) else {
             continue;
         };
@@ -145,23 +166,161 @@ fn list_skills_impl(dirs: &[PathBuf]) -> Vec<SkillEntry> {
                 continue;
             }
             if let Some(name) = skill_path.file_name().and_then(|n| n.to_str()) {
-                if seen.insert(name.to_string()) {
-                    let description = std::fs::read_to_string(&skill_file)
-                        .ok()
-                        .map(|content| extract_description(&content))
-                        .unwrap_or_default();
-                    entries.push(SkillEntry {
+                let description = std::fs::read_to_string(&skill_file)
+                    .ok()
+                    .map(|content| extract_description(&content))
+                    .unwrap_or_default();
+                map.insert(
+                    name.to_string(),
+                    SkillEntry {
                         name: name.to_string(),
                         description,
                         path: skill_file,
-                    });
-                }
+                    },
+                );
             }
         }
     }
+
+    let mut entries: Vec<_> = map.into_values().collect();
     entries.sort_by(|a, b| a.name.cmp(&b.name));
     entries
 }
+
+// ── Built-in skills ────────────────────────────────
+
+fn builtin_skills() -> Vec<SkillEntry> {
+    vec![
+        SkillEntry {
+            name: "create-agent".to_string(),
+            description: BUILTIN_CREATE_AGENT_DESC.to_string(),
+            path: PathBuf::from("builtin/create-agent"),
+        },
+        SkillEntry {
+            name: "create-skills".to_string(),
+            description: BUILTIN_CREATE_SKILLS_DESC.to_string(),
+            path: PathBuf::from("builtin/create-skills"),
+        },
+    ]
+}
+
+fn builtin_skill_body(name: &str) -> Option<&'static str> {
+    match name {
+        "create-agent" => Some(BUILTIN_CREATE_AGENT_BODY),
+        "create-skills" => Some(BUILTIN_CREATE_SKILLS_BODY),
+        _ => None,
+    }
+}
+
+const BUILTIN_CREATE_AGENT_DESC: &str =
+    "Create or modify an agent definition file (.openrust/agents/*.md)";
+
+const BUILTIN_CREATE_SKILLS_DESC: &str =
+    "Create or modify a skill definition file (.openrust/skills/*/SKILL.md)";
+
+const BUILTIN_CREATE_AGENT_BODY: &str = r#"# create-agent
+
+Use this skill when creating or modifying agent definition files.
+
+## File locations
+
+- Project agent: `.openrust/agents/<name>.md`
+- Global agent: `~/.config/openrust/agents/<name>.md`
+
+Project agents override global agents with the same name. Both override built-in agents (build, plan, general, explore, compaction, title, summary).
+
+## File format
+
+```
+---
+title: Display Name
+description: One-line description for the agent picker
+mode: primary
+steps: 50
+hidden: false
+---
+
+Agent system prompt text here.
+```
+
+## Frontmatter fields
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `title` | no | First `#` heading in body | Display name in agent picker |
+| `description` | no | First paragraph in body | Short description in picker |
+| `mode` | no | `primary` | Tool availability (see below) |
+| `steps` | no | `50` | Max tool-loop iterations per turn |
+| `hidden` | no | `false` | Hide from agent picker |
+
+## Mode values
+
+| Mode | Tools available |
+|------|----------------|
+| `primary` | All tools (default) |
+| `plan` | Read-only: no write, edit, rm, apply_patch, bash, undo_edit |
+| `explore` | Same as plan (read-only) |
+| `subagent` | All tools except task, question (when spawned as subagent) |
+
+## Workflow
+
+1. Ask what the agent should do and whether it should be project-level or global.
+2. Determine the appropriate `mode` based on whether the agent needs write access.
+3. Determine `steps` based on task complexity (simple: 10-25, complex: 50-200).
+4. Write the file with valid frontmatter and a clear system prompt body.
+5. The agent ID = filename without `.md` (case-sensitive). No subdirectories.
+
+## Overlay semantics
+
+When overriding a built-in agent (e.g. creating `.openrust/agents/build.md`):
+- Frontmatter fields you specify override the built-in values.
+- Frontmatter fields you omit are inherited from the built-in.
+- The markdown body replaces the built-in system prompt (if non-empty).
+"#;
+
+const BUILTIN_CREATE_SKILLS_BODY: &str = r#"# create-skills
+
+Use this skill when creating or modifying skill definition files.
+
+## Directory structure
+
+- Project skill: `.openrust/skills/<skill-name>/SKILL.md`
+- Global skill: `~/.config/openrust/skills/<skill-name>/SKILL.md`
+
+Project skills override global skills with the same name.
+
+## File format
+
+```
+---
+description: One-line description shown in system prompt
+---
+
+Skill body text. This content is returned when the skill tool
+is invoked with the skill name.
+```
+
+## Frontmatter fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `description` | yes | Shown in the system prompt capabilities section so the LLM knows when to use this skill |
+
+## Rules
+
+1. Skill name = directory name (case-sensitive). The file MUST be named `SKILL.md`.
+2. Each skill lives in its own subdirectory: `<skill-name>/SKILL.md`.
+3. The `description` frontmatter field is required.
+4. The body (after frontmatter) is the skill's instruction content — write clear, actionable steps.
+5. When modifying an existing skill, preserve the description unless the user asks to change it.
+
+## Workflow
+
+1. Ask what the skill should do and whether it should be project-level or global.
+2. Create the directory: `mkdir -p .openrust/skills/<skill-name>` (or global equivalent).
+3. Write the `SKILL.md` file with frontmatter and body.
+4. The skill name should be lowercase-hyphenated (e.g. `deploy-checklist`, `code-review`).
+"#;
 
 /// Extract the `description` field from a SKILL.md's frontmatter.
 fn extract_description(content: &str) -> String {
@@ -355,8 +514,64 @@ mod tests {
 
         let ctx = ToolContext::new(root);
         let skills = list_skills(&ctx);
-        assert_eq!(skills.len(), 1);
-        assert_eq!(skills[0].name, "demo");
-        assert_eq!(skills[0].description, "My cool skill");
+        let demo = skills.iter().find(|s| s.name == "demo").unwrap();
+        assert_eq!(demo.description, "My cool skill");
+    }
+
+    // ── built-in skill tests ──────────────────────────
+
+    #[test]
+    fn builtin_skills_are_registered() {
+        let names: Vec<_> = builtin_skills().into_iter().map(|s| s.name).collect();
+        assert!(names.contains(&"create-agent".to_string()));
+        assert!(names.contains(&"create-skills".to_string()));
+    }
+
+    #[tokio::test]
+    async fn builtin_create_agent_loads_without_filesystem() {
+        let root = temp_dir();
+        let ctx = ToolContext::new(root);
+        let result = SkillTool
+            .execute(ToolParams::new(serde_json::json!({ "name": "create-agent" })), &ctx)
+            .await;
+        let text = result.into_text();
+        assert!(text.contains("create-agent"));
+        assert!(text.contains("mode: primary"));
+        assert!(text.contains("Frontmatter fields"));
+    }
+
+    #[tokio::test]
+    async fn builtin_create_skills_loads_without_filesystem() {
+        let root = temp_dir();
+        let ctx = ToolContext::new(root);
+        let result = SkillTool
+            .execute(ToolParams::new(serde_json::json!({ "name": "create-skills" })), &ctx)
+            .await;
+        let text = result.into_text();
+        assert!(text.contains("SKILL.md"));
+        assert!(text.contains("description"));
+    }
+
+    #[test]
+    fn builtin_skills_appear_in_list() {
+        let root = temp_dir();
+        let ctx = ToolContext::new(root);
+        let names = list_skill_names(&ctx);
+        assert!(names.contains(&"create-agent".to_string()));
+        assert!(names.contains(&"create-skills".to_string()));
+    }
+
+    #[tokio::test]
+    async fn user_skill_overrides_builtin() {
+        let root = temp_dir();
+        let skill = root.join(".openrust").join("skills").join("create-agent");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(skill.join("SKILL.md"), "Custom override").unwrap();
+
+        let ctx = ToolContext::new(root);
+        let result = SkillTool
+            .execute(ToolParams::new(serde_json::json!({ "name": "create-agent" })), &ctx)
+            .await;
+        assert!(result.into_text().contains("Custom override"));
     }
 }
