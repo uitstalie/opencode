@@ -25,12 +25,14 @@ use crate::core::{
     session::SessionStore,
 };
 
+mod components;
 mod dialog;
 mod dialogs;
 mod diff;
 mod highlight;
 mod html;
 mod input;
+mod layout;
 mod latex;
 mod markdown;
 mod render;
@@ -429,29 +431,10 @@ impl SessionView {
                                         handled_input = true;
                                     }
                                 }
-                                KeyCode::Left => {
-                                    if self.input_editor.input(textarea_input_from_key_event(key)) {
-                                        self.sync_input_state();
-                                        handled_input = true;
-                                    }
-                                }
-                                KeyCode::Right => {
-                                    if self.input_editor.input(textarea_input_from_key_event(key)) {
-                                        self.sync_input_state();
-                                        handled_input = true;
-                                    }
-                                }
-                                KeyCode::Home => {
-                                    if self.input_editor.input(textarea_input_from_key_event(key)) {
-                                        self.sync_input_state();
-                                        handled_input = true;
-                                    }
-                                }
-                                KeyCode::End => {
-                                    if self.input_editor.input(textarea_input_from_key_event(key)) {
-                                        self.sync_input_state();
-                                        handled_input = true;
-                                    }
+                                KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End => {
+                                    self.input_editor.input(textarea_input_from_key_event(key));
+                                    self.sync_input_state();
+                                    handled_input = true;
                                 }
                                 KeyCode::PageUp => {
                                     self.scroll_session_up(8);
@@ -476,7 +459,18 @@ impl SessionView {
                                         }
                                 }
                                 KeyCode::Tab => {
-                                    self.cycle_agent();
+                                    let slash_value = self
+                                        .ui
+                                        .dialog
+                                        .as_ref()
+                                        .filter(|d| d.kind == DialogKind::SlashHelp)
+                                        .and_then(|d| d.selected_value().map(str::to_string));
+                                    if let Some(value) = slash_value {
+                                        self.set_input_text(&value);
+                                        self.sync_slash_help();
+                                    } else {
+                                        self.cycle_agent();
+                                    }
                                     handled_input = true;
                                 }
                                 _ => {}

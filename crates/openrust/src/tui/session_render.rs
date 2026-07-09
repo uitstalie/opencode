@@ -5,12 +5,11 @@ use crossterm::{cursor, execute, terminal};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
-    style::Modifier,
-    text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
-use super::render::{self, centered_rect, main_layout};
+use super::components::{HomeView, InputPanel, ModalLayer, SessionPanel, SidebarPanel, StatusBar, Toast};
+use super::dialog::DialogKind;
+use super::layout;
 use super::SessionView;
 
 impl SessionView {
@@ -47,10 +46,7 @@ impl SessionView {
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     ) -> anyhow::Result<()> {
         terminal.draw(|frame| self.render_frame(frame))?;
-        // Selection modals (dialog/question/permission) are list pickers — no
-        // text cursor needed. Hide it so it doesn't linger at the last input
-        // position underneath the overlay.
-        if self.ui.dialog.is_some()
+        if self.ui.dialog.as_ref().is_some_and(|d| d.kind != DialogKind::SlashHelp)
             || self.ui.pending_question.is_some()
             || self.ui.pending_permission.is_some()
         {
@@ -60,240 +56,33 @@ impl SessionView {
     }
 
     pub(super) fn render_frame(&self, frame: &mut Frame) {
-        let regions = main_layout().split(frame.area());
         if self.view_mode == super::ViewMode::Home {
-            self.render_home_frame(frame, regions.status);
+            HomeView::new(self).render(frame);
             return;
         }
-
-        self.render_session_frame(frame, regions);
+        self.render_session_frame(frame);
     }
 
-    /// Pin the hardware cursor to the input textarea so it stays inside the
-    /// input box instead of drifting into the session output while the AI is
-    /// streaming. Skipped when any modal is active (the modal layer handles
-    /// its own cursor, or the cursor is hidden for list-picker modals).
-    fn place_input_cursor(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
-        if self.ui.dialog.is_some()
-            || self.ui.pending_question.is_some()
-            || self.ui.pending_permission.is_some()
-            || self.ui.pending_text_input.is_some()
-        {
-            return;
-        }
-        let (row, col) = self.input_editor.cursor();
-        let display_col = super::util::textarea_display_col(self.input_editor.lines(), row, col);
-        frame.set_cursor_position((area.x + 1 + display_col as u16, area.y + 1 + row as u16));
-    }
+    fn render_session_frame(&self, frame: &mut Frame) {
+        let task_count = self
+            .store
+            .as_ref()
+            .and_then(|s| s.list_tasks(&self.session_id).ok())
+            .map(|t| t.len())
+            .unwrap_or(0);
 
-    pub(super) fn render_session_frame(&self, frame: &mut Frame, regions: render::LayoutRegions) {
-        let session_area = if self.sidebar_visible && self.sidebar.is_some() {
-            let (side, main) = render::split_sidebar(regions.session);
+        let layout = layout::session_layout(
+            frame.area(),
+            self.sidebar_visible,
+            self.sidebar.is_some(),
+            task_count,
+        );
 
-            let tasks: Vec<_> = self
-                .store
-                .as_ref()
-                .and_then(|s| s.list_tasks(&self.session_id).ok())
-                .unwrap_or_default();
-
-            let (files_area, todo_area) = if tasks.is_empty() {
-                (side, None)
-            } else {
-                let todo_height = (tasks.len() as u16 + 2).min(side.height / 2).max(4);
-                let chunks = ratatui::layout::Layout::default()
-                    .direction(ratatui::layout::Direction::Vertical)
-                    .constraints([
-                        ratatui::layout::Constraint::Min(5),
-                        ratatui::layout::Constraint::Length(todo_height),
-                    ])
-                    .split(side);
-                (chunks[0], Some(chunks[1]))
-            };
-
-            if let Some(tree) = &self.sidebar {
-                let sidebar = Paragraph::new(tree.lines(&self.theme))
-                    .style(self.theme.panel_style())
-                    .block(
-                        Block::default()
-                            .title(" Files ")
-                            .title_style(self.theme.title_style())
-                            .borders(Borders::ALL)
-                            .border_style(self.theme.border_style()),
-                    )
-                    .wrap(Wrap { trim: false });
-                frame.render_widget(sidebar, files_area);
-            }
-
-            if let Some(todo_area) = todo_area {
-                let completed = tasks.iter().filter(|t| t.status == "completed").count();
-                let total = tasks.len();
-                let todo_lines: Vec<Line<'static>> = tasks
-                    .iter()
-                    .map(|t| {
-                        let (mark, style) = match t.status.as_str() {
-                            "completed" => ("[x]", self.theme.muted_style()),
-                            "in_progress" => ("[~]", self.theme.assistant_style()),
-                            "cancelled" => ("[-]", self.theme.muted_style()),
-                            _ => ("[ ]", self.theme.panel_style()),
-                        };
-                        Line::from(Span::styled(
-                            format!("{mark} {}", t.title),
-                            style,
-                        ))
-                    })
-                    .collect();
-                let todo = Paragraph::new(todo_lines)
-                    .style(self.theme.panel_style())
-                    .block(
-                        Block::default()
-                            .title(format!(" TODO {completed}/{total} "))
-                            .title_style(self.theme.title_style())
-                            .borders(Borders::ALL)
-                            .border_style(self.theme.border_style()),
-                    )
-                    .wrap(Wrap { trim: false });
-                frame.render_widget(todo, todo_area);
-            }
-
-            main
-        } else {
-            regions.session
-        };
-        self.session_render_lines_for_area(session_area.height as usize, session_area.width as usize);
-        let scroll_offset = self.render.scroll_offset.get();
-        let rows = self.render.lines.borrow();
-        let lines: Vec<Line<'static>> = rows
-            .iter()
-            .enumerate()
-            .map(|(index, row)| {
-                let abs_index = index + scroll_offset;
-                if self.render.selection.is_some_and(|(start, end)| {
-                    let (from, to) = if start <= end { (start, end) } else { (end, start) };
-                    abs_index >= from && abs_index <= to
-                }) {
-                    Line::from(vec![Span::styled(
-                        row.text.clone(),
-                        self.theme.dialog_selected_style().add_modifier(Modifier::BOLD),
-                    )])
-                } else {
-                    row.line.clone()
-                }
-            })
-            .collect();
-        self.render.area_top.set(session_area.y);
-        self.render.area_height.set(session_area.height);
-        let session = Paragraph::new(lines)
-            .style(self.theme.panel_style())
-            .block(
-                Block::default()
-                    .title(" Session ")
-                    .title_style(self.theme.title_style())
-                    .borders(Borders::ALL)
-                    .border_style(self.theme.border_style()),
-            )
-            .wrap(Wrap { trim: false });
-        frame.render_widget(session, session_area);
-
-        let input = self.input_widget("Input");
-        frame.render_widget(&input, regions.input);
-        self.place_input_cursor(frame, regions.input);
-
-        let footer = Paragraph::new(self.status_line()).style(self.theme.footer_style());
-        frame.render_widget(footer, regions.status);
-
-        if let Some(toast) = &self.ui.toast {
-            let toast_area = render::toast_rect(frame.area());
-            let widget = Paragraph::new(toast.as_str())
-                .style(self.theme.system_style())
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_style(self.theme.border_style())
-                        .style(self.theme.panel_style()),
-                )
-                .wrap(Wrap { trim: false });
-            frame.render_widget(Clear, toast_area);
-            frame.render_widget(widget, toast_area);
-        }
-
-        self.render_modal_layer(frame, frame.area());
-    }
-
-    pub(super) fn render_home_frame(&self, frame: &mut Frame, status_area: ratatui::layout::Rect) {
-        let outer = centered_rect(76, 72, frame.area());
-
-        let top_padding = outer.height.saturating_sub(15) / 2;
-        let sections = ratatui::layout::Layout::default()
-            .direction(ratatui::layout::Direction::Vertical)
-            .constraints([
-                ratatui::layout::Constraint::Length(top_padding),
-                ratatui::layout::Constraint::Length(4),
-                ratatui::layout::Constraint::Length(3),
-                ratatui::layout::Constraint::Length(2),
-                ratatui::layout::Constraint::Length(4),
-                ratatui::layout::Constraint::Min(0),
-            ])
-            .split(outer);
-
-        let header = Paragraph::new(vec![
-            Line::from(Span::styled(
-                "OpenRust",
-                self.theme.brand_style().add_modifier(Modifier::BOLD),
-            )),
-            Line::from(""),
-            Line::from(Span::styled(
-                "AI coding agent · Rust native runtime",
-                self.theme.muted_style(),
-            )),
-            Line::from(Span::styled(
-                format!(
-                    "model {}/{} · agent {}",
-                    self.provider_name,
-                    self.model,
-                    self.current_session_agent()
-                        .unwrap_or_else(|| "default".to_string())
-                ),
-                self.theme.muted_style(),
-            )),
-        ])
-        .alignment(ratatui::layout::Alignment::Center)
-        .style(self.theme.panel_style());
-        frame.render_widget(header, sections[1]);
-
-        let prompt = self.input_widget("Prompt");
-        frame.render_widget(&prompt, sections[2]);
-        self.place_input_cursor(frame, sections[2]);
-
-        let hint = Paragraph::new("输入消息后 Enter 开始 · /connect 配置 provider · /models 选择模型 · Esc 退出")
-            .style(self.theme.muted_style())
-            .alignment(ratatui::layout::Alignment::Center)
-            .wrap(Wrap { trim: false });
-        frame.render_widget(hint, sections[3]);
-
-        let status = Paragraph::new(self.home_status_message())
-            .style(self.theme.muted_style())
-            .alignment(ratatui::layout::Alignment::Center)
-            .wrap(Wrap { trim: false });
-        frame.render_widget(status, sections[4]);
-
-        let footer = Paragraph::new(self.status_line()).style(self.theme.footer_style());
-        frame.render_widget(footer, status_area);
-
-        if let Some(toast) = &self.ui.toast {
-            let toast_area = render::toast_rect(frame.area());
-            let widget = Paragraph::new(toast.as_str())
-                .style(self.theme.system_style())
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_style(self.theme.border_style())
-                        .style(self.theme.panel_style()),
-                )
-                .wrap(Wrap { trim: false });
-            frame.render_widget(Clear, toast_area);
-            frame.render_widget(widget, toast_area);
-        }
-
-        self.render_modal_layer(frame, frame.area());
+        SidebarPanel::new(self).render(frame, layout.sidebar_files, layout.sidebar_todo);
+        SessionPanel::new(self).render(frame, layout.session);
+        InputPanel::new(self).render(frame, layout.input, "Input");
+        StatusBar::new(self).render(frame, layout.status);
+        Toast::new(self).render(frame, frame.area());
+        ModalLayer::new(self).render(frame, frame.area());
     }
 }

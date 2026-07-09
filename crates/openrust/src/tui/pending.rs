@@ -1,11 +1,9 @@
 //! Permission requests, question dialogs, text input, and input widget helpers.
 
 use crossterm::event::{self, KeyCode};
-use ratatui::{style::Modifier, text::{Line, Span}, widgets::{Block, Borders, Paragraph, Wrap}};
-use tui_textarea::TextArea;
 
-use super::util::{char_column_to_byte_index, home_input_hint, normalize_single_line_text, single_line_textarea, textarea_input_from_key_event};
-use super::{PendingPermission, PendingQuestion, PendingTextInput, SessionView, ViewMode};
+use super::util::{char_column_to_byte_index, normalize_single_line_text, single_line_textarea, textarea_input_from_key_event};
+use super::{PendingPermission, PendingQuestion, SessionView};
 
 impl SessionView {
     pub(super) fn poll_permission_request(&mut self) -> bool {
@@ -124,91 +122,6 @@ impl SessionView {
         self.cursor_index = char_column_to_byte_index(&self.input, self.input_editor.cursor().1);
     }
 
-    pub(super) fn permission_widget(&self, permission: &PendingPermission) -> Paragraph<'static> {
-        let theme = &self.theme;
-        let allow_style = if permission.allow {
-            theme.dialog_selected_style().add_modifier(Modifier::BOLD)
-        } else {
-            theme.dialog_style()
-        };
-        let deny_style = if permission.allow {
-            theme.dialog_style()
-        } else {
-            theme.dialog_selected_style().add_modifier(Modifier::BOLD)
-        };
-        let lines = vec![
-            Line::from(Span::styled(
-                format!("{}: {}", permission.tool, permission.detail),
-                theme.muted_style(),
-            )),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("  [A] Allow  ", allow_style),
-                Span::styled("  [D] Deny  ", deny_style),
-            ]),
-            Line::from(""),
-            Line::from(Span::styled(
-                "A/Y 允许 · D/N/Esc 拒绝 · ←/→ 切换 · Enter 确认",
-                theme.muted_style(),
-            )),
-        ];
-        Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .title(" Permission ")
-                    .title_alignment(ratatui::layout::Alignment::Center)
-                    .title_style(theme.title_style())
-                    .borders(Borders::ALL)
-                    .border_style(theme.dialog_border_style()),
-            )
-            .style(theme.dialog_style())
-            .wrap(Wrap { trim: false })
-    }
-
-    pub(super) fn text_input_widget(&self, input: &PendingTextInput) -> TextArea<'static> {
-        let mut textarea = input.editor.clone();
-        textarea.set_style(self.theme.dialog_selected_style());
-        textarea.set_cursor_line_style(ratatui::style::Style::default());
-        // Soft cursor disabled: the hardware cursor is pinned via
-        // set_cursor_position in render_modal_layer, so showing both would
-        // produce a double-cursor artifact.
-        textarea.set_cursor_style(ratatui::style::Style::default());
-        textarea.set_placeholder_text("输入后 Enter 保存 · Esc 取消");
-        textarea.set_placeholder_style(self.theme.muted_style());
-        textarea.set_block(
-            Block::default()
-                .title(format!(" {} ", input.title))
-                .title_alignment(ratatui::layout::Alignment::Center)
-                .title_style(self.theme.title_style())
-                .borders(Borders::ALL)
-                .border_style(self.theme.dialog_border_style()),
-        );
-        textarea
-    }
-
-    pub(super) fn input_widget(&self, title: &str) -> TextArea<'static> {
-        let mut textarea = self.input_editor.clone();
-        textarea.set_style(self.theme.input_style());
-        textarea.set_cursor_line_style(ratatui::style::Style::default());
-        // Soft cursor disabled: the hardware cursor is pinned via
-        // set_cursor_position in place_input_cursor.
-        textarea.set_cursor_style(ratatui::style::Style::default());
-        textarea.set_placeholder_text(if self.view_mode == ViewMode::Home {
-            home_input_hint()
-        } else {
-            "输入消息后 Enter 发送"
-        });
-        textarea.set_placeholder_style(self.theme.muted_style());
-        textarea.set_block(
-            Block::default()
-                .title(format!(" {} ", title))
-                .title_style(self.theme.title_style())
-                .borders(Borders::ALL)
-                .border_style(self.theme.input_border_style(self.ai_running)),
-        );
-        textarea
-    }
-
     pub(super) fn poll_ask_request(&mut self) -> bool {
         if self.ui.pending_question.is_some() {
             return false;
@@ -302,84 +215,5 @@ impl SessionView {
                 self.status = "answer sent".to_string();
             }
         }
-    }
-
-    pub(super) fn question_widget(&self, q: &PendingQuestion) -> Paragraph<'static> {
-        let theme = &self.theme;
-        let item = q.item();
-        let mut lines = vec![
-            Line::from(Span::styled(item.question.clone(), theme.muted_style())),
-            Line::from(""),
-        ];
-        for (index, (label, description)) in item.options.iter().enumerate() {
-            let selected = index == q.selected && q.typing.is_none();
-            let marker = if selected { "› " } else { "  " };
-            let check = if item.multiple {
-                if q.picked.contains(&index) {
-                    "[x] "
-                } else {
-                    "[ ] "
-                }
-            } else {
-                ""
-            };
-            let style = if selected {
-                theme.dialog_selected_style().add_modifier(Modifier::BOLD)
-            } else {
-                theme.dialog_style()
-            };
-            lines.push(Line::from(Span::styled(
-                format!("{}{}{}", marker, check, label),
-                style,
-            )));
-            if !description.is_empty() {
-                lines.push(Line::from(Span::styled(
-                    format!("      {}", description),
-                    theme.muted_style(),
-                )));
-            }
-        }
-        let custom_selected = q.selected == q.custom_index() && q.typing.is_none();
-        let custom_marker = if custom_selected { "› " } else { "  " };
-        let custom_style = if custom_selected {
-            theme.dialog_selected_style().add_modifier(Modifier::BOLD)
-        } else {
-            theme.dialog_style()
-        };
-        lines.push(Line::from(Span::styled(
-            format!("{}✎ Type your own answer", custom_marker),
-            custom_style,
-        )));
-        if let Some(buffer) = &q.typing {
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                format!("  > {}", buffer),
-                theme.dialog_selected_style(),
-            )));
-        }
-        lines.push(Line::from(""));
-        let hint = if item.multiple {
-            "↑/↓ 选择 · Space 多选 · Enter 确认 · Esc 取消"
-        } else {
-            "↑/↓ 选择 · Enter 确认 · Esc 取消"
-        };
-        lines.push(Line::from(Span::styled(hint, theme.muted_style())));
-
-        let title = if item.header.is_empty() {
-            format!(" Question {}/{} ", q.current + 1, q.items.len())
-        } else {
-            format!(" {} ({}/{}) ", item.header, q.current + 1, q.items.len())
-        };
-        Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .title(title)
-                    .title_alignment(ratatui::layout::Alignment::Center)
-                    .title_style(theme.title_style())
-                    .borders(Borders::ALL)
-                    .border_style(theme.dialog_border_style()),
-            )
-            .style(theme.dialog_style())
-            .wrap(Wrap { trim: false })
     }
 }

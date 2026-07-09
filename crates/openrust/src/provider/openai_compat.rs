@@ -85,18 +85,23 @@ impl LlmProvider for OpenAICompatProvider {
         if let Some(top_p) = options.top_p {
             body["top_p"] = serde_json::json!(top_p);
         }
+        let is_glm = options.model.starts_with("glm-");
+
         if let Some(max_tok) = options.max_tokens {
             // o1/o3/gpt-4o families require max_completion_tokens (max_tokens → 400).
-            // Use max_completion_tokens when reasoning_effort is set, else max_tokens
-            // for backward compat with older API servers.
-            let key = if options.reasoning_effort.is_some() {
+            // Use max_completion_tokens when reasoning_effort is set (except GLM, which uses max_tokens).
+            let key = if options.reasoning_effort.is_some() && !is_glm {
                 "max_completion_tokens"
             } else {
                 "max_tokens"
             };
             body[key] = serde_json::json!(max_tok);
         }
-        if let Some(ref effort) = options.reasoning_effort {
+        if is_glm {
+            if options.reasoning_effort.is_some() {
+                body["thinking"] = serde_json::json!({ "type": "enabled" });
+            }
+        } else if let Some(ref effort) = options.reasoning_effort {
             body["reasoning_effort"] = serde_json::json!(effort);
         }
         if let Some(ref tc) = options.tool_choice {
@@ -105,7 +110,8 @@ impl LlmProvider for OpenAICompatProvider {
         if let Some(ref system) = options.system
             && let Some(arr) = body["messages"].as_array_mut() {
                 // o1-preview/o1-mini reject "system" role, require "developer".
-                let role = if options.reasoning_effort.is_some() {
+                // GLM accepts "system" even with thinking enabled.
+                let role = if options.reasoning_effort.is_some() && !is_glm {
                     "developer"
                 } else {
                     "system"

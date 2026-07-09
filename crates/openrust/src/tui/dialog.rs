@@ -83,6 +83,44 @@ impl Dialog {
         "↑/↓ 选择 · Enter 确认 · Esc 关闭"
     }
 
+    pub(super) fn option_count(&self) -> usize {
+        self.options.len()
+    }
+
+    pub(super) fn compact_lines(&self, theme: &Theme) -> Vec<Line<'static>> {
+        self.options
+            .iter()
+            .enumerate()
+            .map(|(index, option)| {
+                let selected = index == self.selected;
+                let marker = if selected { "› " } else { "  " };
+                if selected {
+                    Line::from(vec![
+                        Span::styled(
+                            format!("{}{}", marker, option.value),
+                            theme.dialog_selected_style().add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            format!("  {}", option.description),
+                            theme.muted_style(),
+                        ),
+                    ])
+                } else {
+                    Line::from(vec![
+                        Span::styled(
+                            format!("{}{}", marker, option.value),
+                            theme.dialog_style(),
+                        ),
+                        Span::styled(
+                            format!("  {}", option.description),
+                            theme.muted_style(),
+                        ),
+                    ])
+                }
+            })
+            .collect()
+    }
+
     pub(super) fn option_lines(&self, theme: &Theme, max_visible: usize) -> Vec<Line<'static>> {
         let offset = self.compute_offset(max_visible);
         self.options
