@@ -86,23 +86,27 @@ impl LlmProvider for OpenAICompatProvider {
             body["top_p"] = serde_json::json!(top_p);
         }
         let is_glm = options.model.starts_with("glm-");
+        let is_deepseek = options.model.starts_with("deepseek-");
+        // OpenAI o1/o3 reasoning models need a different request format.
+        let is_oai_reasoning = !is_glm && !is_deepseek && options.reasoning_effort.is_some();
 
         if let Some(max_tok) = options.max_tokens {
-            // o1/o3/gpt-4o families require max_completion_tokens (max_tokens → 400).
-            // Use max_completion_tokens when reasoning_effort is set (except GLM, which uses max_tokens).
-            let key = if options.reasoning_effort.is_some() && !is_glm {
+            let key = if is_oai_reasoning {
                 "max_completion_tokens"
             } else {
                 "max_tokens"
             };
             body[key] = serde_json::json!(max_tok);
         }
-        if is_glm {
-            if options.reasoning_effort.is_some() {
-                body["thinking"] = serde_json::json!({ "type": "enabled" });
+        // GLM and DeepSeek both use thinking:{type:enabled} to toggle deep reasoning.
+        if (is_glm || is_deepseek) && options.reasoning_effort.is_some() {
+            body["thinking"] = serde_json::json!({ "type": "enabled" });
+        }
+        // DeepSeek and OpenAI support effort levels alongside thinking; GLM does not.
+        if !is_glm {
+            if let Some(ref effort) = options.reasoning_effort {
+                body["reasoning_effort"] = serde_json::json!(effort);
             }
-        } else if let Some(ref effort) = options.reasoning_effort {
-            body["reasoning_effort"] = serde_json::json!(effort);
         }
         if let Some(ref tc) = options.tool_choice {
             body["tool_choice"] = tc.clone();
@@ -110,12 +114,7 @@ impl LlmProvider for OpenAICompatProvider {
         if let Some(ref system) = options.system
             && let Some(arr) = body["messages"].as_array_mut() {
                 // o1-preview/o1-mini reject "system" role, require "developer".
-                // GLM accepts "system" even with thinking enabled.
-                let role = if options.reasoning_effort.is_some() && !is_glm {
-                    "developer"
-                } else {
-                    "system"
-                };
+                let role = if is_oai_reasoning { "developer" } else { "system" };
                 arr.insert(
                     0,
                     serde_json::json!({
