@@ -119,8 +119,7 @@ mod tests {
                 ProviderConfig {
                     api_key: Some("test-key".to_string()),
                     base_url: Some("https://example.test/v1".to_string()),
-                    models: HashMap::new(),
-                    options: None,
+                    ..Default::default()
                 },
             )]),
             presets: HashMap::new(),
@@ -139,8 +138,7 @@ mod tests {
                 ProviderConfig {
                     api_key: None,
                     base_url: Some("https://example.test/v1".to_string()),
-                    models: HashMap::new(),
-                    options: None,
+                    ..Default::default()
                 },
             )]),
             presets: HashMap::new(),
@@ -171,8 +169,7 @@ mod tests {
                 name: "deepseek".to_string(),
                 api_key: Some("test-key".to_string()),
                 base_url: Some("https://example.test/v1".to_string()),
-                models: HashMap::new(),
-                options: None,
+                ..Default::default()
             },
             model: "deepseek-chat".to_string(),
         };

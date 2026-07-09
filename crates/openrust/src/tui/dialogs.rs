@@ -487,12 +487,10 @@ impl SessionView {
                     model.clone(),
                     ModelConfig {
                         name: Some(wire),
-                        variants: None,
-                        limit: None,
-                        options: None,
+                        ..Default::default()
                     },
                 )]),
-                options: None,
+                ..Default::default()
             },
         );
         self.config.model = Some(format!("{}/{}", provider, model));
@@ -618,12 +616,10 @@ impl SessionView {
                     draft.model.clone(),
                     ModelConfig {
                         name: draft.wire_model.clone(),
-                        variants: None,
-                        limit: None,
-                        options: None,
+                        ..Default::default()
                     },
                 )]),
-                options: None,
+                ..Default::default()
             },
         );
         self.config.model = Some(format!("{}/{}", draft.provider, draft.model));

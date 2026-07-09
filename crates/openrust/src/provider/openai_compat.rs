@@ -10,21 +10,31 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::Value;
 
-use crate::core::config::ResolvedProvider;
+use crate::core::config::{ModelConfig, ResolvedProvider};
 use crate::core::provider::{
     ChunkStream, LlmProvider, Message, MessageContent, RequestOptions, StreamChunk, Usage,
 };
+use std::collections::HashMap;
 
 pub struct OpenAICompatProvider {
     name: String,
     api_key: String,
     base_url: String,
     client: Client,
-    models: Vec<String>,
+    models: HashMap<String, ModelConfig>,
+    provider_options: Option<Value>,
+    headers: HashMap<String, String>,
 }
 
 impl OpenAICompatProvider {
-    pub fn new(name: String, api_key: String, base_url: String, models: Vec<String>) -> Self {
+    pub fn new(
+        name: String,
+        api_key: String,
+        base_url: String,
+        models: HashMap<String, ModelConfig>,
+        provider_options: Option<Value>,
+        headers: HashMap<String, String>,
+    ) -> Self {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(300))
             .connect_timeout(std::time::Duration::from_secs(15))
@@ -36,6 +46,8 @@ impl OpenAICompatProvider {
             base_url: base_url.trim_end_matches('/').to_string(),
             client,
             models,
+            provider_options,
+            headers,
         }
     }
 }
@@ -77,6 +89,16 @@ impl LlmProvider for OpenAICompatProvider {
 
         if !tools.is_empty() {
             body["tools"] = serde_json::json!(tools);
+        }
+
+        // Deep-merge config options (provider-level first, then model-level overrides).
+        if let Some(ref opts) = self.provider_options {
+            merge_options_into(&mut body, opts);
+        }
+        if let Some(model_cfg) = self.models.get(&options.model) {
+            if let Some(ref opts) = model_cfg.options {
+                merge_options_into(&mut body, opts);
+            }
         }
 
         if let Some(temp) = options.temperature {
@@ -126,19 +148,29 @@ impl LlmProvider for OpenAICompatProvider {
 
         tracing::debug!("POST {} (model={})", url, options.model);
 
+        // Merge provider-level headers with model-level overrides.
+        let mut headers = self.headers.clone();
+        if let Some(model_cfg) = self.models.get(&options.model) {
+            for (k, v) in &model_cfg.headers {
+                headers.insert(k.clone(), v.clone());
+            }
+        }
+
         let response = retry_with_backoff(3, || {
             let client = &self.client;
             let url = &url;
             let api_key = &self.api_key;
             let body = &body;
+            let headers = &headers;
             async move {
-                client
+                let mut req = client
                     .post(url)
                     .header("Authorization", format!("Bearer {}", api_key))
-                    .header("Content-Type", "application/json")
-                    .json(body)
-                    .send()
-                    .await
+                    .header("Content-Type", "application/json");
+                for (key, value) in headers {
+                    req = req.header(key, value);
+                }
+                req.json(body).send().await
             }
         })
         .await?;
@@ -315,7 +347,7 @@ impl LlmProvider for OpenAICompatProvider {
     }
 
     fn list_models(&self) -> Vec<String> {
-        self.models.clone()
+        self.models.keys().cloned().collect()
     }
 
     fn name(&self) -> &str {
@@ -331,13 +363,13 @@ pub fn create(cfg: &ResolvedProvider) -> Option<OpenAICompatProvider> {
         .clone()
         .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
-    let models: Vec<String> = cfg.models.keys().cloned().collect();
-
     Some(OpenAICompatProvider::new(
         cfg.name.clone(),
         api_key,
         base_url,
-        models,
+        cfg.models.clone(),
+        cfg.options.clone(),
+        cfg.headers.clone(),
     ))
 }
 
@@ -346,6 +378,22 @@ fn serialize_content(content: &MessageContent) -> serde_json::Value {
     match content {
         MessageContent::Text(text) => serde_json::json!(text),
         MessageContent::Parts(parts) => serde_json::json!(parts),
+    }
+}
+
+/// Recursively merge `source` into `target`. Nested objects combine; scalars replace.
+fn merge_options_into(target: &mut Value, source: &Value) {
+    if let (Some(target_map), Some(source_map)) = (target.as_object_mut(), source.as_object()) {
+        for (key, value) in source_map {
+            match target_map.get_mut(key) {
+                Some(existing) if existing.is_object() && value.is_object() => {
+                    merge_options_into(existing, value);
+                }
+                _ => {
+                    target_map.insert(key.clone(), value.clone());
+                }
+            }
+        }
     }
 }
 
@@ -425,4 +473,40 @@ fn rand_seed() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .subsec_nanos() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merge_adds_new_keys() {
+        let mut target = serde_json::json!({"a": 1});
+        merge_options_into(&mut target, &serde_json::json!({"b": 2}));
+        assert_eq!(target, serde_json::json!({"a": 1, "b": 2}));
+    }
+
+    #[test]
+    fn merge_scalar_replaces_scalar() {
+        let mut target = serde_json::json!({"temperature": 0.5});
+        merge_options_into(&mut target, &serde_json::json!({"temperature": 0.9}));
+        assert_eq!(target["temperature"], 0.9);
+    }
+
+    #[test]
+    fn merge_deep_combines_nested_objects() {
+        let mut target = serde_json::json!({"thinking": {"type": "enabled"}});
+        merge_options_into(&mut target, &serde_json::json!({"thinking": {"budget": 8000}}));
+        assert_eq!(
+            target["thinking"],
+            serde_json::json!({"type": "enabled", "budget": 8000})
+        );
+    }
+
+    #[test]
+    fn merge_scalar_overrides_object() {
+        let mut target = serde_json::json!({"store": {"k": "v"}});
+        merge_options_into(&mut target, &serde_json::json!({"store": false}));
+        assert_eq!(target["store"], false);
+    }
 }

@@ -293,22 +293,17 @@ mod tests {
                         "deepseek-v4-pro".to_string(),
                         crate::core::config::ModelConfig {
                             name: Some("deepseek-v4-pro".to_string()),
-                            variants: None,
-                            limit: None,
-                            options: None,
+                            ..Default::default()
                         },
                     )]),
-                    options: None,
+                    ..Default::default()
                 },
             )]),
             presets: std::collections::HashMap::new(),
         };
         let provider = ResolvedProvider {
             name: "deepseek".to_string(),
-            api_key: None,
-            base_url: None,
-            models: Default::default(),
-            options: None,
+            ..Default::default()
         };
 
         let prompt =
@@ -323,10 +318,7 @@ mod tests {
         let config = Config::default();
         let provider = ResolvedProvider {
             name: "deepseek".to_string(),
-            api_key: None,
-            base_url: None,
-            models: Default::default(),
-            options: None,
+            ..Default::default()
         };
 
         assert!(SystemPrompt::from_config(&config, &provider).is_err());

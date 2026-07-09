@@ -46,10 +46,13 @@ pub struct ProviderConfig {
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub options: Option<serde_json::Value>,
+
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub headers: HashMap<String, String>,
 }
 
 /// Per-model configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelConfig {
     #[serde(default)]
     pub name: Option<String>,
@@ -62,6 +65,9 @@ pub struct ModelConfig {
 
     #[serde(default)]
     pub options: Option<serde_json::Value>,
+
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub headers: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -238,6 +244,7 @@ impl Config {
             base_url,
             models: cfg.models.clone(),
             options: cfg.options.clone(),
+            headers: cfg.headers.clone(),
         })
     }
 
@@ -249,13 +256,14 @@ impl Config {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ResolvedProvider {
     pub name: String,
     pub api_key: Option<String>,
     pub base_url: Option<String>,
     pub models: HashMap<String, ModelConfig>,
     pub options: Option<serde_json::Value>,
+    pub headers: HashMap<String, String>,
 }
 
 /// Parse "provider/model" or "provider/model/variant" string
@@ -464,8 +472,7 @@ mod tests {
                 ProviderConfig {
                     api_key: Some("config-key".to_string()),
                     base_url: Some("https://example/v1".to_string()),
-                    models: HashMap::new(),
-                    options: None,
+                    ..Default::default()
                 },
             )]),
             presets: HashMap::new(),
