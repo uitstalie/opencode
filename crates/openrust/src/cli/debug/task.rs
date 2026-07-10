@@ -63,6 +63,7 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
                 None,
                 title.clone(),
                 status,
+                None,
             )?;
             println!("Task added: {}", title);
             Ok(())

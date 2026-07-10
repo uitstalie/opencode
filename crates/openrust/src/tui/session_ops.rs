@@ -6,6 +6,7 @@ use super::render;
 use super::util::now_micros;
 use super::{SessionView, ViewMode};
 use crate::core::agent;
+use crate::core::compaction;
 use crate::core::provider::{self, Message, MessageContent};
 
 impl SessionView {
@@ -251,10 +252,9 @@ impl SessionView {
                 let system = agent::builtin_agent_system("compaction")
                     .unwrap_or("Summarize this conversation history. Be concise.")
                     .to_string();
-                let prompt = format!(
-                    "Summarize the following conversation history, focusing on key decisions, \
-                    files modified, and remaining tasks. Be terse.\n\n{}",
-                    older_text
+                let prompt = compaction::build_compaction_prompt(
+                    None,
+                    &format!("Conversation history to compact:\n\n{}", older_text),
                 );
                 let result = rt.block_on(crate::tool::task::run_agent(
                     llm_clone.as_ref(),
@@ -273,13 +273,10 @@ impl SessionView {
                             summary.trim().to_string(),
                             recent_text,
                         );
+                        let _ = store_clone.flush();
                     }
                     _ => {
-                        let _ = store_clone.append_compaction(
-                            &session_id,
-                            format!("compaction summary\n{}", older_text),
-                            recent_text,
-                        );
+                        tracing::warn!("compaction LLM returned empty result, skipping checkpoint");
                     }
                 }
             });
@@ -363,6 +360,7 @@ impl SessionView {
                 let title = title.trim().chars().take(50).collect::<String>();
                 if !title.is_empty() {
                     let _ = store.set_title(&session_id, title);
+                    let _ = store.flush();
                 }
             }
         });
@@ -411,6 +409,7 @@ impl SessionView {
                 let summary = summary.trim().to_string();
                 if !summary.is_empty() {
                     let _ = store.set_summary(&session_id, summary);
+                    let _ = store.flush();
                 }
             }
         });

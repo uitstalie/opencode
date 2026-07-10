@@ -67,8 +67,7 @@ impl SessionView {
         let task_count = self
             .store
             .as_ref()
-            .and_then(|s| s.list_tasks(&self.session_id).ok())
-            .map(|t| t.len())
+            .and_then(|s| s.task_count(&self.session_id).ok())
             .unwrap_or(0);
 
         let layout = layout::session_layout(

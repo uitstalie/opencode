@@ -99,23 +99,51 @@ impl SessionStore {
     }
 
     pub fn list_sessions(&self) -> anyhow::Result<Vec<SessionSummary>> {
-        let mut sessions = self
-            .db
-            .open_tree("sessions")?
-            .iter()
-            .filter_map(|entry| entry.ok())
-            .filter_map(|(_, value)| serde_json::from_slice::<Session>(value.as_ref()).ok())
-            .map(|session| {
-                let message_count = self.message_count(&session.id).unwrap_or(0);
-                SessionSummary {
-                    id: session.id,
-                    title: session.title,
-                    summary: session.summary,
-                    agent: session.agent,
-                    message_count,
-                    created_at: session.created_at,
-                    updated_at: session.updated_at,
+        let sessions_tree = self.db.open_tree("sessions")?;
+        let messages_tree = self.db.open_tree("messages")?;
+
+        // Build message-count per session in a single pass (avoids N+1 scans).
+        let mut msg_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for entry in messages_tree.iter() {
+            match entry {
+                Ok((key, _)) => {
+                    let session_id = std::str::from_utf8(&key)
+                        .ok()
+                        .and_then(|k| k.split(':').next())
+                        .unwrap_or("");
+                    if !session_id.is_empty() {
+                        *msg_counts.entry(session_id.to_string()).or_insert(0) += 1;
+                    }
                 }
+                Err(e) => tracing::warn!(error = %e, "sled iteration error in messages tree"),
+            }
+        }
+
+        let mut sessions = sessions_tree
+            .iter()
+            .filter_map(|entry| match entry {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    tracing::warn!(error = %e, "sled iteration error in sessions tree");
+                    None
+                }
+            })
+            .filter_map(|(_, value)| match serde_json::from_slice::<Session>(value.as_ref()) {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to deserialize session");
+                    None
+                }
+            })
+            .map(|session| SessionSummary {
+                message_count: msg_counts.get(&session.id).copied().unwrap_or(0),
+                id: session.id,
+                title: session.title,
+                summary: session.summary,
+                agent: session.agent,
+                created_at: session.created_at,
+                updated_at: session.updated_at,
             })
             .collect::<Vec<_>>();
 
@@ -136,11 +164,19 @@ impl SessionStore {
             .db
             .open_tree("messages")?
             .scan_prefix(format!("{session_id}:").as_bytes())
-            .filter_map(|entry| entry.ok())
-            .filter_map(|(_, value)| {
-                serde_json::from_slice::<Message>(value.as_ref())
-                    .inspect_err(|e| eprintln!("deserialize message failed: {e}"))
-                    .ok()
+            .filter_map(|entry| match entry {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    tracing::warn!(error = %e, "sled iteration error in get_messages");
+                    None
+                }
+            })
+            .filter_map(|(_, value)| match serde_json::from_slice::<Message>(value.as_ref()) {
+                Ok(m) => Some(m),
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to deserialize message");
+                    None
+                }
             })
             .collect::<Vec<_>>();
 
@@ -181,28 +217,26 @@ impl SessionStore {
     }
 
     pub fn delete_session(&self, session_id: &str) -> anyhow::Result<()> {
+        let prefix = format!("{session_id}:");
+
         let sessions = self.db.open_tree("sessions")?;
         sessions.remove(session_id.as_bytes())?;
 
+        // Batch-remove all messages for this session atomically.
         let messages = self.db.open_tree("messages")?;
-        let keys: Vec<Vec<u8>> = messages
-            .scan_prefix(format!("{session_id}:").as_bytes())
-            .filter_map(|entry| entry.ok())
-            .map(|(key, _)| key.to_vec())
-            .collect();
-        for key in &keys {
-            messages.remove(key)?;
+        let mut msg_batch = sled::Batch::default();
+        for key in messages.scan_prefix(prefix.as_bytes()).keys() {
+            msg_batch.remove(key?);
         }
+        messages.apply_batch(msg_batch)?;
 
+        // Batch-remove all tasks for this session atomically.
         let tasks = self.db.open_tree("tasks")?;
-        let task_keys: Vec<Vec<u8>> = tasks
-            .scan_prefix(format!("{session_id}:").as_bytes())
-            .filter_map(|entry| entry.ok())
-            .map(|(key, _)| key.to_vec())
-            .collect();
-        for key in &task_keys {
-            tasks.remove(key)?;
+        let mut task_batch = sled::Batch::default();
+        for key in tasks.scan_prefix(prefix.as_bytes()).keys() {
+            task_batch.remove(key?);
         }
+        tasks.apply_batch(task_batch)?;
 
         Ok(())
     }
@@ -227,10 +261,16 @@ impl SessionStore {
             .collect();
 
         let count = old.len();
+        let mut deleted = 0usize;
         for id in &old {
-            let _ = self.delete_session(id);
+            if self.delete_session(id).is_ok() {
+                deleted += 1;
+            }
         }
-        Ok(count)
+        if deleted < count {
+            tracing::warn!(total = count, deleted, "some old sessions failed to delete");
+        }
+        Ok(deleted)
     }
 
     pub fn save_message(&self, message: &Message) -> anyhow::Result<()> {
@@ -243,19 +283,21 @@ impl SessionStore {
 
     pub fn replace_messages(&self, session_id: &str, messages: &[Message]) -> anyhow::Result<()> {
         let tree = self.db.open_tree("messages")?;
+        let mut batch = sled::Batch::default();
         for key in tree
             .scan_prefix(format!("{session_id}:").as_bytes())
             .keys()
             .flatten()
         {
-            tree.remove(key)?;
+            batch.remove(key);
         }
         for message in messages {
-            tree.insert(
-                self.message_key(&message.session_id, &message.id),
+            batch.insert(
+                self.message_key(&message.session_id, &message.id).as_bytes(),
                 serde_json::to_vec(message)?,
-            )?;
+            );
         }
+        tree.apply_batch(batch)?;
         self.touch_session(session_id)?;
         Ok(())
     }
@@ -341,12 +383,11 @@ impl SessionStore {
     }
 
     pub fn set_session_agent(&self, session_id: &str, agent: Option<String>) -> anyhow::Result<()> {
-        let Some(mut session) = self.get_session(session_id)? else {
-            return Ok(());
-        };
-        session.agent = agent;
-        session.updated_at = now_string();
-        self.save_session(&session)
+        self.update_session(session_id, |s| {
+            s.agent = agent.clone();
+            s.updated_at = now_string();
+        })?;
+        Ok(())
     }
 
     pub fn get_session_agent(&self, session_id: &str) -> anyhow::Result<Option<String>> {
@@ -356,21 +397,19 @@ impl SessionStore {
     }
 
     pub fn set_title(&self, session_id: &str, title: String) -> anyhow::Result<()> {
-        let Some(mut session) = self.get_session(session_id)? else {
-            return Ok(());
-        };
-        session.title = Some(title);
-        session.updated_at = now_string();
-        self.save_session(&session)
+        self.update_session(session_id, |s| {
+            s.title = Some(title.clone());
+            s.updated_at = now_string();
+        })?;
+        Ok(())
     }
 
     pub fn set_summary(&self, session_id: &str, summary: String) -> anyhow::Result<()> {
-        let Some(mut session) = self.get_session(session_id)? else {
-            return Ok(());
-        };
-        session.summary = Some(summary);
-        session.updated_at = now_string();
-        self.save_session(&session)
+        self.update_session(session_id, |s| {
+            s.summary = Some(summary.clone());
+            s.updated_at = now_string();
+        })?;
+        Ok(())
     }
 
     pub fn list_tasks(&self, session_id: &str) -> anyhow::Result<Vec<TaskSummary>> {
@@ -378,8 +417,20 @@ impl SessionStore {
             .db
             .open_tree("tasks")?
             .scan_prefix(format!("{session_id}:").as_bytes())
-            .filter_map(|entry| entry.ok())
-            .filter_map(|(_, value)| serde_json::from_slice::<Task>(value.as_ref()).ok())
+            .filter_map(|entry| match entry {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    tracing::warn!(error = %e, "sled iteration error in list_tasks");
+                    None
+                }
+            })
+            .filter_map(|(_, value)| match serde_json::from_slice::<Task>(value.as_ref()) {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to deserialize task");
+                    None
+                }
+            })
             .map(|task| TaskSummary {
                 id: task.id,
                 agent: task.agent,
@@ -410,6 +461,7 @@ impl SessionStore {
         agent: Option<String>,
         title: String,
         status: String,
+        priority: Option<String>,
     ) -> anyhow::Result<Task> {
         let now = now_string();
         let task = Task {
@@ -417,7 +469,7 @@ impl SessionStore {
             agent,
             title,
             status,
-            priority: None,
+            priority,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -425,22 +477,23 @@ impl SessionStore {
         Ok(task)
     }
 
-    /// Replace all tasks for a session with the given set (full-list semantics for todowrite).
     pub fn replace_tasks(&self, session_id: &str, tasks: &[Task]) -> anyhow::Result<()> {
         let tree = self.db.open_tree("tasks")?;
+        let mut batch = sled::Batch::default();
         for key in tree
             .scan_prefix(format!("{session_id}:").as_bytes())
             .keys()
             .flatten()
         {
-            tree.remove(key)?;
+            batch.remove(key);
         }
         for task in tasks {
-            tree.insert(
-                self.task_key(session_id, &task.id),
+            batch.insert(
+                self.task_key(session_id, &task.id).as_bytes(),
                 serde_json::to_vec(task)?,
-            )?;
+            );
         }
+        tree.apply_batch(batch)?;
         self.touch_session(session_id)?;
         Ok(())
     }
@@ -464,20 +517,57 @@ impl SessionStore {
         Ok(Some(task))
     }
 
-    fn message_count(&self, session_id: &str) -> anyhow::Result<usize> {
+    pub fn task_count(&self, session_id: &str) -> anyhow::Result<usize> {
         Ok(self
             .db
-            .open_tree("messages")?
+            .open_tree("tasks")?
             .scan_prefix(format!("{session_id}:").as_bytes())
             .count())
     }
 
-    fn touch_session(&self, session_id: &str) -> anyhow::Result<()> {
-        let Some(mut session) = self.get_session(session_id)? else {
-            return Ok(());
+    /// Atomically update a Session record using CAS retries to avoid
+    /// lost-update races between concurrent writers (e.g. background
+    /// title/summary threads vs. main-thread touch_session).
+    fn update_session<F>(&self, session_id: &str, f: F) -> anyhow::Result<Option<Session>>
+    where
+        F: Fn(&mut Session),
+    {
+        let tree = self.db.open_tree("sessions")?;
+        let key = session_id.as_bytes();
+        for _ in 0..16 {
+            let old = tree.get(key)?;
+            let Some(old_value) = old else {
+                return Ok(None);
+            };
+            let mut session: Session = serde_json::from_slice(&old_value)?;
+            f(&mut session);
+            let new_bytes = serde_json::to_vec(&session)?;
+            match tree.compare_and_swap(key, Some(old_value), Some(new_bytes))? {
+                Ok(()) => return Ok(Some(session)),
+                Err(_) => continue,
+            }
+        }
+        tracing::warn!(session_id, "session CAS retries exhausted, falling back to blind write");
+        let old = tree.get(key)?;
+        let Some(old_value) = old else {
+            return Ok(None);
         };
-        session.updated_at = now_string();
-        self.save_session(&session)
+        let mut session: Session = serde_json::from_slice(&old_value)?;
+        f(&mut session);
+        self.save_session(&session)?;
+        Ok(Some(session))
+    }
+
+    fn touch_session(&self, session_id: &str) -> anyhow::Result<()> {
+        self.update_session(session_id, |s| {
+            s.updated_at = now_string();
+        })?;
+        Ok(())
+    }
+
+    pub fn flush(&self) -> anyhow::Result<()> {
+        self.db.flush()?;
+        Ok(())
     }
 
     fn message_key(&self, session_id: &str, message_id: &str) -> String {
@@ -566,6 +656,7 @@ mod tests {
                 Some("build".to_string()),
                 "Implement flow".to_string(),
                 "pending".to_string(),
+                None,
             )
             .unwrap();
         drop(store);

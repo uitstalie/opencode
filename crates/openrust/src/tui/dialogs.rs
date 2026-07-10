@@ -209,7 +209,7 @@ impl SessionView {
                 };
                 let id = format!("task-{}", now_micros());
                 let agent = self.current_session_agent();
-                match store.upsert_task(&self.session_id, &id, agent, title.clone(), status.clone())
+                match store.upsert_task(&self.session_id, &id, agent, title.clone(), status.clone(), None)
                 {
                     Ok(task) => self.note(format!("task added: {} [{}]", task.title, task.status)),
                     Err(err) => self.note(format!("failed to add task: {}", err)),

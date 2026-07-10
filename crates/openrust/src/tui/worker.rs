@@ -246,6 +246,7 @@ pub(super) fn spawn_prompt_worker(
                                     summary.trim().to_string(),
                                     recent.join("\n"),
                                 );
+                                let _ = store.flush();
                             }
                             let summary_text = summary.trim().to_string();
                             last_compaction_summary = Some(summary_text.clone());
