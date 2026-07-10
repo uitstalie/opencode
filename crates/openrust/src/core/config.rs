@@ -55,6 +55,33 @@ pub struct ProviderConfig {
     pub protocol: Option<String>,
 }
 
+impl ProviderConfig {
+    /// Deep-merge another provider config into self (other wins on conflict).
+    fn merge_with(&mut self, other: ProviderConfig) {
+        if other.api_key.is_some() {
+            self.api_key = other.api_key;
+        }
+        if other.base_url.is_some() {
+            self.base_url = other.base_url;
+        }
+        if other.protocol.is_some() {
+            self.protocol = other.protocol;
+        }
+        for (name, model) in other.models {
+            self.models
+                .entry(name)
+                .and_modify(|existing| existing.merge_with(model.clone()))
+                .or_insert(model);
+        }
+        if other.options.is_some() {
+            self.options = other.options;
+        }
+        for (k, v) in other.headers {
+            self.headers.insert(k, v);
+        }
+    }
+}
+
 /// Per-model configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelConfig {
@@ -74,6 +101,27 @@ pub struct ModelConfig {
     pub headers: HashMap<String, String>,
 }
 
+impl ModelConfig {
+    /// Deep-merge another model config into self (other wins on conflict).
+    fn merge_with(&mut self, other: ModelConfig) {
+        if other.name.is_some() {
+            self.name = other.name;
+        }
+        if other.variants.is_some() {
+            self.variants = other.variants;
+        }
+        if other.limit.is_some() {
+            self.limit = other.limit;
+        }
+        if other.options.is_some() {
+            self.options = other.options;
+        }
+        for (k, v) in other.headers {
+            self.headers.insert(k, v);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelLimit {
     #[serde(default)]
@@ -85,7 +133,7 @@ pub struct ModelLimit {
 
 impl Config {
     /// Load config from project and global paths.
-    /// Also runs migration: any plaintext api_key in config.json is moved
+    /// Also runs migration: any plaintext api_key in config files is moved
     /// to the encrypted vault (credentials.enc) and removed from config.
     pub fn load(project_dir: &Path) -> anyhow::Result<Self> {
         let mut config = Config::default();
@@ -94,15 +142,25 @@ impl Config {
         let global_path = Self::global_config_path();
         if global_path.exists() {
             let c = Self::load_file(&global_path)?;
-            Self::migrate_api_keys(&c);
+            Self::migrate_api_keys(&c, Some(&global_path));
             config.merge(c);
         }
 
-        // Load project config (.openrust/config.jsonc)
-        let project_path = project_dir.join(".openrust").join("config.jsonc");
-        if project_path.exists() {
-            let c = Self::load_file(&project_path)?;
-            config.merge(c);
+        // Load project config — first match wins:
+        //   .openrust/config.jsonc → .openrust/config.json → openrust.json (legacy)
+        let project_base = project_dir.join(".openrust");
+        let candidates = [
+            project_base.join("config.jsonc"),
+            project_base.join("config.json"),
+            project_dir.join("openrust.json"),
+        ];
+        for project_path in &candidates {
+            if project_path.exists() {
+                let c = Self::load_file(project_path)?;
+                Self::migrate_api_keys(&c, Some(project_path));
+                config.merge(c);
+                break;
+            }
         }
 
         Ok(config)
@@ -114,7 +172,8 @@ impl Config {
     }
 
     /// Migrate plaintext api_keys from ProviderConfig to the encrypted vault.
-    fn migrate_api_keys(config: &Config) {
+    /// Strips migrated keys from the source file (global or project).
+    fn migrate_api_keys(config: &Config, source_path: Option<&Path>) {
         let mut to_migrate = HashMap::new();
         for (name, cfg) in &config.provider {
             if let Some(ref key) = cfg.api_key
@@ -129,10 +188,14 @@ impl Config {
         for provider in &migrated {
             println!("🔐 Migrated API key for '{}' to encrypted vault.", provider);
         }
+        // Strip migrated keys from the source file
+        if let Some(path) = source_path {
+            strip_api_keys_from_file(path, &migrated);
+        }
     }
 
     /// Load config from a single file
-    pub fn load_file(path: &PathBuf) -> anyhow::Result<Config> {
+    pub fn load_file(path: &Path) -> anyhow::Result<Config> {
         let content = std::fs::read_to_string(path)?;
         // Strip JSONC comments (simple // and /* */)
         let stripped = strip_jsonc_comments(&content);
@@ -143,8 +206,11 @@ impl Config {
         if other.model.is_some() {
             self.model = other.model;
         }
-        for (k, v) in other.provider {
-            self.provider.insert(k, v);
+        for (name, incoming) in other.provider {
+            self.provider
+                .entry(name)
+                .and_modify(|existing| existing.merge_with(incoming.clone()))
+                .or_insert(incoming);
         }
         for (k, v) in other.presets {
             self.presets.insert(k, v);
@@ -173,7 +239,7 @@ impl Config {
     }
 
     /// Validate config at startup, returning a list of errors for missing keys/models.
-    pub fn validate(&self) -> Vec<String> {
+    pub fn validate(&self, vault: &crate::core::vault::Vault) -> Vec<String> {
         let mut errors = Vec::new();
         let Some(model_spec) = self.model.as_deref() else {
             errors.push("No model configured. Set `model` in config to e.g. \"deepseek/deepseek-v4-pro\".".to_string());
@@ -188,7 +254,6 @@ impl Config {
             return errors;
         };
         // Check API key — either in vault or config
-        let vault = crate::core::vault::Vault::load();
         let has_key = vault.get(provider_name).is_some() || provider.api_key.is_some();
         if !has_key {
             let vault_path = crate::core::vault::Vault::path().display().to_string();
@@ -259,6 +324,39 @@ impl Config {
             .config_dir()
             .clone()
     }
+
+    /// Save config to a file, preserving unknown top-level fields from the
+    /// existing file. Only `model`, `provider`, and `presets` are written;
+    /// any other keys present on disk are kept verbatim.
+    pub fn save_to_file(&self, path: &Path) -> anyhow::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let mut raw: serde_json::Value = if path.exists() {
+            let content = std::fs::read_to_string(path).unwrap_or_default();
+            let stripped = strip_jsonc_comments(&content);
+            serde_json::from_str(&stripped)
+                .unwrap_or(serde_json::Value::Object(Default::default()))
+        } else {
+            serde_json::Value::Object(Default::default())
+        };
+
+        let serialized = serde_json::to_value(self)?;
+        if let (Some(raw_obj), Some(ser_obj)) = (raw.as_object_mut(), serialized.as_object()) {
+            for (key, value) in ser_obj {
+                raw_obj.insert(key.clone(), value.clone());
+            }
+        }
+
+        std::fs::write(path, serde_json::to_string_pretty(&raw)?)?;
+        Ok(())
+    }
+
+    /// Convenience: save to the global config path.
+    pub fn save_global(&self) -> anyhow::Result<()> {
+        self.save_to_file(&Self::global_config_path())
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -295,6 +393,36 @@ pub fn default_context_window(model: &str) -> u64 {
     if lower.contains("llama-3") || lower.contains("llama3") { return 128_000 }
     if lower.contains("mixtral") { return 32_000 }
     128_000 // default
+}
+
+/// Remove plaintext `api_key` fields for the given providers from a config file.
+fn strip_api_keys_from_file(path: &Path, providers: &[String]) {
+    if !path.exists() {
+        return;
+    }
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let stripped = strip_jsonc_comments(&content);
+    let Ok(mut raw) = serde_json::from_str::<serde_json::Value>(&stripped) else {
+        return;
+    };
+
+    let mut changed = false;
+    for provider in providers {
+        if let Some(p) = raw.get_mut("provider").and_then(|pv| pv.get_mut(provider))
+            && let Some(obj) = p.as_object_mut()
+                && obj.remove("api_key").is_some()
+        {
+            changed = true;
+        }
+    }
+
+    if changed
+        && let Ok(json) = serde_json::to_string_pretty(&raw)
+    {
+        let _ = std::fs::write(path, json);
+    }
 }
 
 /// Strip // line comments and /* */ block comments from JSONC
@@ -416,57 +544,86 @@ mod tests {
     }
 
     #[test]
-    fn project_config_overlays_global_config() {
-        let dir = tempdir().unwrap();
-        let home_dir = dir.path().join("home");
-        let global_dir = home_dir.join(".config").join("openrust");
-        let global_path = global_dir.join("config.json");
-        let project_dir = dir.path().join(".openrust");
-        let project_path = project_dir.join("config.jsonc");
+    fn provider_deep_merge_preserves_models_from_both_layers() {
+        let mut global = Config {
+            model: None,
+            provider: HashMap::from([(
+                "shared".to_string(),
+                ProviderConfig {
+                    base_url: Some("https://global.example/v1".to_string()),
+                    models: HashMap::from([
+                        ("global-model".to_string(), ModelConfig::default()),
+                    ]),
+                    ..Default::default()
+                },
+            )]),
+            presets: HashMap::new(),
+        };
 
-        fs::create_dir_all(&global_dir).unwrap();
-        fs::create_dir_all(&project_dir).unwrap();
-        fs::write(
-            &global_path,
-            r#"{
-  "model": "overlay-provider/global-model",
-  "provider": {
-    "overlay-provider": {
-      "baseURL": "https://global.example/v1",
-      "models": {"global-model": {"name": "global-model"}}
-    }
-  }
-}"#,
-        )
-        .unwrap();
-        fs::write(
-            &project_path,
-            r#"{
-  "model": "overlay-provider/project-model",
-  "provider": {
-    "overlay-provider": {
-      "baseURL": "https://project.example/v1",
-      "api_key": "project-key",
-      "models": {"project-model": {"name": "project-model"}}
-    }
-  }
-}"#,
-        )
-        .unwrap();
+        let project = Config {
+            model: Some("shared/project-model".to_string()),
+            provider: HashMap::from([(
+                "shared".to_string(),
+                ProviderConfig {
+                    base_url: Some("https://project.example/v1".to_string()),
+                    models: HashMap::from([
+                        ("project-model".to_string(), ModelConfig::default()),
+                    ]),
+                    ..Default::default()
+                },
+            )]),
+            presets: HashMap::new(),
+        };
 
-        let config = Config::load(dir.path()).unwrap();
-        let provider = config.get_provider("overlay-provider").unwrap();
+        global.merge(project);
 
-        assert_eq!(
-            config.model.as_deref(),
-            Some("overlay-provider/project-model")
-        );
+        let provider = global.get_provider("shared").unwrap();
+        // Project base_url overrides global
         assert_eq!(
             provider.base_url.as_deref(),
             Some("https://project.example/v1")
         );
-        assert_eq!(provider.api_key.as_deref(), Some("project-key"));
+        // Deep merge: both models preserved
+        assert!(provider.models.contains_key("global-model"));
         assert!(provider.models.contains_key("project-model"));
+        assert_eq!(global.model.as_deref(), Some("shared/project-model"));
+    }
+
+    #[test]
+    fn project_config_preserves_unknown_top_level_fields() {
+        let dir = tempdir().unwrap();
+        let home_dir = dir.path().join("home");
+        let global_dir = home_dir.join(".config").join("openrust");
+        let global_path = global_dir.join("config.json");
+
+        fs::create_dir_all(&global_dir).unwrap();
+        fs::write(
+            &global_path,
+            r#"{
+  "model": "test-provider/test-model",
+  "provider": {
+    "test-provider": {
+      "api_key": "test-key",
+      "base_url": "https://example/v1",
+      "models": {"test-model": {}}
+    }
+  },
+  "unknown_field": { "nested": "value" },
+  "another_unknown": 42
+}"#,
+        )
+        .unwrap();
+
+        let mut config = Config::load(dir.path()).unwrap();
+        config.model = Some("test-provider/test-model".to_string());
+
+        // Save should preserve unknown fields
+        config.save_to_file(&global_path).unwrap();
+
+        let saved = fs::read_to_string(&global_path).unwrap();
+        assert!(saved.contains("unknown_field"));
+        assert!(saved.contains("another_unknown"));
+        assert!(saved.contains("nested"));
     }
 
     #[test]

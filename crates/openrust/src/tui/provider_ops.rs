@@ -153,12 +153,7 @@ impl SessionView {
     }
 
     pub(super) fn save_global_config(&self) -> anyhow::Result<()> {
-        let path = Config::global_config_path();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(path, serde_json::to_string_pretty(&self.config)?)?;
-        Ok(())
+        self.config.save_global()
     }
 
 }

@@ -303,7 +303,15 @@ fn detect_protocol(cfg: &ResolvedProvider) -> &'static str {
 }
 
 /// Create a provider from config, routing to the correct protocol implementation.
+/// Returns `None` with a warning log when the API key is missing.
 pub fn create_provider(cfg: &ResolvedProvider) -> Option<Box<dyn LlmProvider>> {
+    if cfg.api_key.is_none() {
+        tracing::warn!(
+            provider = %cfg.name,
+            "No API key for provider — set it in config or vault"
+        );
+        return None;
+    }
     match detect_protocol(cfg) {
         "anthropic" => crate::provider::anthropic::create(cfg)
             .map(|p| Box::new(p) as Box<dyn LlmProvider>),

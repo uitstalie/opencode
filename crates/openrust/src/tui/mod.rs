@@ -62,7 +62,8 @@ pub fn run(script: Option<PathBuf>, prompt: Option<String>) -> anyhow::Result<()
     let config = Config::load(&cwd)?;
 
     // Validate config at startup — show clear errors before TUI initializes.
-    for error in config.validate() {
+    let vault = crate::core::vault::Vault::load();
+    for error in config.validate(&vault) {
         eprintln!("openrust config: {}", error);
     }
 

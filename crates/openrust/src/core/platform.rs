@@ -38,7 +38,7 @@ impl PlatformPaths {
                 (
                     appdata.join("openrust"),
                     local.join("openrust"),
-                    local.join("openrust-cache"),
+                    local.join("openrust").join("cache"),
                 )
             }
             PlatformKind::Fedora | PlatformKind::Unknown => (
@@ -119,10 +119,7 @@ mod tests {
         assert!(paths.credentials_path().ends_with("credentials.enc"));
         assert!(paths.config_dir().ends_with("openrust"));
         assert!(paths.data_dir().ends_with("openrust"));
-        assert!(
-            paths.cache_dir().ends_with("openrust")
-                || paths.cache_dir().ends_with("openrust-cache")
-        );
+        assert!(paths.cache_dir().ends_with("cache"));
         assert!(paths.undo_dir().ends_with("undo"));
         assert!(paths.sessions_db_path().ends_with("sessions.db"));
     }
