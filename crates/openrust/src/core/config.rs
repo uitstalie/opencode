@@ -49,6 +49,10 @@ pub struct ProviderConfig {
 
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub headers: HashMap<String, String>,
+
+    /// Protocol: "openai" (default), "anthropic", or "gemini".
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub protocol: Option<String>,
 }
 
 /// Per-model configuration
@@ -245,6 +249,7 @@ impl Config {
             models: cfg.models.clone(),
             options: cfg.options.clone(),
             headers: cfg.headers.clone(),
+            protocol: cfg.protocol.clone(),
         })
     }
 
@@ -264,6 +269,7 @@ pub struct ResolvedProvider {
     pub models: HashMap<String, ModelConfig>,
     pub options: Option<serde_json::Value>,
     pub headers: HashMap<String, String>,
+    pub protocol: Option<String>,
 }
 
 /// Parse "provider/model" or "provider/model/variant" string
