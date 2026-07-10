@@ -31,7 +31,7 @@ impl<'a> SidebarPanel<'a> {
             && let Some(tree) = &view.sidebar
         {
             let sidebar = Paragraph::new(tree.lines(&view.theme))
-                .style(view.theme.panel_style())
+                .style(view.theme.sidebar_style())
                 .block(
                     Block::default()
                         .title(" Files ")
@@ -68,13 +68,13 @@ impl<'a> SidebarPanel<'a> {
                     "completed" => ("[x]", view.theme.muted_style()),
                     "in_progress" => ("[~]", view.theme.assistant_style()),
                     "cancelled" => ("[-]", view.theme.muted_style()),
-                    _ => ("[ ]", view.theme.panel_style()),
+                    _ => ("[ ]", view.theme.sidebar_style()),
                 };
                 Line::from(Span::styled(format!("{mark} {}", t.title), style))
             })
             .collect();
         let todo = Paragraph::new(todo_lines)
-            .style(view.theme.panel_style())
+            .style(view.theme.sidebar_style())
             .block(
                 Block::default()
                     .title(format!(" TODO {completed}/{total} "))

@@ -41,6 +41,8 @@ impl DisplayMessage {
 pub struct Theme {
     background: Color,
     panel: Color,
+    sidebar_bg: Color,
+    footer_bg: Color,
     border: Color,
     active_border: Color,
     text: Color,
@@ -59,21 +61,23 @@ pub struct Theme {
 impl Theme {
     pub fn dark() -> Self {
         Self {
-            background: Color::Rgb(12, 14, 18),
-            panel: Color::Rgb(20, 24, 31),
-            border: Color::Rgb(75, 85, 99),
-            active_border: Color::Rgb(96, 165, 250),
-            text: Color::Rgb(229, 231, 235),
-            muted: Color::Rgb(156, 163, 175),
-            user: Color::Rgb(251, 191, 36),
-            assistant: Color::Rgb(45, 212, 191),
-            success: Color::Rgb(34, 197, 94),
-            warning: Color::Rgb(250, 204, 21),
-            thinking: Color::Rgb(168, 85, 247),
-            tool: Color::Rgb(96, 165, 250),
-            dialog: Color::Rgb(30, 41, 59),
-            dialog_selected: Color::Rgb(191, 219, 254),
-            overlay: Color::Rgb(9, 11, 15),
+            background: Color::Rgb(0, 0, 0),
+            panel: Color::Rgb(22, 22, 26),
+            sidebar_bg: Color::Rgb(13, 13, 16),
+            footer_bg: Color::Rgb(10, 10, 13),
+            border: Color::Rgb(42, 42, 48),
+            active_border: Color::Rgb(85, 85, 95),
+            text: Color::Rgb(215, 215, 220),
+            muted: Color::Rgb(130, 130, 140),
+            user: Color::Rgb(204, 174, 100),
+            assistant: Color::Rgb(110, 185, 165),
+            success: Color::Rgb(95, 170, 105),
+            warning: Color::Rgb(205, 175, 85),
+            thinking: Color::Rgb(155, 125, 200),
+            tool: Color::Rgb(120, 155, 195),
+            dialog: Color::Rgb(28, 28, 34),
+            dialog_selected: Color::Rgb(160, 180, 205),
+            overlay: Color::Rgb(0, 0, 0),
         }
     }
 
@@ -85,8 +89,12 @@ impl Theme {
         Style::default().fg(self.text).bg(self.panel)
     }
 
+    pub fn sidebar_style(&self) -> Style {
+        Style::default().fg(self.text).bg(self.sidebar_bg)
+    }
+
     pub fn footer_style(&self) -> Style {
-        Style::default().fg(self.muted).bg(self.panel)
+        Style::default().fg(self.muted).bg(self.footer_bg)
     }
 
     pub fn title_style(&self) -> Style {
@@ -162,7 +170,7 @@ impl Theme {
     }
 
     pub fn diff_delete_style(&self) -> Style {
-        Style::default().fg(Color::Rgb(248, 113, 113))
+        Style::default().fg(Color::Rgb(200, 110, 110))
     }
 
     pub fn sidebar_dir_style(&self) -> Style {
