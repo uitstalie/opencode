@@ -138,6 +138,7 @@ struct SessionView {
     assistant_preview: String,
     thinking_preview: String,
     thinking_start: Option<Instant>,
+    thought_duration: Option<Duration>,
     render: RenderState,
 }
 
@@ -221,6 +222,7 @@ impl SessionView {
             assistant_preview: String::new(),
             thinking_preview: String::new(),
             thinking_start: None,
+            thought_duration: None,
             render: RenderState {
                 lines: RefCell::new(Vec::new()),
                 all_lines: RefCell::new(Vec::new()),
@@ -601,9 +603,11 @@ impl SessionView {
         for event in events {
             match event {
                 PromptEvent::AssistantDelta(text) => {
+                    if let Some(start) = self.thinking_start.take() {
+                        self.thought_duration = Some(start.elapsed());
+                    }
                     self.assistant_preview.push_str(&text);
                     self.status = "AI running".to_string();
-                    self.thinking_start = None;
                     needs_render = true;
                 }
                 PromptEvent::ThinkingDelta(text) => {
@@ -641,7 +645,9 @@ impl SessionView {
                     results,
                 } => {
                     self.pending_tool_calls.clear();
-                    self.thinking_start = None;
+                    if let Some(start) = self.thinking_start.take() {
+                        self.thought_duration = Some(start.elapsed());
+                    }
                     self.persist_message_detail(
                         "assistant",
                         &assistant,
@@ -657,9 +663,13 @@ impl SessionView {
                         tool_calls: Some(serde_json::from_value(serde_json::json!(tool_calls)).unwrap_or_default()),
                     });
                     if self.thinking_mode == ThinkingMode::Show && !self.thinking_preview.trim().is_empty() {
-                        self.display.push(render::DisplayMessage::new("thinking", &self.thinking_preview));
+                        let meta = self.thought_duration
+                            .map(interaction::format_duration)
+                            .unwrap_or_default();
+                        self.display.push(render::DisplayMessage::new_with_meta("thought", &self.thinking_preview, meta));
                     }
                     self.thinking_preview.clear();
+                    self.thought_duration = None;
                     if !assistant.is_empty() {
                         self.display.push(render::DisplayMessage::new("assistant", &assistant));
                     }
@@ -695,11 +705,18 @@ impl SessionView {
                     needs_render = true;
                 }
                 PromptEvent::Finish { prompt_tokens, cache_hit_tokens } => {
+                    if let Some(start) = self.thinking_start.take() {
+                        self.thought_duration = Some(start.elapsed());
+                    }
                     if self.thinking_mode == ThinkingMode::Show && !self.thinking_preview.trim().is_empty() {
-                        self.display.push(render::DisplayMessage::new("thinking", &self.thinking_preview));
+                        let meta = self.thought_duration
+                            .map(interaction::format_duration)
+                            .unwrap_or_default();
+                        self.display.push(render::DisplayMessage::new_with_meta("thought", &self.thinking_preview, meta));
                     }
                     self.thinking_preview.clear();
                     self.thinking_start = None;
+                    self.thought_duration = None;
                     let assistant = self.assistant_preview.trim().to_string();
                     if !assistant.is_empty() {
                         self.messages.push(Message {
@@ -732,20 +749,28 @@ impl SessionView {
                     self.assistant_preview.clear();
                     self.thinking_preview.clear();
                     self.thinking_start = None;
+                    self.thought_duration = None;
                     needs_render = true;
                     self.generate_summary();
                 }
                 PromptEvent::Aborted => {
                     // Salvage whatever assistant text streamed so far, drop the
                     // queued prompts, then return to ready.
+                    if let Some(start) = self.thinking_start.take() {
+                        self.thought_duration = Some(start.elapsed());
+                    }
                     if self.thinking_mode == ThinkingMode::Show
                         && !self.thinking_preview.trim().is_empty()
                     {
+                        let meta = self.thought_duration
+                            .map(interaction::format_duration)
+                            .unwrap_or_default();
                         self.display
-                            .push(render::DisplayMessage::new("thinking", &self.thinking_preview));
+                            .push(render::DisplayMessage::new_with_meta("thought", &self.thinking_preview, meta));
                     }
                     self.thinking_preview.clear();
                     self.thinking_start = None;
+                    self.thought_duration = None;
                     let assistant = self.assistant_preview.trim().to_string();
                     if !assistant.is_empty() {
                         self.messages.push(Message {

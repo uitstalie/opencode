@@ -25,6 +25,7 @@ impl SessionView {
         self.assistant_preview.clear();
         self.thinking_preview.clear();
         self.thinking_start = None;
+        self.thought_duration = None;
         self.render(stdout, Some(&self.status))?;
         let Some(llm) = &self.llm else {
             self.note("LLM not initialized".to_string());
@@ -139,9 +140,11 @@ impl SessionView {
         for event in events {
             match event {
                 super::PromptEvent::AssistantDelta(text) => {
+                    if let Some(start) = self.thinking_start.take() {
+                        self.thought_duration = Some(start.elapsed());
+                    }
                     self.assistant_preview.push_str(&text);
                     self.status = "AI running".to_string();
-                    self.thinking_start = None;
                     needs_render = true;
                 }
                 super::PromptEvent::ThinkingDelta(text) => {
@@ -161,6 +164,9 @@ impl SessionView {
                     needs_render = true;
                 }
                 super::PromptEvent::ToolBatch { assistant, tool_calls, results } => {
+                    if let Some(start) = self.thinking_start.take() {
+                        self.thought_duration = Some(start.elapsed());
+                    }
                     self.persist_message_detail(
                         "assistant",
                         &assistant,
@@ -176,10 +182,14 @@ impl SessionView {
                         tool_calls: Some(serde_json::from_value(serde_json::json!(tool_calls)).unwrap_or_default()),
                     });
                     if self.thinking_mode == ThinkingMode::Show && !self.thinking_preview.trim().is_empty() {
-                        self.display.push(render::DisplayMessage::new("thinking", &self.thinking_preview));
+                        let meta = self.thought_duration
+                            .map(super::interaction::format_duration)
+                            .unwrap_or_default();
+                        self.display.push(render::DisplayMessage::new_with_meta("thought", &self.thinking_preview, meta));
                     }
                     self.thinking_preview.clear();
                     self.thinking_start = None;
+                    self.thought_duration = None;
                     if !assistant.is_empty() {
                         self.display.push(render::DisplayMessage::new("assistant", &assistant));
                     }
@@ -212,11 +222,18 @@ impl SessionView {
                     needs_render = true;
                 }
                 super::PromptEvent::Finish { prompt_tokens, cache_hit_tokens } => {
+                    if let Some(start) = self.thinking_start.take() {
+                        self.thought_duration = Some(start.elapsed());
+                    }
                     if self.thinking_mode == ThinkingMode::Show && !self.thinking_preview.trim().is_empty() {
-                        self.display.push(render::DisplayMessage::new("thinking", &self.thinking_preview));
+                        let meta = self.thought_duration
+                            .map(super::interaction::format_duration)
+                            .unwrap_or_default();
+                        self.display.push(render::DisplayMessage::new_with_meta("thought", &self.thinking_preview, meta));
                     }
                     self.thinking_preview.clear();
                     self.thinking_start = None;
+                    self.thought_duration = None;
                     let assistant = self.assistant_preview.trim().to_string();
                     if !assistant.is_empty() {
                         self.messages.push(super::Message {
@@ -247,6 +264,7 @@ impl SessionView {
                     self.assistant_preview.clear();
                     self.thinking_preview.clear();
                     self.thinking_start = None;
+                    self.thought_duration = None;
                     needs_render = true;
                     finished = true;
                     self.generate_summary();
@@ -257,6 +275,7 @@ impl SessionView {
                     self.assistant_preview.clear();
                     self.thinking_preview.clear();
                     self.thinking_start = None;
+                    self.thought_duration = None;
                     needs_render = true;
                     finished = true;
                 }
@@ -294,6 +313,7 @@ impl SessionView {
         self.assistant_preview.clear();
         self.thinking_preview.clear();
         self.thinking_start = None;
+        self.thought_duration = None;
         self.render_terminal(terminal)?;
 
         let Some(llm) = &self.llm else {

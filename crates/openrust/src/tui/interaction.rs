@@ -261,15 +261,23 @@ impl SessionView {
 
         if self.ai_running && !self.thinking_preview.trim().is_empty()
             && self.thinking_mode == ThinkingMode::Show {
-                let thinking_time = self.thinking_start
-                    .map(|t| format!(" · {}", format_elapsed(t)))
-                    .unwrap_or_default();
-                all_rows.push(SessionRenderLine {
-                    line: Line::from(vec![
+                let header_spans = if let Some(start) = self.thinking_start {
+                    vec![
                         Span::styled(format!("{} ", spinner_frame()), self.theme.thinking_style()),
                         Span::styled("thinking", self.theme.thinking_style().add_modifier(Modifier::BOLD)),
-                        Span::styled(thinking_time, self.theme.muted_style()),
-                    ]),
+                        Span::styled(format!(" · {}", format_elapsed(start)), self.theme.muted_style()),
+                    ]
+                } else {
+                    let dur = self.thought_duration
+                        .map(format_duration)
+                        .unwrap_or_default();
+                    vec![
+                        Span::styled("thought", self.theme.thinking_style().add_modifier(Modifier::BOLD)),
+                        Span::styled(format!(": {dur}"), self.theme.muted_style()),
+                    ]
+                };
+                all_rows.push(SessionRenderLine {
+                    line: Line::from(header_spans),
                     text: "thinking".to_string(),
                     tool_message_index: None,
                 });
@@ -440,9 +448,15 @@ fn spinner_frame() -> char {
     FRAMES[(ms / 100) as usize % FRAMES.len()]
 }
 
-fn format_elapsed(start: std::time::Instant) -> String {
-    let secs = start.elapsed().as_secs_f64();
-    if secs < 10.0 {
+pub(super) fn format_elapsed(start: std::time::Instant) -> String {
+    format_duration(start.elapsed())
+}
+
+pub(super) fn format_duration(d: std::time::Duration) -> String {
+    let secs = d.as_secs_f64();
+    if secs < 1.0 {
+        format!("{}ms", d.as_millis())
+    } else if secs < 10.0 {
         format!("{:.1}s", secs)
     } else if secs < 60.0 {
         format!("{:.0}s", secs)

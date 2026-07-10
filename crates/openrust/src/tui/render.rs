@@ -7,6 +7,7 @@ pub struct DisplayMessage {
     pub role: String,
     pub content: String,
     pub collapsed: bool,
+    pub meta: Option<String>,
 }
 
 impl DisplayMessage {
@@ -25,6 +26,7 @@ impl DisplayMessage {
             role: role.to_string(),
             content: content.to_string(),
             collapsed: false,
+            meta: None,
         }
     }
 
@@ -33,6 +35,16 @@ impl DisplayMessage {
             role: role.to_string(),
             content: content.to_string(),
             collapsed: true,
+            meta: None,
+        }
+    }
+
+    pub fn new_with_meta(role: &str, content: &str, meta: String) -> Self {
+        Self {
+            role: role.to_string(),
+            content: content.to_string(),
+            collapsed: false,
+            meta: Some(meta),
         }
     }
 }
@@ -189,14 +201,22 @@ pub(super) fn display_message_lines(message: &DisplayMessage, theme: &Theme) -> 
     let role_style = match role {
         "user" => theme.user_style(),
         "assistant" => theme.assistant_style(),
-        "thinking" => theme.thinking_style(),
+        "thinking" | "thought" => theme.thinking_style(),
         "tool" => theme.tool_style(),
         _ => theme.system_style(),
     };
-    let mut lines = vec![Line::from(vec![Span::styled(
-        role.to_string(),
-        role_style.add_modifier(Modifier::BOLD),
-    )])];
+    let header_spans = if let Some(ref meta) = message.meta {
+        vec![
+            Span::styled(role.to_string(), role_style.add_modifier(Modifier::BOLD)),
+            Span::styled(format!(": {meta}"), theme.muted_style()),
+        ]
+    } else {
+        vec![Span::styled(
+            role.to_string(),
+            role_style.add_modifier(Modifier::BOLD),
+        )]
+    };
+    let mut lines = vec![Line::from(header_spans)];
 
     if message.collapsed {
         let first_line = message.content().lines().next().unwrap_or("");
