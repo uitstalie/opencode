@@ -273,6 +273,7 @@ pub(super) struct PendingTool {
     pub(super) id: String,
     pub(super) name: String,
     pub(super) state: ToolState,
+    pub(super) started_at: std::time::Instant,
 }
 
 pub(super) struct CacheStats {

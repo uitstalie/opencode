@@ -261,11 +261,15 @@ impl SessionView {
 
         if self.ai_running && !self.thinking_preview.trim().is_empty()
             && self.thinking_mode == ThinkingMode::Show {
+                let thinking_time = self.thinking_start
+                    .map(|t| format!(" · {}", format_elapsed(t)))
+                    .unwrap_or_default();
                 all_rows.push(SessionRenderLine {
-                    line: Line::from(vec![Span::styled(
-                        "thinking".to_string(),
-                        self.theme.thinking_style().add_modifier(Modifier::BOLD),
-                    )]),
+                    line: Line::from(vec![
+                        Span::styled(format!("{} ", spinner_frame()), self.theme.thinking_style()),
+                        Span::styled("thinking", self.theme.thinking_style().add_modifier(Modifier::BOLD)),
+                        Span::styled(thinking_time, self.theme.muted_style()),
+                    ]),
                     text: "thinking".to_string(),
                     tool_message_index: None,
                 });
@@ -305,6 +309,7 @@ impl SessionView {
                 ToolState::Created => "created",
                 ToolState::Running => "running",
             };
+            let elapsed = format_elapsed(tool.started_at);
             all_rows.push(SessionRenderLine {
                 line: Line::from(Span::styled(
                     "tool".to_string(),
@@ -317,9 +322,9 @@ impl SessionView {
                 line: Line::from(vec![
                     Span::styled(format!("{frame} "), self.theme.tool_style()),
                     Span::styled(tool.name.clone(), self.theme.tool_style()),
-                    Span::styled(format!("  [{label}]"), self.theme.muted_style()),
+                    Span::styled(format!("  [{label} · {elapsed}]"), self.theme.muted_style()),
                 ]),
-                text: format!("{frame} {}  [{label}]", tool.name),
+                text: format!("{frame} {}  [{label} · {elapsed}]", tool.name),
                 tool_message_index: None,
             });
             all_rows.push(SessionRenderLine {
@@ -433,4 +438,17 @@ fn spinner_frame() -> char {
         .map(|d| d.as_millis())
         .unwrap_or(0);
     FRAMES[(ms / 100) as usize % FRAMES.len()]
+}
+
+fn format_elapsed(start: std::time::Instant) -> String {
+    let secs = start.elapsed().as_secs_f64();
+    if secs < 10.0 {
+        format!("{:.1}s", secs)
+    } else if secs < 60.0 {
+        format!("{:.0}s", secs)
+    } else {
+        let m = (secs / 60.0) as u64;
+        let s = (secs % 60.0) as u64;
+        format!("{m}m {s}s")
+    }
 }

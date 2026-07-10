@@ -24,6 +24,7 @@ impl SessionView {
         self.ai_running = true;
         self.assistant_preview.clear();
         self.thinking_preview.clear();
+        self.thinking_start = None;
         self.render(stdout, Some(&self.status))?;
         let Some(llm) = &self.llm else {
             self.note("LLM not initialized".to_string());
@@ -140,9 +141,13 @@ impl SessionView {
                 super::PromptEvent::AssistantDelta(text) => {
                     self.assistant_preview.push_str(&text);
                     self.status = "AI running".to_string();
+                    self.thinking_start = None;
                     needs_render = true;
                 }
                 super::PromptEvent::ThinkingDelta(text) => {
+                    if self.thinking_start.is_none() {
+                        self.thinking_start = Some(std::time::Instant::now());
+                    }
                     self.thinking_preview.push_str(&text);
                     self.status = "AI thinking".to_string();
                     needs_render = true;
@@ -174,6 +179,7 @@ impl SessionView {
                         self.display.push(render::DisplayMessage::new("thinking", &self.thinking_preview));
                     }
                     self.thinking_preview.clear();
+                    self.thinking_start = None;
                     if !assistant.is_empty() {
                         self.display.push(render::DisplayMessage::new("assistant", &assistant));
                     }
@@ -210,6 +216,7 @@ impl SessionView {
                         self.display.push(render::DisplayMessage::new("thinking", &self.thinking_preview));
                     }
                     self.thinking_preview.clear();
+                    self.thinking_start = None;
                     let assistant = self.assistant_preview.trim().to_string();
                     if !assistant.is_empty() {
                         self.messages.push(super::Message {
@@ -239,6 +246,7 @@ impl SessionView {
                     self.prompt_job = None;
                     self.assistant_preview.clear();
                     self.thinking_preview.clear();
+                    self.thinking_start = None;
                     needs_render = true;
                     finished = true;
                     self.generate_summary();
@@ -248,6 +256,7 @@ impl SessionView {
                     self.prompt_job = None;
                     self.assistant_preview.clear();
                     self.thinking_preview.clear();
+                    self.thinking_start = None;
                     needs_render = true;
                     finished = true;
                 }
@@ -282,6 +291,9 @@ impl SessionView {
         self.display.push(render::DisplayMessage::new("user", prompt));
         self.status = "Connecting model...".to_string();
         self.ai_running = true;
+        self.assistant_preview.clear();
+        self.thinking_preview.clear();
+        self.thinking_start = None;
         self.render_terminal(terminal)?;
 
         let Some(llm) = &self.llm else {

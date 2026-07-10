@@ -137,6 +137,7 @@ struct SessionView {
     abort: Arc<AtomicBool>,
     assistant_preview: String,
     thinking_preview: String,
+    thinking_start: Option<Instant>,
     render: RenderState,
 }
 
@@ -219,6 +220,7 @@ impl SessionView {
             abort: Arc::new(AtomicBool::new(false)),
             assistant_preview: String::new(),
             thinking_preview: String::new(),
+            thinking_start: None,
             render: RenderState {
                 lines: RefCell::new(Vec::new()),
                 all_lines: RefCell::new(Vec::new()),
@@ -601,9 +603,13 @@ impl SessionView {
                 PromptEvent::AssistantDelta(text) => {
                     self.assistant_preview.push_str(&text);
                     self.status = "AI running".to_string();
+                    self.thinking_start = None;
                     needs_render = true;
                 }
                 PromptEvent::ThinkingDelta(text) => {
+                    if self.thinking_start.is_none() {
+                        self.thinking_start = Some(Instant::now());
+                    }
                     self.thinking_preview.push_str(&text);
                     self.status = "AI thinking".to_string();
                     needs_render = true;
@@ -613,6 +619,7 @@ impl SessionView {
                         id,
                         name: name.clone(),
                         state: ToolState::Created,
+                        started_at: Instant::now(),
                     });
                     self.status = format!("tool call: {}", name);
                     needs_render = true;
@@ -634,6 +641,7 @@ impl SessionView {
                     results,
                 } => {
                     self.pending_tool_calls.clear();
+                    self.thinking_start = None;
                     self.persist_message_detail(
                         "assistant",
                         &assistant,
@@ -691,6 +699,7 @@ impl SessionView {
                         self.display.push(render::DisplayMessage::new("thinking", &self.thinking_preview));
                     }
                     self.thinking_preview.clear();
+                    self.thinking_start = None;
                     let assistant = self.assistant_preview.trim().to_string();
                     if !assistant.is_empty() {
                         self.messages.push(Message {
@@ -722,6 +731,7 @@ impl SessionView {
                     self.prompt_job = None;
                     self.assistant_preview.clear();
                     self.thinking_preview.clear();
+                    self.thinking_start = None;
                     needs_render = true;
                     self.generate_summary();
                 }
@@ -735,6 +745,7 @@ impl SessionView {
                             .push(render::DisplayMessage::new("thinking", &self.thinking_preview));
                     }
                     self.thinking_preview.clear();
+                    self.thinking_start = None;
                     let assistant = self.assistant_preview.trim().to_string();
                     if !assistant.is_empty() {
                         self.messages.push(Message {
