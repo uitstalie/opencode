@@ -121,7 +121,10 @@ impl LlmProvider for OpenAICompatProvider {
             body[key] = serde_json::json!(max_tok);
         }
         // GLM and DeepSeek both use thinking:{type:enabled} to toggle deep reasoning.
-        if (is_glm || is_deepseek) && options.reasoning_effort.is_some() {
+        // GLM includes clear_thinking:false to preserve reasoning content in responses.
+        if is_glm && options.reasoning_effort.is_some() {
+            body["thinking"] = serde_json::json!({ "type": "enabled", "clear_thinking": false });
+        } else if is_deepseek && options.reasoning_effort.is_some() {
             body["thinking"] = serde_json::json!({ "type": "enabled" });
         }
         // DeepSeek and OpenAI support effort levels alongside thinking; GLM does not.
