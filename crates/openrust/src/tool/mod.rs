@@ -8,7 +8,9 @@
 //!   tools, since `ToolResult` is not `Result` and doesn't support `?`.
 //! - `Tool::to_llm_def()` converts a tool into an OpenAI-compatible
 //!   `{ type: "function", function: { name, description, parameters } }`.
-//! - `ToolRegistry` holds all tools; `standard_registry()` builds the default set.
+//! - `catalog::create_tool()` is the factory used at runtime; each tool
+//!   implements `Tool`. The trait provides `name()`, `description()`,
+//!   `parameters()` (JSON Schema), and `execute()`.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -290,8 +292,10 @@ pub(crate) async fn run_tool(name: &str, args: &str, ctx: &ToolContext) -> ToolR
     let Some(tool) = catalog::create_tool(name, ctx.undo_store.clone()) else {
         return ToolResult::error(format!("Unknown tool: {}", name));
     };
-    let parsed =
-        serde_json::from_str(args).unwrap_or_else(|_| serde_json::json!({ "input": args }));
+    let parsed: serde_json::Value = match serde_json::from_str(args) {
+        Ok(v) => v,
+        Err(e) => return ToolResult::error(format!("Invalid JSON arguments for '{}': {}", name, e)),
+    };
     tool.execute_checked(ToolParams::new(parsed), ctx)
         .await
 }
@@ -360,64 +364,6 @@ pub trait Tool: Send + Sync {
             }
         })
     }
-}
-
-// ── Registry ───────────────────────────────────────
-
-pub struct ToolRegistry {
-    tools: HashMap<String, Box<dyn Tool>>,
-}
-
-impl Default for ToolRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ToolRegistry {
-    pub fn new() -> Self {
-        Self {
-            tools: HashMap::new(),
-        }
-    }
-
-    pub fn register(&mut self, tool: impl Tool + 'static) {
-        self.tools.insert(tool.name().to_string(), Box::new(tool));
-    }
-
-    pub fn get(&self, name: &str) -> Option<&dyn Tool> {
-        self.tools.get(name).map(|t| t.as_ref())
-    }
-
-    pub fn names(&self) -> Vec<&str> {
-        self.tools.keys().map(|s| s.as_str()).collect()
-    }
-
-    /// Build the full set of tool definitions for the LLM request.
-    pub fn to_llm_defs(&self) -> Vec<serde_json::Value> {
-        self.tools.values().map(|t| t.to_llm_def()).collect()
-    }
-}
-
-/// Build the standard Phase 1A tool set.
-pub fn standard_registry(undo_store: Option<Arc<UndoStore>>) -> ToolRegistry {
-    let mut reg = ToolRegistry::new();
-    reg.register(read::ReadTool);
-    reg.register(write::WriteTool);
-    reg.register(edit::EditTool);
-    reg.register(apply_patch::ApplyPatchTool);
-    reg.register(rm::RmTool);
-    reg.register(bash::BashTool);
-    reg.register(glob::GlobTool);
-    reg.register(grep::GrepTool);
-    reg.register(webfetch::WebFetchTool);
-    reg.register(websearch::WebSearchTool);
-    reg.register(todowrite::TodoWriteTool);
-    reg.register(skill::SkillTool);
-    reg.register(question::QuestionTool);
-    reg.register(task::TaskTool);
-    reg.register(undo_edit::UndoEditTool { undo_store });
-    reg
 }
 
 /// Factory: get a tool by name (for CLI debug usage).

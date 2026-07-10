@@ -1,6 +1,6 @@
 //! Rm tool — safe file & directory deletion.
 //!
-//! Safety: delegates system-path checks to `core::paths::is_protected_path`.
+//! Safety: delegates system-path checks to `core::paths::check_protected`.
 //! Project-scope permission goes through `Tool::execute_checked`.
 
 use crate::core::paths;
@@ -49,7 +49,7 @@ impl Tool for RmTool {
             }
         };
 
-        if let Some(reason) = paths::is_protected_path(&canonical) {
+        if let Err(reason) = paths::check_protected(&canonical) {
             return ToolResult::error(format!("Refusing to delete {}: {}", target, reason));
         }
 

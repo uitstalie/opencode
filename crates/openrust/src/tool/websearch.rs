@@ -49,7 +49,7 @@ impl Tool for WebSearchTool {
 
         let results = parse_results(&html, limit);
         if results.is_empty() {
-            return ToolResult::error("No results found for this query.".to_string());
+            return ToolResult::text("No results found for this query.");
         }
         let out: Vec<String> = results
             .iter()

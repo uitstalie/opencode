@@ -12,7 +12,7 @@ pub const BINARY_EXTENSIONS: &[&str] = &[
     "doc", "docx", "ear", "eot", "exe", "flac", "flv", "gif", "gz", "ico", "iso", "jar", "jpeg",
     "jpg", "lz", "lz4", "lzma", "m4a", "mkv", "mov", "mp3", "mp4", "mpeg", "mpg", "o", "obj",
     "ogg", "otf", "parquet", "pdf", "pkg", "png", "ppt", "pptx", "psd", "rar", "rpm", "so",
-    "sqlite", "svg", "swf", "tar", "ttf", "wasm", "wav", "webm", "webp", "woff", "woff2",
+    "sqlite", "swf", "tar", "ttf", "wasm", "wav", "webm", "webp", "woff", "woff2",
     "xls", "xlsx", "xz", "zip", "zst",
 ];
 

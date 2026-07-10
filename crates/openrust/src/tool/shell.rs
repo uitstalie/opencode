@@ -85,9 +85,15 @@ fn exists_in_path(command: &str) -> bool {
         return false;
     };
 
-    std::env::split_paths(&paths)
-        .map(|dir| dir.join(command))
-        .any(|candidate| candidate.exists())
+    let candidates: Vec<PathBuf> = if cfg!(windows) {
+        vec![PathBuf::from(command), PathBuf::from(format!("{}.exe", command))]
+    } else {
+        vec![PathBuf::from(command)]
+    };
+
+    std::env::split_paths(&paths).any(|dir| {
+        candidates.iter().any(|c| dir.join(c).exists())
+    })
 }
 
 pub fn shell_binary_path(kind: ShellKind) -> PathBuf {

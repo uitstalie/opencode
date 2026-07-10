@@ -50,6 +50,7 @@ impl Tool for WebFetchTool {
             reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(timeout))
                 .user_agent("openrust/0.0")
+                .redirect(reqwest::redirect::Policy::none())
                 .build(),
             |e| format!("Client error: {}", e)
         );
@@ -69,6 +70,15 @@ impl Tool for WebFetchTool {
         };
 
         let status = resp.status();
+        if status.is_redirection() {
+            return ToolResult::error(format!(
+                "Redirect not followed (SSRF protection): {} → {}. Use the direct URL if trusted.",
+                url,
+                resp.headers().get("location")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("?")
+            ));
+        }
         if !status.is_success() {
             return ToolResult::error(format!(
                 "HTTP {} fetching {}",
@@ -176,66 +186,84 @@ fn validate_url(url_str: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn decode_html_entity(s: &str) -> Option<(char, usize)> {
+    if s.starts_with("&amp;") { return Some(('&', 5)); }
+    if s.starts_with("&lt;") { return Some(('<', 4)); }
+    if s.starts_with("&gt;") { return Some(('>', 4)); }
+    if s.starts_with("&quot;") { return Some(('"', 6)); }
+    if s.starts_with("&apos;") { return Some(('\'', 6)); }
+    if s.starts_with("&#") {
+        let after = &s[2..];
+        let end = after.find(';')?;
+        let num_str = &after[..end];
+        let code = if let Some(hex) = num_str.strip_prefix('x').or_else(|| num_str.strip_prefix('X')) {
+            u32::from_str_radix(hex, 16).ok()?
+        } else {
+            num_str.parse::<u32>().ok()?
+        };
+        let ch = char::from_u32(code)?;
+        return Some((ch, 2 + end + 1));
+    }
+    None
+}
+
 fn strip_html(html: &str) -> String {
     let mut out = String::with_capacity(html.len());
     let mut in_tag = false;
     let mut in_script = false;
     let mut in_style = false;
     let lower = html.to_lowercase();
-    for (i, ch) in html.char_indices() {
+    let len = html.len();
+    let mut i = 0usize;
+
+    while i < len {
+        let rest = &html[i..];
+        let lower_rest = &lower[i..];
+        let ch = rest.chars().next().unwrap_or('\0');
+        let ch_len = ch.len_utf8();
+
         if ch == '<' {
-            let rest = &lower[i..];
-            if rest.starts_with("<script") {
+            if lower_rest.starts_with("<script") {
                 in_script = true;
-            } else if rest.starts_with("<style") {
+            } else if lower_rest.starts_with("<style") {
                 in_style = true;
-            } else if rest.starts_with("</script") {
+            } else if lower_rest.starts_with("</script") {
                 in_script = false;
-            } else if rest.starts_with("</style") {
+            } else if lower_rest.starts_with("</style") {
                 in_style = false;
             }
             in_tag = true;
+            i += ch_len;
             continue;
         }
         if ch == '>' {
             in_tag = false;
-            let end = i.min(lower.len() - 1);
+            let end = i.min(lower.len().saturating_sub(1));
             let ctx = &lower[i.saturating_sub(10)..=end];
             if (ctx.contains("</p")
                 || ctx.contains("</div")
                 || ctx.contains("</h")
                 || ctx.contains("<br"))
-                && !out.ends_with('\n') {
-                    out.push('\n');
-                }
+                && !out.ends_with('\n')
+            {
+                out.push('\n');
+            }
+            i += ch_len;
             continue;
         }
         if in_tag || in_script || in_style {
+            i += ch_len;
             continue;
         }
         if ch == '&' {
-            let rest = &html[i..];
-            if rest.starts_with("&amp;") {
-                out.push('&');
-                continue;
-            }
-            if rest.starts_with("&lt;") {
-                out.push('<');
-                continue;
-            }
-            if rest.starts_with("&gt;") {
-                out.push('>');
-                continue;
-            }
-            if rest.starts_with("&quot;") {
-                out.push('"');
-                continue;
-            }
-            if rest.starts_with("&#") {
+            if let Some((decoded, entity_len)) = decode_html_entity(rest) {
+                out.push(decoded);
+                i += entity_len;
                 continue;
             }
         }
         out.push(ch);
+        i += ch_len;
     }
     out.lines()
         .map(|l| l.trim())
@@ -252,6 +280,12 @@ mod tests {
     fn strips_tags() {
         let t = strip_html("<html><body><p>Hello</p><p>World</p></body></html>");
         assert!(t.contains("Hello") && t.contains("World"));
+    }
+
+    #[test]
+    fn decodes_numeric_entities() {
+        let t = strip_html("<p>It&#39;s a test &#x27;ok&#x27;</p>");
+        assert!(t.contains("It's a test 'ok'"));
     }
 
     #[test]

@@ -30,49 +30,57 @@ impl Tool for GrepTool {
     async fn execute(&self, p: ToolParams, ctx: &ToolContext) -> ToolResult {
         let pat = require_str!(p, "pattern");
         let cwd_str = ctx.cwd.to_string_lossy().to_string();
-        let base = p.opt_str("path").unwrap_or(&cwd_str);
-        let include = p.opt_str("include");
+        let base = p.opt_str("path").unwrap_or(&cwd_str).to_string();
+        let include = p.opt_str("include").map(|s| s.to_string());
 
-        let re = match Regex::new(pat) {
+        let re = match Regex::new(&pat) {
             Ok(r) => r,
             Err(e) => return ToolResult::error(format!("Invalid regex: {}", e)),
         };
 
-        let mut results = Vec::new();
-        let base_path = std::path::Path::new(base);
+        let results = tokio::task::spawn_blocking(move || {
+            let mut results = Vec::new();
+            let base_path = std::path::Path::new(&base);
 
-        if base_path.is_file() {
-            search_file(base_path, &re, &mut results);
-        } else {
-            for entry in walkdir::WalkDir::new(base)
-                .follow_links(false)
-                .into_iter()
-                .filter_entry(|e| {
-                    let n = e.file_name().to_string_lossy();
-                    !n.starts_with('.') && n != "target" && n != "node_modules"
-                })
-                .filter_map(|e| e.ok())
-            {
-                if !entry.file_type().is_file() {
-                    continue;
-                }
-                if let Some(inc) = include
-                    && !match_ext(inc, &entry.file_name().to_string_lossy()) {
+            if base_path.is_file() {
+                search_file(base_path, &re, &mut results);
+            } else {
+                for entry in walkdir::WalkDir::new(base_path)
+                    .follow_links(false)
+                    .into_iter()
+                    .filter_entry(|e| {
+                        let n = e.file_name().to_string_lossy();
+                        !n.starts_with('.') && n != "target" && n != "node_modules"
+                    })
+                    .filter_map(|e| e.ok())
+                {
+                    if !entry.file_type().is_file() {
                         continue;
                     }
-                search_file(entry.path(), &re, &mut results);
+                    if let Some(ref inc) = include
+                        && !match_ext(inc, &entry.file_name().to_string_lossy()) {
+                            continue;
+                        }
+                    search_file(entry.path(), &re, &mut results);
+                }
             }
-        }
+            results
+        })
+        .await
+        .unwrap_or_default();
 
         if results.is_empty() {
             return ToolResult::text("No matches found.");
         }
         let total = results.len();
         if total > 200 {
-            results.truncate(200);
-            results.push(format!("... and {} more", total - 200));
+            let mut truncated = results;
+            truncated.truncate(200);
+            truncated.push(format!("... and {} more", total - 200));
+            ToolResult::text(truncated.join("\n"))
+        } else {
+            ToolResult::text(results.join("\n"))
         }
-        ToolResult::text(results.join("\n"))
     }
 }
 
