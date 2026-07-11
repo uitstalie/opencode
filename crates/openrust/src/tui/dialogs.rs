@@ -450,7 +450,12 @@ impl SessionView {
             DialogKind::Provider => match dialog.selected_value() {
                 Some("__add__") => self.start_connect_wizard(),
                 Some("__verify__") => self.verify_provider(&self.provider_name.clone()),
-                Some(value) => self.switch_provider(value),
+                Some(value) => self.begin_provider_switch(value),
+                None => {}
+            },
+            DialogKind::ProviderModel => match dialog.selected_value() {
+                Some("__reasoning__") => self.open_reasoning_dialog(None),
+                Some(value) => self.switch_provider_model(value),
                 None => {}
             },
             DialogKind::Model => match dialog.selected_value() {

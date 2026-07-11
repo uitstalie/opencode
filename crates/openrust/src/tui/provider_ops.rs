@@ -5,6 +5,7 @@ use std::sync::Arc;
 use futures::StreamExt;
 
 use super::SessionView;
+use super::dialog::{Dialog, DialogKind, DialogOption};
 use crate::core::{
     config::Config,
     provider::{self, Message, MessageContent, RequestOptions, StreamChunk},
@@ -31,6 +32,116 @@ impl SessionView {
             }
             Err(err) => self.note(format!("failed to save provider switch: {}", err)),
         }
+    }
+
+    /// Begin a guided provider switch: collect API key if missing, then
+    /// let the user pick a model from that provider's registered models.
+    pub(super) fn begin_provider_switch(&mut self, provider: &str) {
+        if !self.config.provider.contains_key(provider) {
+            self.note(format!("provider not configured: {}", provider));
+            return;
+        }
+        self.ui.pending_provider = Some(provider.to_string());
+
+        let has_key = self
+            .config
+            .get_provider(provider)
+            .is_some_and(|r| r.api_key.is_some());
+
+        if has_key {
+            self.open_provider_model_dialog();
+        } else {
+            self.ui.pending_text_input = Some(super::types::PendingTextInput {
+                title: format!("{} · API key", provider),
+                description: format!(
+                    "输入 {} 的 API key。若暂时没有可直接回车跳过，之后用 /connect key {} <key>。",
+                    provider, provider,
+                ),
+                value: String::new(),
+                editor: super::util::single_line_textarea("", true),
+                submit: SessionView::save_switch_api_key,
+            });
+            self.status = format!("connect: API key for {}", provider);
+        }
+    }
+
+    /// Save the API key entered during guided switch, then show model dialog.
+    fn save_switch_api_key(&mut self, value: &str) {
+        let Some(provider) = self.ui.pending_provider.clone() else {
+            self.note("provider switch state missing".to_string());
+            return;
+        };
+        let key = value.trim();
+        if !key.is_empty()
+            && let Err(err) = crate::core::vault::Vault::save(&provider, key) {
+                self.note(format!("failed to save API key: {}", err));
+            }
+        self.reload_config();
+        self.open_provider_model_dialog();
+    }
+
+    /// Show a model-selection dialog scoped to the pending provider.
+    fn open_provider_model_dialog(&mut self) {
+        let Some(provider) = self.ui.pending_provider.clone() else {
+            self.note("provider switch state missing".to_string());
+            return;
+        };
+        let Some(cfg) = self.config.provider.get(&provider) else {
+            self.note(format!("provider not configured: {}", provider));
+            return;
+        };
+        let mut models: Vec<_> = cfg.models.keys().cloned().collect();
+        models.sort();
+
+        let current = self
+            .config
+            .model
+            .as_deref()
+            .filter(|m| m.starts_with(&format!("{}/", provider)));
+
+        let mut options = models
+            .into_iter()
+            .map(|model| {
+                let spec = format!("{}/{}", provider, model);
+                let active = if Some(spec.as_str()) == current { "● " } else { "" };
+                DialogOption::new(
+                    spec.clone(),
+                    format!("{}{}", active, model),
+                    "切换到这个模型。",
+                )
+            })
+            .collect::<Vec<_>>();
+        options.push(DialogOption::new(
+            "__reasoning__",
+            "Thinking effort".to_string(),
+            "设置 reasoning effort：low / medium / high / off。",
+        ));
+
+        self.ui.dialog = Some(Dialog::new(
+            DialogKind::ProviderModel,
+            format!("{} · model", provider),
+            "选择模型，或设置 thinking effort。",
+            options,
+            0,
+        ));
+        self.ui.pending_text_input = None;
+        self.status = format!("connect: model for {}", provider);
+    }
+
+    /// Finalize the guided switch: set the chosen model and clean up state.
+    pub(super) fn switch_provider_model(&mut self, spec: &str) {
+        self.config.model = Some(spec.to_string());
+        match self.save_global_config() {
+            Ok(()) => {
+                self.reload_config();
+                self.note(format!(
+                    "provider: {} · model: {}",
+                    self.provider_name, self.model
+                ));
+            }
+            Err(err) => self.note(format!("failed to save model: {}", err)),
+        }
+        self.ui.pending_provider = None;
     }
 
     pub(super) fn verify_provider(&mut self, provider_name: &str) {

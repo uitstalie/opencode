@@ -7,8 +7,8 @@ use super::render::Theme;
 
 pub(super) struct Dialog {
     pub(super) kind: DialogKind,
-    title: &'static str,
-    description: &'static str,
+    title: String,
+    description: String,
     options: Vec<DialogOption>,
     selected: usize,
 }
@@ -21,6 +21,7 @@ pub(super) enum DialogKind {
     Agent,
     Task,
     Provider,
+    ProviderModel,
     Model,
     ReasoningEffort,
     SlashHelp,
@@ -29,15 +30,15 @@ pub(super) enum DialogKind {
 impl Dialog {
     pub(super) fn new(
         kind: DialogKind,
-        title: &'static str,
-        description: &'static str,
+        title: impl Into<String>,
+        description: impl Into<String>,
         options: Vec<DialogOption>,
         selected: usize,
     ) -> Self {
         Self {
             kind,
-            title,
-            description,
+            title: title.into(),
+            description: description.into(),
             selected: selected.min(options.len().saturating_sub(1)),
             options,
         }
@@ -72,11 +73,11 @@ impl Dialog {
     }
 
     pub(super) fn title(&self) -> &str {
-        self.title
+        &self.title
     }
 
     pub(super) fn description(&self) -> &str {
-        self.description
+        &self.description
     }
 
     pub(super) fn footer_hint(&self) -> &'static str {

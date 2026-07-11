@@ -312,4 +312,5 @@ pub(super) struct DialogState {
     pub(super) pending_permission: Option<PendingPermission>,
     pub(super) pending_text_input: Option<PendingTextInput>,
     pub(super) connect_draft: Option<ConnectDraft>,
+    pub(super) pending_provider: Option<String>,
 }

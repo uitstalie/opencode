@@ -211,6 +211,7 @@ impl SessionView {
                 pending_permission: None,
                 pending_text_input: None,
                 connect_draft: None,
+                pending_provider: None,
             },
             sidebar: None,
             sidebar_visible: false,
