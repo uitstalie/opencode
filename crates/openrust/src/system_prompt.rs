@@ -32,6 +32,7 @@ impl SystemPrompt {
                     &self.project_rules,
                 ),
             ),
+            render_section("memory", &render_memory()),
             render_section("capabilities", &render_capabilities(shell_kind, &skills)),
             render_section("style", &render_style()),
         ];
@@ -120,6 +121,18 @@ fn render_environment(prompt: &SystemPrompt) -> String {
         format!("cwd: {}", prompt.cwd),
         format!("home: {}", prompt.home),
         format!("platform: {}", prompt.platform),
+    ]
+    .join("\n")
+}
+
+/// Static `<memory>` index — only locations, no content. The agent uses
+/// `memory_read` to retrieve actual entries on demand.
+fn render_memory() -> String {
+    [
+        "Memory locations (use memory_read to query):",
+        "- project: .openrust/memory/*.md (scope=project)",
+        "- user: ~/.config/openrust/memory/*.md (scope=user)",
+        "- dreaming: ~/.config/openrust/memory/dreaming/ (scope=dreaming)",
     ]
     .join("\n")
 }

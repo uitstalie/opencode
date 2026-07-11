@@ -2,6 +2,7 @@ pub mod agent;
 pub mod compaction;
 pub mod config;
 pub mod crypto;
+pub mod memory;
 pub mod paths;
 pub mod permission;
 pub mod platform;

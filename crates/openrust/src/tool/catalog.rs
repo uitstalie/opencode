@@ -4,9 +4,10 @@ use std::sync::Arc;
 
 use super::{
     apply_patch::ApplyPatchTool, bash::BashTool, edit::EditTool, glob::GlobTool, grep::GrepTool,
-    question::QuestionTool, read::ReadTool, rm::RmTool, skill::SkillTool, task::TaskTool,
-    todowrite::TodoWriteTool, undo::UndoStore, undo_edit::UndoEditTool, webfetch::WebFetchTool,
-    websearch::WebSearchTool, write::WriteTool,
+    memory_read::MemoryReadTool, memory_record::MemoryRecordTool, question::QuestionTool,
+    read::ReadTool, rm::RmTool, skill::SkillTool, task::TaskTool, todowrite::TodoWriteTool,
+    undo::UndoStore, undo_edit::UndoEditTool, webfetch::WebFetchTool, websearch::WebSearchTool,
+    write::WriteTool,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,6 +16,7 @@ pub enum ToolCategory {
     Shell,
     Network,
     Interaction,
+    Memory,
     Undo,
 }
 
@@ -117,6 +119,18 @@ pub const TOOL_CATALOG: &[ToolMeta] = &[
         description: "Restore a file from an undo blob.",
         prompt_hint: "Use after write/edit when rollback is needed.",
     },
+    ToolMeta {
+        name: "memory_read",
+        category: ToolCategory::Memory,
+        description: "Read memory entries by scope, category, or keyword.",
+        prompt_hint: "Check memory before important decisions or at session start.",
+    },
+    ToolMeta {
+        name: "memory_record",
+        category: ToolCategory::Memory,
+        description: "Record a stable conclusion, decision, or preference to memory.",
+        prompt_hint: "Only stable conclusions — never transient state.",
+    },
 ];
 
 pub fn tool_meta(name: &str) -> Option<&'static ToolMeta> {
@@ -137,6 +151,7 @@ pub fn registry_category_names() -> Vec<(ToolCategory, Vec<&'static str>)> {
         ToolCategory::Shell,
         ToolCategory::Network,
         ToolCategory::Interaction,
+        ToolCategory::Memory,
         ToolCategory::Undo,
     ]
     .into_iter()
@@ -170,6 +185,8 @@ pub fn create_tool(name: &str, undo_store: Option<Arc<UndoStore>>) -> Option<Box
         "question" => Some(Box::new(QuestionTool)),
         "task" => Some(Box::new(TaskTool)),
         "undo_edit" => Some(Box::new(UndoEditTool { undo_store })),
+        "memory_read" => Some(Box::new(MemoryReadTool)),
+        "memory_record" => Some(Box::new(MemoryRecordTool)),
         _ => None,
     }
 }

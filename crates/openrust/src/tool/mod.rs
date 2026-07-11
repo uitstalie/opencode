@@ -24,6 +24,8 @@ pub mod bash;
 pub mod edit;
 pub mod glob;
 pub mod grep;
+pub mod memory_read;
+pub mod memory_record;
 pub mod question;
 pub mod read;
 pub mod rm;

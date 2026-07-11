@@ -69,6 +69,7 @@ fn format_category(category: catalog::ToolCategory) -> &'static str {
         catalog::ToolCategory::Shell => "shell",
         catalog::ToolCategory::Network => "net",
         catalog::ToolCategory::Interaction => "interaction",
+        catalog::ToolCategory::Memory => "memory",
         catalog::ToolCategory::Undo => "undo",
     }
 }
