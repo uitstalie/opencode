@@ -167,6 +167,222 @@ pub struct ModelLimit {
     pub output: Option<u64>,
 }
 
+/// Built-in provider definitions for well-known APIs.
+///
+/// These are complete `ProviderConfig` entries: base_url, protocol, models,
+/// reasoning fields — everything except the API key (which comes from the
+/// vault via `/connect key <provider> <key>`).
+///
+/// At load time, each built-in is inserted via `entry().or_insert()`, so a
+/// user-defined provider with the same name **completely replaces** the
+/// built-in — no field-level merge.
+fn builtin_providers() -> HashMap<String, ProviderConfig> {
+    let mut map: HashMap<String, ProviderConfig> = HashMap::new();
+
+    // ── DeepSeek ──────────────────────────────────────
+    let thinking_on = serde_json::json!({"thinking": {"type": "enabled"}});
+    map.insert(
+        "deepseek".into(),
+        ProviderConfig {
+            base_url: Some("https://api.deepseek.com/v1".into()),
+            protocol: Some("openai".into()),
+            models: [
+                (
+                    "deepseek-chat".into(),
+                    ModelConfig {
+                        name: Some("deepseek-chat".into()),
+                        limit: Some(ModelLimit { context: Some(64_000), output: Some(8_192) }),
+                        reasoning_options: Some(thinking_on.clone()),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "deepseek-reasoner".into(),
+                    ModelConfig {
+                        name: Some("deepseek-reasoner".into()),
+                        limit: Some(ModelLimit { context: Some(64_000), output: Some(32_768) }),
+                        reasoning_options: Some(thinking_on.clone()),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "deepseek-v4-pro".into(),
+                    ModelConfig {
+                        name: Some("deepseek-v4-pro".into()),
+                        limit: Some(ModelLimit { context: Some(128_000), output: Some(8_192) }),
+                        reasoning_options: Some(thinking_on),
+                        ..Default::default()
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        },
+    );
+
+    // ── GLM (Zhipu AI) ────────────────────────────────
+    let glm_thinking = serde_json::json!({"thinking": {"type": "enabled", "clear_thinking": false}});
+    map.insert(
+        "glm".into(),
+        ProviderConfig {
+            base_url: Some("https://open.bigmodel.cn/api/paas/v4".into()),
+            protocol: Some("openai".into()),
+            models: [
+                (
+                    "glm-4.6".into(),
+                    ModelConfig {
+                        name: Some("glm-4.6".into()),
+                        limit: Some(ModelLimit { context: Some(128_000), output: Some(16_384) }),
+                        reasoning_options: Some(glm_thinking.clone()),
+                        reasoning_send_effort: Some(false),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "glm-4-plus".into(),
+                    ModelConfig {
+                        name: Some("glm-4-plus".into()),
+                        limit: Some(ModelLimit { context: Some(128_000), output: Some(4_096) }),
+                        reasoning_options: Some(glm_thinking),
+                        reasoning_send_effort: Some(false),
+                        ..Default::default()
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        },
+    );
+
+    // ── Zhipu AI Coding Plan ──────────────────────────
+    let coding_thinking = serde_json::json!({"thinking": {"type": "enabled", "clear_thinking": false}});
+    map.insert(
+        "zhipuai-coding-plan".into(),
+        ProviderConfig {
+            base_url: Some("https://open.bigmodel.cn/api/paas/v4".into()),
+            protocol: Some("openai".into()),
+            models: [
+                (
+                    "glm-5.1".into(),
+                    ModelConfig {
+                        name: Some("glm-5.1".into()),
+                        limit: Some(ModelLimit { context: Some(128_000), output: Some(16_384) }),
+                        reasoning_options: Some(coding_thinking),
+                        reasoning_send_effort: Some(false),
+                        ..Default::default()
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        },
+    );
+
+    // ── OpenAI ────────────────────────────────────────
+    let oai_reasoning = |name: &str, ctx: u64, out: u64| ModelConfig {
+        name: Some(name.into()),
+        limit: Some(ModelLimit { context: Some(ctx), output: Some(out) }),
+        max_tokens_key: Some("max_completion_tokens".into()),
+        system_role: Some("developer".into()),
+        ..Default::default()
+    };
+    map.insert(
+        "openai".into(),
+        ProviderConfig {
+            base_url: Some("https://api.openai.com/v1".into()),
+            protocol: Some("openai".into()),
+            models: [
+                (
+                    "gpt-4o".into(),
+                    ModelConfig {
+                        name: Some("gpt-4o".into()),
+                        limit: Some(ModelLimit { context: Some(128_000), output: Some(16_384) }),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "gpt-4o-mini".into(),
+                    ModelConfig {
+                        name: Some("gpt-4o-mini".into()),
+                        limit: Some(ModelLimit { context: Some(128_000), output: Some(16_384) }),
+                        ..Default::default()
+                    },
+                ),
+                ("o1".into(), oai_reasoning("o1", 200_000, 100_000)),
+                ("o1-mini".into(), oai_reasoning("o1-mini", 128_000, 65_536)),
+            ]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        },
+    );
+
+    // ── Anthropic ─────────────────────────────────────
+    map.insert(
+        "anthropic".into(),
+        ProviderConfig {
+            base_url: Some("https://api.anthropic.com".into()),
+            protocol: Some("anthropic".into()),
+            models: [
+                (
+                    "claude-sonnet-4-5-20250514".into(),
+                    ModelConfig {
+                        name: Some("claude-sonnet-4-5-20250514".into()),
+                        limit: Some(ModelLimit { context: Some(200_000), output: Some(16_384) }),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "claude-haiku-4-5-20251001".into(),
+                    ModelConfig {
+                        name: Some("claude-haiku-4-5-20251001".into()),
+                        limit: Some(ModelLimit { context: Some(200_000), output: Some(8_192) }),
+                        ..Default::default()
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        },
+    );
+
+    // ── Gemini ────────────────────────────────────────
+    map.insert(
+        "gemini".into(),
+        ProviderConfig {
+            base_url: Some("https://generativelanguage.googleapis.com/v1beta".into()),
+            protocol: Some("gemini".into()),
+            models: [
+                (
+                    "gemini-2.5-pro".into(),
+                    ModelConfig {
+                        name: Some("gemini-2.5-pro".into()),
+                        limit: Some(ModelLimit { context: Some(1_048_576), output: Some(65_536) }),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "gemini-2.5-flash".into(),
+                    ModelConfig {
+                        name: Some("gemini-2.5-flash".into()),
+                        limit: Some(ModelLimit { context: Some(1_048_576), output: Some(65_536) }),
+                        ..Default::default()
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        },
+    );
+
+    map
+}
+
 impl Config {
     /// Load config from project and global paths.
     /// Also runs migration: any plaintext api_key in config files is moved
@@ -197,6 +413,12 @@ impl Config {
                 config.merge(c);
                 break;
             }
+        }
+
+        // Fill in built-in providers for any name not already configured.
+        // User-defined providers completely replace built-ins of the same name.
+        for (name, provider) in builtin_providers() {
+            config.provider.entry(name).or_insert(provider);
         }
 
         Ok(config)
