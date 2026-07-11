@@ -141,10 +141,10 @@ impl LlmProvider for GeminiProvider {
         if let Some(ref opts) = self.provider_options {
             merge_options_into(&mut body, opts);
         }
-        if let Some(model_cfg) = self.models.get(&options.model) {
-            if let Some(ref opts) = model_cfg.options {
-                merge_options_into(&mut body, opts);
-            }
+        if let Some(model_cfg) = self.models.get(&options.model)
+            && let Some(ref opts) = model_cfg.options
+        {
+            merge_options_into(&mut body, opts);
         }
 
         tracing::debug!("POST {} (model={})", url, options.model);
@@ -266,18 +266,17 @@ impl LlmProvider for GeminiProvider {
                     }
 
                     // Usage metadata can appear without finishReason (e.g. last chunk).
-                    if !finish_emitted {
-                        if parsed.get("usageMetadata").is_some()
-                            && parsed.get("candidates").and_then(|c| c.as_array())
-                                .is_none_or(|c| c.is_empty())
-                        {
-                            let usage = parse_gemini_usage(&parsed);
-                            finish_emitted = true;
-                            yield Ok(StreamChunk::Finish {
-                                usage,
-                                reason: Some("stop".to_string()),
-                            });
-                        }
+                    if !finish_emitted
+                        && parsed.get("usageMetadata").is_some()
+                        && parsed.get("candidates").and_then(|c| c.as_array())
+                            .is_none_or(|c| c.is_empty())
+                    {
+                        let usage = parse_gemini_usage(&parsed);
+                        finish_emitted = true;
+                        yield Ok(StreamChunk::Finish {
+                            usage,
+                            reason: Some("stop".to_string()),
+                        });
                     }
                 }
             }

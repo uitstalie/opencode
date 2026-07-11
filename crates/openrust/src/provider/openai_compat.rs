@@ -97,10 +97,10 @@ impl LlmProvider for OpenAICompatProvider {
         if let Some(ref opts) = self.provider_options {
             merge_options_into(&mut body, opts);
         }
-        if let Some(model_cfg) = self.models.get(&options.model) {
-            if let Some(ref opts) = model_cfg.options {
-                merge_options_into(&mut body, opts);
-            }
+        if let Some(model_cfg) = self.models.get(&options.model)
+            && let Some(ref opts) = model_cfg.options
+        {
+            merge_options_into(&mut body, opts);
         }
 
         if let Some(temp) = options.temperature {
@@ -130,10 +130,10 @@ impl LlmProvider for OpenAICompatProvider {
             body["thinking"] = serde_json::json!({ "type": "enabled" });
         }
         // DeepSeek and OpenAI support effort levels alongside thinking; GLM does not.
-        if !is_glm {
-            if let Some(ref effort) = options.reasoning_effort {
-                body["reasoning_effort"] = serde_json::json!(effort);
-            }
+        if !is_glm
+            && let Some(ref effort) = options.reasoning_effort
+        {
+            body["reasoning_effort"] = serde_json::json!(effort);
         }
         if let Some(ref tc) = options.tool_choice {
             body["tool_choice"] = tc.clone();

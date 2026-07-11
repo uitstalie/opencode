@@ -125,10 +125,10 @@ impl LlmProvider for AnthropicProvider {
         if let Some(ref opts) = self.provider_options {
             merge_options_into(&mut body, opts);
         }
-        if let Some(model_cfg) = self.models.get(&options.model) {
-            if let Some(ref opts) = model_cfg.options {
-                merge_options_into(&mut body, opts);
-            }
+        if let Some(model_cfg) = self.models.get(&options.model)
+            && let Some(ref opts) = model_cfg.options
+        {
+            merge_options_into(&mut body, opts);
         }
 
         tracing::debug!("POST {} (model={})", url, options.model);
@@ -212,10 +212,10 @@ impl LlmProvider for AnthropicProvider {
                             blocks.insert(index, BlockInfo { kind, id, name });
 
                             // Emit initial text if present.
-                            if let Some(text) = block["text"].as_str() {
-                                if !text.is_empty() {
-                                    yield Ok(StreamChunk::TextDelta(text.to_string()));
-                                }
+                            if let Some(text) = block["text"].as_str()
+                                && !text.is_empty()
+                            {
+                                yield Ok(StreamChunk::TextDelta(text.to_string()));
                             }
                             // Emit ToolCallStart for tool_use blocks.
                             if block["type"].as_str() == Some("tool_use") {
@@ -241,13 +241,13 @@ impl LlmProvider for AnthropicProvider {
                                     }
                                 }
                                 Some("input_json_delta") => {
-                                    if let Some(partial) = delta["partial_json"].as_str() {
-                                        if let Some(bi) = blocks.get(&index) {
-                                            yield Ok(StreamChunk::ToolCallDelta {
-                                                id: bi.id.clone(),
-                                                args: partial.to_string(),
-                                            });
-                                        }
+                                    if let Some(partial) = delta["partial_json"].as_str()
+                                        && let Some(bi) = blocks.get(&index)
+                                    {
+                                        yield Ok(StreamChunk::ToolCallDelta {
+                                            id: bi.id.clone(),
+                                            args: partial.to_string(),
+                                        });
                                     }
                                 }
                                 _ => {}
@@ -255,12 +255,12 @@ impl LlmProvider for AnthropicProvider {
                         }
                         "content_block_stop" => {
                             let index = parsed["index"].as_u64().unwrap_or(0) as usize;
-                            if let Some(bi) = blocks.get(&index) {
-                                if bi.kind == "tool_use" {
-                                    yield Ok(StreamChunk::ToolCallEnd {
-                                        id: bi.id.clone(),
-                                    });
-                                }
+                            if let Some(bi) = blocks.get(&index)
+                                && bi.kind == "tool_use"
+                            {
+                                yield Ok(StreamChunk::ToolCallEnd {
+                                    id: bi.id.clone(),
+                                });
                             }
                         }
                         "message_delta" => {
@@ -286,10 +286,8 @@ impl LlmProvider for AnthropicProvider {
                                 reason,
                             });
                         }
-                        "message_stop" => {
-                            if !finish_emitted {
-                                yield Ok(StreamChunk::Finish { usage: None, reason: None });
-                            }
+                        "message_stop" if !finish_emitted => {
+                            yield Ok(StreamChunk::Finish { usage: None, reason: None });
                         }
                         _ => {}
                     }

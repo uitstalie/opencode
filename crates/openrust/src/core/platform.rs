@@ -119,7 +119,12 @@ mod tests {
         assert!(paths.credentials_path().ends_with("credentials.enc"));
         assert!(paths.config_dir().ends_with("openrust"));
         assert!(paths.data_dir().ends_with("openrust"));
-        assert!(paths.cache_dir().ends_with("cache"));
+        // Windows adds a "cache" subdir under AppData/Local; Linux uses ~/.cache/openrust.
+        if cfg!(windows) {
+            assert!(paths.cache_dir().ends_with("cache"));
+        } else {
+            assert!(paths.cache_dir().ends_with("openrust"));
+        }
         assert!(paths.undo_dir().ends_with("undo"));
         assert!(paths.sessions_db_path().ends_with("sessions.db"));
     }

@@ -192,8 +192,7 @@ fn decode_html_entity(s: &str) -> Option<(char, usize)> {
     if s.starts_with("&gt;") { return Some(('>', 4)); }
     if s.starts_with("&quot;") { return Some(('"', 6)); }
     if s.starts_with("&apos;") { return Some(('\'', 6)); }
-    if s.starts_with("&#") {
-        let after = &s[2..];
+    if let Some(after) = s.strip_prefix("&#") {
         let end = after.find(';')?;
         let num_str = &after[..end];
         let code = if let Some(hex) = num_str.strip_prefix('x').or_else(|| num_str.strip_prefix('X')) {
@@ -255,12 +254,12 @@ fn strip_html(html: &str) -> String {
             i += ch_len;
             continue;
         }
-        if ch == '&' {
-            if let Some((decoded, entity_len)) = decode_html_entity(rest) {
-                out.push(decoded);
-                i += entity_len;
-                continue;
-            }
+        if ch == '&'
+            && let Some((decoded, entity_len)) = decode_html_entity(rest)
+        {
+            out.push(decoded);
+            i += entity_len;
+            continue;
         }
         out.push(ch);
         i += ch_len;

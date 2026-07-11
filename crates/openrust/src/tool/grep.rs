@@ -33,7 +33,7 @@ impl Tool for GrepTool {
         let base = p.opt_str("path").unwrap_or(&cwd_str).to_string();
         let include = p.opt_str("include").map(|s| s.to_string());
 
-        let re = match Regex::new(&pat) {
+        let re = match Regex::new(pat) {
             Ok(r) => r,
             Err(e) => return ToolResult::error(format!("Invalid regex: {}", e)),
         };
