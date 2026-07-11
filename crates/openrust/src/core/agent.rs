@@ -228,11 +228,17 @@ fn parse_agent_document(content: &str) -> (std::collections::HashMap<String, Str
     else {
         return (std::collections::HashMap::new(), content.to_string());
     };
-    let Some(end) = rest.find("\n---\n").or_else(|| rest.find("\r\n---\r\n")) else {
+    let Some((end, closing_len)) = rest
+        .find("\n---\n")
+        .map(|e| (e, 5usize))
+        .or_else(|| rest.find("\r\n---\r\n").map(|e| (e, 7)))
+    else {
         return (std::collections::HashMap::new(), content.to_string());
     };
     let frontmatter = &rest[..end];
-    let body = rest[end + 5..].trim_start_matches(['\r', '\n']).to_string();
+    let body = rest[end + closing_len..]
+        .trim_start_matches(['\r', '\n'])
+        .to_string();
     let mut data = std::collections::HashMap::new();
     for line in frontmatter.lines() {
         let line = line.trim();

@@ -185,7 +185,7 @@ project-root/
 |----------|-------------|
 | AGENTS.md | `<cwd>/AGENTS.md` (only) |
 | Config | `.openrust/config.jsonc` → `openrust.json` (legacy) → global `~/.config/openrust/config.json` |
-| Agents | `.openrust/agents/` → `agents/` → `agent/` → `modes/` (latter three are legacy) |
+| Agents | `.openrust/agents/` → global `config_dir/agents/` |
 | Skills | `.openrust/skills/` → `.opencode/skills/` (legacy) → `skills/` → global `config_dir/skills/` |
 
 AGENTS.md is injected into the system prompt's `<instructions>` section wrapped in `<project-instructions>` tags.

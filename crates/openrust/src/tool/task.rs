@@ -41,22 +41,16 @@ impl Tool for TaskTool {
         };
 
         let agents = agent::load_agents(&ctx.cwd).unwrap_or_default();
-        let (system, tool_spec, max_steps) = match agent::agent_by_id(&agents, subagent_type) {
-            Some(found) => (found.system.clone(), found.tools.clone(), found.max_steps),
-            None => match agent::builtin_agent_system(subagent_type) {
-                Some(system) => (system.to_string(), "none".to_string(), 25u32),
-                None => {
-                    let available = agents
-                        .iter()
-                        .map(|a| a.id.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    return ToolResult::error(format!(
-                        "task: unknown subagent_type '{}'. Available: {}",
-                        subagent_type, available
-                    ));
-                }
-            },
+        let Some(found) = agent::agent_by_id(&agents, subagent_type) else {
+            let available = agents
+                .iter()
+                .map(|a| a.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return ToolResult::error(format!(
+                "task: unknown subagent_type '{}'. Available: {}",
+                subagent_type, available
+            ));
         };
 
         // Sub-agent context: no LLM (prevents recursive task), no interactive
@@ -78,9 +72,9 @@ impl Tool for TaskTool {
         match run_agent(
             llm.as_ref(),
             model,
-            &system,
-            &tool_spec,
-            max_steps,
+            &found.system,
+            &found.tools,
+            found.max_steps,
             ctx.reasoning_effort.as_deref(),
             initial,
             &sub_ctx,

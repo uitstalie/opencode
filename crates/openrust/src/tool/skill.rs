@@ -236,7 +236,7 @@ Project agents override global agents with the same name. Both override built-in
 ---
 title: Display Name
 description: One-line description for the agent picker
-mode: primary
+tools: all
 steps: 50
 hidden: false
 ---
@@ -250,23 +250,28 @@ Agent system prompt text here.
 |-------|----------|---------|-------------|
 | `title` | no | First `#` heading in body | Display name in agent picker |
 | `description` | no | First paragraph in body | Short description in picker |
-| `mode` | no | `primary` | Tool availability (see below) |
+| `tools` | no | `all` | Tool set: preset name, `[name, ...]` list, or `none` (see below) |
 | `steps` | no | `50` | Max tool-loop iterations per turn |
 | `hidden` | no | `false` | Hide from agent picker |
 
-## Mode values
+## Tools values
 
-| Mode | Tools available |
-|------|----------------|
-| `primary` | All tools (default) |
-| `plan` | Read-only: no write, edit, rm, apply_patch, bash, undo_edit |
-| `explore` | Same as plan (read-only) |
-| `subagent` | All tools except task, question (when spawned as subagent) |
+| Value | Tools available |
+|-------|----------------|
+| `all` | All tools (default) |
+| `none` | No tools |
+| `read_only` | All except write, edit, apply_patch, rm, bash |
+| `no_write` | All except write, edit, apply_patch, rm |
+| `no_internet` | All except webfetch, websearch |
+| `[read, grep, bash]` | Explicit list of tool names |
+| Custom preset | Any preset defined in config `presets` |
+
+When spawned as a subagent via the task tool, `task` and `question` are always excluded regardless of the `tools` value.
 
 ## Workflow
 
 1. Ask what the agent should do and whether it should be project-level or global.
-2. Determine the appropriate `mode` based on whether the agent needs write access.
+2. Determine the appropriate `tools` value based on whether the agent needs write access.
 3. Determine `steps` based on task complexity (simple: 10-25, complex: 50-200).
 4. Write the file with valid frontmatter and a clear system prompt body.
 5. The agent ID = filename without `.md` (case-sensitive). No subdirectories.
@@ -385,19 +390,25 @@ Principles:
 4. The skill name should be lowercase-hyphenated (e.g. `deploy-checklist`, `code-review`).
 "#;
 
+/// Find the frontmatter block delimited by `---` lines.
+/// Returns `(frontmatter_text, body_text)` or `None` if no valid block exists.
+fn split_frontmatter(content: &str) -> Option<(&str, &str)> {
+    let rest = content
+        .strip_prefix("---\n")
+        .or_else(|| content.strip_prefix("---\r\n"))?;
+    let (end, closing_len) = rest
+        .find("\n---\n")
+        .map(|e| (e, 5))
+        .or_else(|| rest.find("\r\n---\r\n").map(|e| (e, 7)))?;
+    Some((&rest[..end], &rest[end + closing_len..]))
+}
+
 /// Extract the `description` field from a SKILL.md's frontmatter.
 fn extract_description(content: &str) -> String {
-    let Some(rest) = content
-        .strip_prefix("---\n")
-        .or_else(|| content.strip_prefix("---\r\n"))
-    else {
+    let Some((fm, _)) = split_frontmatter(content) else {
         return String::new();
     };
-    let end = match rest.find("\n---\n").or_else(|| rest.find("\r\n---\r\n")) {
-        Some(o) => o,
-        None => return String::new(),
-    };
-    for line in rest[..end].lines() {
+    for line in fm.lines() {
         if let Some(value) = line.trim().strip_prefix("description:") {
             return value.trim().trim_matches('"').trim_matches('\'').to_string();
         }
@@ -408,24 +419,13 @@ fn extract_description(content: &str) -> String {
 /// Parse and strip a leading `---` YAML frontmatter block.
 /// Returns `(body, frontmatter_errors)`.
 fn parse_frontmatter(content: &str) -> (String, String) {
-    let Some(rest) = content
-        .strip_prefix("---\n")
-        .or_else(|| content.strip_prefix("---\r\n"))
-    else {
+    let Some((fm, body_raw)) = split_frontmatter(content) else {
+        // Distinguish "starts with --- but no closing" from "no frontmatter at all".
+        if content.starts_with("---") {
+            return (content.to_string(), String::from("missing closing '---' delimiter"));
+        }
         return (content.to_string(), String::new());
     };
-
-    let end_offset = match rest.find("\n---\n").or_else(|| rest.find("\r\n---\r\n")) {
-        Some(o) => o,
-        None => {
-            return (
-                content.to_string(),
-                String::from("missing closing '---' delimiter"),
-            );
-        }
-    };
-
-    let fm = &rest[..end_offset];
 
     // Light validation: frontmatter lines should be "key: value" or start with "-"
     let mut errors = Vec::new();
@@ -439,16 +439,7 @@ fn parse_frontmatter(content: &str) -> (String, String) {
         }
     }
 
-    // Body starts after the closing `\n---\n` (5 chars) or `\r\n---\r\n` (7 chars)
-    let body_start = if rest[end_offset..].starts_with("\n---\n") {
-        end_offset + 5
-    } else {
-        end_offset + 7
-    };
-    let body = rest[body_start..]
-        .trim_start_matches(['\r', '\n'])
-        .to_string();
-
+    let body = body_raw.trim_start_matches(['\r', '\n']).to_string();
     let fm_errors = if errors.is_empty() {
         String::new()
     } else {
@@ -599,7 +590,7 @@ mod tests {
             .await;
         let text = result.into_text();
         assert!(text.contains("create-agent"));
-        assert!(text.contains("mode: primary"));
+        assert!(text.contains("tools: all"));
         assert!(text.contains("Frontmatter fields"));
     }
 

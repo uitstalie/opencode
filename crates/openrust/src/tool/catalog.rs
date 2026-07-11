@@ -230,7 +230,7 @@ fn resolve_preset_names(
     match trimmed {
         "" | "all" => all_names,
         "none" => Vec::new(),
-        "read_only" => exclude(&["write", "edit", "apply_patch", "rm", "bash"]),
+        "read_only" => exclude(&["write", "edit", "apply_patch", "rm", "bash", "undo_edit"]),
         "no_write" => exclude(&["write", "edit", "apply_patch", "rm"]),
         "no_internet" => exclude(&["webfetch", "websearch"]),
         other => tool_meta(other).map(|meta| vec![meta.name]).unwrap_or_default(),
@@ -280,6 +280,7 @@ mod tests {
         assert!(!names.contains(&"write"));
         assert!(!names.contains(&"edit"));
         assert!(!names.contains(&"bash"));
+        assert!(!names.contains(&"undo_edit"));
         assert!(names.contains(&"read"));
         assert!(names.contains(&"grep"));
         assert!(names.contains(&"webfetch"));
