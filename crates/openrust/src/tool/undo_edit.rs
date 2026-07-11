@@ -80,7 +80,7 @@ mod tests {
     #[tokio::test]
     async fn restores_content() {
         let s = Arc::new(UndoStore::new());
-        let tmp = "/tmp/opencode_undo_restore.txt";
+        let tmp = "/tmp/openrust_undo_restore.txt";
         let orig = "original\n";
         std::fs::write(tmp, orig).unwrap();
         let hash = s.save_snapshot(Path::new(tmp), orig).unwrap();
@@ -102,7 +102,7 @@ mod tests {
     #[tokio::test]
     async fn chaining() {
         let s = Arc::new(UndoStore::new());
-        let tmp = "/tmp/opencode_undo_chain.txt";
+        let tmp = "/tmp/openrust_undo_chain.txt";
         let v1 = "v1\n";
         std::fs::write(tmp, v1).unwrap();
         let h1 = s.save_snapshot(Path::new(tmp), v1).unwrap();

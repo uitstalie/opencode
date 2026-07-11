@@ -1,4 +1,4 @@
-//! ApplyPatch tool — apply an opencode-style patch with add/update/delete hunks.
+//! ApplyPatch tool — apply an patch-style format with add/update/delete hunks.
 //!
 //! Patch format:
 //! ```text

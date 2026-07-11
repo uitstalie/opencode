@@ -424,7 +424,7 @@ impl Config {
         Ok(config)
     }
 
-    /// Path to the global config (separate from TS opencode)
+    /// Path to the global config
     pub fn global_config_path() -> PathBuf {
         crate::core::platform::PlatformPaths::detect().global_config_path()
     }

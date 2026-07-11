@@ -13,7 +13,7 @@ use aes_gcm::{AeadCore, Aes256Gcm, KeyInit, Nonce};
 use sha2::{Digest, Sha256};
 
 /// Pepper for key derivation (different from any other tool)
-const KEY_PEPPER: &[u8] = b"opencode-rust-cred-v1";
+const KEY_PEPPER: &[u8] = b"openrust-cred-v1";
 
 /// Derive a 256-bit AES key from the machine-id.
 fn derive_key() -> Option<[u8; 32]> {

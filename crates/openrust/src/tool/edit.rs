@@ -102,7 +102,7 @@ mod tests {
 
     #[tokio::test]
     async fn single_replace() {
-        let tmp = "/tmp/opencode_edit_single.txt";
+        let tmp = "/tmp/openrust_edit_single.txt";
         std::fs::write(tmp, "hello\nfoo bar\n").unwrap();
         let r = EditTool
             .execute(
@@ -119,7 +119,7 @@ mod tests {
 
     #[tokio::test]
     async fn multiple_matches_rejected() {
-        let tmp = "/tmp/opencode_edit_multi.txt";
+        let tmp = "/tmp/openrust_edit_multi.txt";
         std::fs::write(tmp, "foo\nfoo\n").unwrap();
         let r = EditTool
             .execute(
@@ -135,7 +135,7 @@ mod tests {
 
     #[tokio::test]
     async fn replace_all() {
-        let tmp = "/tmp/opencode_edit_all.txt";
+        let tmp = "/tmp/openrust_edit_all.txt";
         std::fs::write(tmp, "foo\nfoo\n").unwrap();
         let r = EditTool
             .execute(

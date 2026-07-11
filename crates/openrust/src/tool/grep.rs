@@ -137,7 +137,7 @@ mod tests {
 
     #[tokio::test]
     async fn no_match() {
-        let tmp = "/tmp/opencode_grep_nomatch_test";
+        let tmp = "/tmp/openrust_grep_nomatch_test";
         let _ = std::fs::create_dir_all(tmp);
         let r = GrepTool
             .execute(

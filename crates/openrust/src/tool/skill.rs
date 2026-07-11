@@ -115,7 +115,6 @@ impl Tool for SkillTool {
 fn skill_dirs(cwd: &Path) -> Vec<PathBuf> {
     vec![
         cwd.join(".openrust").join("skills"),
-        cwd.join(".opencode").join("skills"),
         cwd.join("skills"),
         PlatformPaths::detect().config_dir().join("skills"),
     ]

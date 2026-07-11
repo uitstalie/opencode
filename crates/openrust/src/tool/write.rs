@@ -81,7 +81,7 @@ mod tests {
 
     #[tokio::test]
     async fn writes_new_file() {
-        let tmp = "/tmp/opencode_test_write_new.txt";
+        let tmp = "/tmp/openrust_test_write_new.txt";
         let _ = std::fs::remove_file(tmp);
         let r = WriteTool
             .execute(
@@ -99,7 +99,7 @@ mod tests {
     #[tokio::test]
     async fn writes_with_undo() {
         let store = Arc::new(UndoStore::new());
-        let tmp = "/tmp/opencode_test_write_undo.txt";
+        let tmp = "/tmp/openrust_test_write_undo.txt";
         std::fs::write(tmp, "orig").unwrap();
         let r = WriteTool
             .execute(
