@@ -12,13 +12,12 @@ pub struct SystemPrompt {
     pub global_rules: String,
     pub agents_md: String,
     pub project_rules: String,
+    shell_kind: crate::tool::shell::ShellKind,
+    skills: Vec<crate::tool::skill::SkillEntry>,
 }
 
 impl SystemPrompt {
     pub fn render(&self) -> String {
-        let shell_kind = crate::tool::shell::detect_shell_kind();
-        let cwd = std::path::Path::new(&self.cwd);
-        let skills = crate::tool::skill::list_skills_for_cwd(cwd);
         let sections = [
             render_section("constraint", &render_constraint()),
             render_section("identity", &render_identity(&self.provider, &self.model)),
@@ -33,7 +32,7 @@ impl SystemPrompt {
                 ),
             ),
             render_section("memory", &render_memory()),
-            render_section("capabilities", &render_capabilities(shell_kind, &skills)),
+            render_section("capabilities", &render_capabilities(self.shell_kind, &self.skills)),
             render_section("style", &render_style()),
         ];
         sections.join("\n\n")
@@ -43,15 +42,15 @@ impl SystemPrompt {
         config: &Config,
         provider: &ResolvedProvider,
     ) -> anyhow::Result<Self> {
-        let cwd = std::env::current_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("."))
-            .display()
-            .to_string();
+        let cwd_path = std::env::current_dir().unwrap_or_default();
+        let cwd = cwd_path.display().to_string();
         let home = crate::core::platform::PlatformPaths::detect()
             .home
             .display()
             .to_string();
         let platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+        let shell_kind = crate::tool::shell::detect_shell_kind();
+        let skills = crate::tool::skill::list_skills_for_cwd(&cwd_path);
 
         Ok(Self {
             provider: provider.name.clone(),
@@ -64,20 +63,22 @@ impl SystemPrompt {
             platform,
             config_path: Config::global_config_path().display().to_string(),
             global_rules: load_global_rules(),
-            agents_md: load_agents_md(&std::env::current_dir().unwrap_or_default()),
-            project_rules: load_project_rules(&std::env::current_dir().unwrap_or_default()),
+            agents_md: load_agents_md(&cwd_path),
+            project_rules: load_project_rules(&cwd_path),
+            shell_kind,
+            skills,
         })
     }
 
     pub fn fallback(provider: &str, model: &str) -> Self {
-        let cwd = std::env::current_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("."))
-            .display()
-            .to_string();
+        let cwd_path = std::env::current_dir().unwrap_or_default();
+        let cwd = cwd_path.display().to_string();
         let home = crate::core::platform::PlatformPaths::detect()
             .home
             .display()
             .to_string();
+        let shell_kind = crate::tool::shell::detect_shell_kind();
+        let skills = crate::tool::skill::list_skills_for_cwd(&cwd_path);
         Self {
             provider: provider.to_string(),
             model: model.to_string(),
@@ -86,8 +87,10 @@ impl SystemPrompt {
             platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
             config_path: Config::global_config_path().display().to_string(),
             global_rules: load_global_rules(),
-            agents_md: load_agents_md(&std::env::current_dir().unwrap_or_default()),
-            project_rules: load_project_rules(&std::env::current_dir().unwrap_or_default()),
+            agents_md: load_agents_md(&cwd_path),
+            project_rules: load_project_rules(&cwd_path),
+            shell_kind,
+            skills,
         }
     }
 }
@@ -282,6 +285,8 @@ mod tests {
             global_rules: String::new(),
             agents_md: String::new(),
             project_rules: String::new(),
+            shell_kind: crate::tool::shell::ShellKind::Bash,
+            skills: vec![],
         }
         .render();
 

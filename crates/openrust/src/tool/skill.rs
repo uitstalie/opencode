@@ -131,6 +131,7 @@ pub fn list_skill_names(ctx: &ToolContext) -> Vec<String> {
         .collect()
 }
 
+#[derive(Clone)]
 pub struct SkillEntry {
     pub name: String,
     pub description: String,
