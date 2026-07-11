@@ -11,6 +11,13 @@ pub enum Cmd {
         /// Session id
         id: String,
     },
+    /// Delete a session and all its messages/tasks
+    Delete {
+        /// Session id
+        id: String,
+    },
+    /// Delete all sessions (irreversible)
+    DeleteAll,
 }
 
 pub fn run(cmd: Cmd) -> anyhow::Result<()> {
@@ -45,6 +52,20 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
             for message in messages {
                 println!("[{}] {}: {}", message.id, message.role, message.content);
             }
+            Ok(())
+        }
+        Cmd::Delete { id } => {
+            store.delete_session(&id)?;
+            println!("Deleted session {}.", id);
+            Ok(())
+        }
+        Cmd::DeleteAll => {
+            let sessions = store.list_sessions()?;
+            let count = sessions.len();
+            for session in &sessions {
+                store.delete_session(&session.id)?;
+            }
+            println!("Deleted {} session(s).", count);
             Ok(())
         }
     }
