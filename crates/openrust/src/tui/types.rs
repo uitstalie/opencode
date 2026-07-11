@@ -261,6 +261,18 @@ pub(super) enum SlashCommand {
     Diff,
     Reload,
     Dream,
+    Init(String),
+}
+
+/// Result of `handle_slash_command`.
+#[derive(Debug)]
+pub(super) enum SlashResult {
+    /// Not a recognized slash command — send original input as prompt.
+    NotHandled,
+    /// Slash command executed a UI action — don't send any prompt.
+    Handled,
+    /// Slash command wants to inject a prompt template instead.
+    Prompt(String),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -44,6 +44,7 @@ mod provider_ops;
 mod session_ops;
 mod session_render;
 mod sidebar;
+mod templates;
 mod types;
 mod util;
 mod widgets;
@@ -415,11 +416,16 @@ impl SessionView {
                                         if !skip_input && is_exit_command(&input) {
                                             return Ok(());
                                         }
-                                        if !skip_input && self.handle_slash_command(&input) {
-                                            skip_input = true;
-                                        }
                                         if !skip_input {
-                                            self.enqueue_or_run_prompt(terminal, input)?;
+                                            match self.handle_slash_command(&input) {
+                                                SlashResult::Handled => {}
+                                                SlashResult::Prompt(template) => {
+                                                    self.enqueue_or_run_prompt(terminal, template)?;
+                                                }
+                                                SlashResult::NotHandled => {
+                                                    self.enqueue_or_run_prompt(terminal, input)?;
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -802,6 +808,10 @@ impl SessionView {
                     needs_render = true;
                     self.generate_summary();
                 }
+                PromptEvent::RetryStatus(msg) => {
+                    self.status = msg;
+                    needs_render = true;
+                }
             }
         }
 
@@ -831,8 +841,14 @@ impl SessionView {
                     return Ok(false);
                 }
                 self.clear_input();
-                if self.handle_slash_command(&input) {
-                    return Ok(true);
+                match self.handle_slash_command(&input) {
+                    SlashResult::Handled => return Ok(true),
+                    SlashResult::Prompt(template) => {
+                        self.create_session();
+                        self.enqueue_or_run_prompt(terminal, template)?;
+                        return Ok(true);
+                    }
+                    SlashResult::NotHandled => {}
                 }
                 self.create_session();
                 self.enqueue_or_run_prompt(terminal, input)?;

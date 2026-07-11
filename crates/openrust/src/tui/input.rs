@@ -41,6 +41,10 @@ pub(super) fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "/diff" => Some(SlashCommand::Diff),
         "/reload" => Some(SlashCommand::Reload),
         "/dream" => Some(SlashCommand::Dream),
+        "/init" => {
+            let args = input.strip_prefix("/init").unwrap_or("").trim().to_string();
+            Some(SlashCommand::Init(args))
+        }
         _ => None,
     }
 }
@@ -70,6 +74,16 @@ mod tests {
 
         match parse_slash_command("/thinking show") {
             Some(SlashCommand::Thinking(ThinkingModeCommand::Show)) => {}
+            other => panic!("unexpected parse result: {:?}", other),
+        }
+
+        match parse_slash_command("/init") {
+            Some(SlashCommand::Init(args)) => assert_eq!(args, ""),
+            other => panic!("unexpected parse result: {:?}", other),
+        }
+
+        match parse_slash_command("/init focus on tests") {
+            Some(SlashCommand::Init(args)) => assert_eq!(args, "focus on tests"),
             other => panic!("unexpected parse result: {:?}", other),
         }
     }

@@ -29,6 +29,7 @@ impl SystemPrompt {
                     &self.global_rules,
                     &self.agents_md,
                     &self.project_rules,
+                    &self.cwd,
                 ),
             ),
             render_section("memory", &render_memory()),
@@ -145,8 +146,25 @@ fn render_instructions(
     global_rules: &str,
     agents_md: &str,
     project_rules: &str,
+    cwd: &str,
 ) -> String {
     let mut parts = vec![format!("<!-- source: {} -->", path)];
+
+    // Onboarding hint: if AGENTS.md or .openrust/ is missing, nudge the user.
+    let has_agents_md = !agents_md.trim().is_empty();
+    let has_openrust_dir = std::path::Path::new(cwd).join(".openrust").exists();
+    if !has_agents_md || !has_openrust_dir {
+        let missing = match (!has_agents_md, !has_openrust_dir) {
+            (true, true) => "AGENTS.md and .openrust/",
+            (true, false) => "AGENTS.md",
+            (false, true) => ".openrust/",
+            _ => "",
+        };
+        parts.push(format!(
+            "[onboarding] Project is missing {missing}. \
+             Suggest the user run /init to complete project setup."
+        ));
+    }
 
     if !global_rules.trim().is_empty() {
         parts.push("<global-rules>".to_string());
@@ -345,8 +363,9 @@ mod tests {
 
     #[test]
     fn instructions_empty_when_no_content() {
-        let rendered = render_instructions("/path/to/config.json", "", "", "");
+        let rendered = render_instructions("/path/to/config.json", "", "", "", "/nonexistent");
         assert!(rendered.contains("source:"));
+        assert!(rendered.contains("[onboarding]"));
         assert!(!rendered.contains("<global-rules>"));
         assert!(!rendered.contains("<project-instructions>"));
         assert!(!rendered.contains("<project-rules>"));
@@ -359,6 +378,7 @@ mod tests {
             "",
             "# My Project\nBuild with cargo.\n",
             "",
+            "/nonexistent",
         );
         assert!(rendered.contains("<project-instructions>"));
         assert!(rendered.contains("Build with cargo."));
@@ -372,6 +392,7 @@ mod tests {
             "Always use tabs.\nNever commit secrets.",
             "",
             "",
+            "/nonexistent",
         );
         assert!(rendered.contains("<global-rules>"));
         assert!(rendered.contains("Always use tabs."));
@@ -385,6 +406,7 @@ mod tests {
             "",
             "",
             "Use 4-space indent.\nPrefer iterators.",
+            "/nonexistent",
         );
         assert!(rendered.contains("<project-rules>"));
         assert!(rendered.contains("Use 4-space indent."));
@@ -398,6 +420,7 @@ mod tests {
             "global rule",
             "agents md",
             "project rule",
+            "/nonexistent",
         );
         let global_pos = rendered.find("<global-rules>").unwrap();
         let agents_pos = rendered.find("<project-instructions>").unwrap();

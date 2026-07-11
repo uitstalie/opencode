@@ -214,8 +214,16 @@ pub(super) fn slash_options(input: &str) -> Vec<DialogOption> {
             "models",
             "Switch registered models and reasoning effort",
         ),
+        ("/compact", "compact", "Compact the current session"),
         ("/files", "files", "Toggle the file-tree sidebar"),
         ("/diff", "diff", "Show the last edit as a diff"),
+        ("/reload", "reload", "Reload config, agents, skills, rules"),
+        (
+            "/init",
+            "init",
+            "Initialize project: check, investigate, scaffold docs",
+        ),
+        ("/dream", "dream", "Summarize sessions into dreaming memory"),
         ("/exit", "exit", "Exit the TUI"),
     ];
 

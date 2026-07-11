@@ -5,7 +5,10 @@ use std::time::Duration;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use super::{SessionView, SlashCommand, ThinkingMode, render, input::parse_slash_command};
+use super::{
+    SessionView, SlashCommand, SlashResult, ThinkingMode, render, input::parse_slash_command,
+    templates::init_template,
+};
 
 impl SessionView {
     pub(super) fn handle_prompt(&mut self, stdout: &mut io::Stdout, prompt: &str) -> anyhow::Result<()> {
@@ -285,6 +288,10 @@ impl SessionView {
                     needs_render = true;
                     finished = true;
                 }
+                super::PromptEvent::RetryStatus(msg) => {
+                    self.status = msg;
+                    needs_render = true;
+                }
             }
             if finished {
                 break;
@@ -358,54 +365,57 @@ impl SessionView {
         self.transcript.push(prompt);
     }
 
-    pub(super) fn handle_slash_command(&mut self, input: &str) -> bool {
+    pub(super) fn handle_slash_command(&mut self, input: &str) -> SlashResult {
         let Some(command) = parse_slash_command(input) else {
-            return false;
+            return SlashResult::NotHandled;
         };
         match command {
             SlashCommand::Thinking(mode) => {
                 self.open_thinking_dialog(mode);
-                true
+                SlashResult::Handled
             }
             SlashCommand::Session(args) => {
                 self.open_session_dialog(args);
-                true
+                SlashResult::Handled
             }
             SlashCommand::Agent(args) => {
                 self.open_agent_dialog(args);
-                true
+                SlashResult::Handled
             }
             SlashCommand::Task(args) => {
                 self.open_task_dialog(args);
-                true
+                SlashResult::Handled
             }
             SlashCommand::Compact(args) => {
                 self.compact_session(args);
-                true
+                SlashResult::Handled
             }
             SlashCommand::Connect(args) => {
                 self.open_connect_dialog(args);
-                true
+                SlashResult::Handled
             }
             SlashCommand::Models(args) => {
                 self.open_models_dialog(args);
-                true
+                SlashResult::Handled
             }
             SlashCommand::Files => {
                 self.toggle_sidebar();
-                true
+                SlashResult::Handled
             }
             SlashCommand::Diff => {
                 self.toggle_diff();
-                true
+                SlashResult::Handled
             }
             SlashCommand::Reload => {
                 self.reload_resources();
-                true
+                SlashResult::Handled
             }
             SlashCommand::Dream => {
                 self.dream();
-                true
+                SlashResult::Handled
+            }
+            SlashCommand::Init(args) => {
+                SlashResult::Prompt(init_template(&args))
             }
         }
     }
