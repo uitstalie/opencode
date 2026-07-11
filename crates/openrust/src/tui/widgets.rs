@@ -66,13 +66,6 @@ impl SessionView {
                 "OpenRust",
                 self.theme.brand_style().add_modifier(Modifier::BOLD),
             ),
-            Span::raw("  "),
-            Span::raw(format!("model: {}/{}", self.provider_name, self.model)),
-            Span::raw("  |  "),
-            Span::raw(format!(
-                "agent: {}",
-                self.current_session_agent().as_deref().unwrap_or("default")
-            )),
             Span::raw("  |  "),
             Span::raw(task_count),
             Span::raw("  |  "),
@@ -80,11 +73,28 @@ impl SessionView {
             Span::raw("  |  "),
             Span::raw(cache_rate),
             Span::raw("  |  "),
-            Span::raw(format!("thinking: {}", self.thinking_mode.label())),
-            Span::raw("  |  "),
             Span::styled(running, self.theme.running_style(self.ai_running)),
             Span::raw("  |  "),
             Span::raw(self.status.clone()),
+        ])
+    }
+
+    /// Info line shown directly below the input box:
+    /// model · thinking effort · agent mode.
+    pub(super) fn info_line(&self) -> Line<'static> {
+        let thinking = self
+            .reasoning_effort
+            .as_deref()
+            .unwrap_or("off");
+        Line::from(vec![
+            Span::raw(format!("model: {}/{}", self.provider_name, self.model)),
+            Span::raw("  |  "),
+            Span::raw(format!("thinking: {}", thinking)),
+            Span::raw("  |  "),
+            Span::raw(format!(
+                "agent: {}",
+                self.current_session_agent().as_deref().unwrap_or("default")
+            )),
         ])
     }
 

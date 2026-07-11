@@ -65,7 +65,7 @@ impl<'a> HomeView<'a> {
             .wrap(Wrap { trim: false });
         frame.render_widget(status, layout.status_message);
 
-        StatusBar::new(view).render(frame, layout.status);
+        StatusBar::new(view).render(frame, layout.info, layout.status);
         Toast::new(view).render(frame, frame.area());
         ModalLayer::new(view).render(frame, frame.area());
     }

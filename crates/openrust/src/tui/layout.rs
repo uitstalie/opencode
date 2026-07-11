@@ -15,6 +15,8 @@ pub(super) struct SessionLayout {
     pub sidebar_todo: Option<Rect>,
     /// Input box area.
     pub input: Rect,
+    /// Info line below input (model, thinking, agent).
+    pub info: Rect,
     /// Bottom status line.
     pub status: Rect,
 }
@@ -25,6 +27,7 @@ pub(super) struct HomeLayout {
     pub input: Rect,
     pub hint: Rect,
     pub status_message: Rect,
+    pub info: Rect,
     pub status: Rect,
 }
 
@@ -38,12 +41,13 @@ pub(super) fn session_layout(
 ) -> SessionLayout {
     let main = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(5), Constraint::Length(5), Constraint::Length(1)])
+        .constraints([Constraint::Min(5), Constraint::Length(5), Constraint::Length(1), Constraint::Length(1)])
         .split(area);
 
     let session_full = main[0];
     let input = main[1];
-    let status = main[2];
+    let info = main[2];
+    let status = main[3];
 
     let (session, sidebar) = if sidebar_visible && has_sidebar {
         let chunks = Layout::default()
@@ -73,6 +77,7 @@ pub(super) fn session_layout(
         sidebar_files,
         sidebar_todo,
         input,
+        info,
         status,
     }
 }
@@ -94,14 +99,19 @@ pub(super) fn home_layout(area: Rect) -> HomeLayout {
         ])
         .split(centered);
 
+    let bottom = Layout::default()
+        .constraints([Constraint::Length(1), Constraint::Length(1)])
+        .split(area);
+    let info = bottom[0];
+    let status = bottom[1];
+
     HomeLayout {
         header: sections[1],
         input: sections[2],
         hint: sections[3],
         status_message: sections[4],
-        status: Layout::default()
-            .constraints([Constraint::Length(1)])
-            .split(area)[0],
+        info,
+        status,
     }
 }
 

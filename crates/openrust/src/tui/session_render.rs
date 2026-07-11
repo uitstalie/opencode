@@ -80,7 +80,7 @@ impl SessionView {
         SidebarPanel::new(self).render(frame, layout.sidebar_files, layout.sidebar_todo);
         SessionPanel::new(self).render(frame, layout.session);
         InputPanel::new(self).render(frame, layout.input, "Input");
-        StatusBar::new(self).render(frame, layout.status);
+        StatusBar::new(self).render(frame, layout.info, layout.status);
         Toast::new(self).render(frame, frame.area());
         ModalLayer::new(self).render(frame, frame.area());
     }
