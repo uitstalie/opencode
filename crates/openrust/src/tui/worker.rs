@@ -40,6 +40,8 @@ pub(super) enum PromptEvent {
     Error(String),
     /// User pressed ESC to abort the current turn.
     Aborted,
+    /// Retry countdown: "retry 1/3 in 4s".
+    RetryStatus(String),
 }
 
 #[derive(Debug, Clone)]
@@ -277,39 +279,86 @@ pub(super) fn spawn_prompt_worker(
                     compaction::trim_history(&mut history, context_window, 24_000, 6);
                 }
 
-                // Abortable LLM call: if the network hangs, Esc can still interrupt.
-                let chat = llm.chat(
-                    history.clone(),
-                    tool_defs.clone(),
-                    RequestOptions {
-                        model: model.clone(),
-                        temperature: None,
-                        max_tokens: None,
-                        top_p: None,
-                        system: Some(system.clone()),
-                        reasoning_effort: reasoning_effort.clone(),
-                        tool_choice: if is_last_step {
-                            Some(serde_json::json!("none"))
-                        } else {
-                            None
+                // Retryable + abortable LLM call: on retriable errors, show
+                // countdown via RetryStatus so the user sees what's happening.
+                const MAX_RETRIES: u32 = 3;
+                let mut stream: Option<provider::ChunkStream> = None;
+                'retry: for attempt in 0..=MAX_RETRIES {
+                    if shutdown.load(Ordering::SeqCst) {
+                        return Ok::<_, anyhow::Error>(());
+                    }
+                    if abort.load(Ordering::SeqCst) {
+                        let _ = tx.send(PromptEvent::Aborted);
+                        return Ok::<_, anyhow::Error>(());
+                    }
+
+                    let chat = llm.chat(
+                        history.clone(),
+                        tool_defs.clone(),
+                        RequestOptions {
+                            model: model.clone(),
+                            temperature: None,
+                            max_tokens: None,
+                            top_p: None,
+                            system: Some(system.clone()),
+                            reasoning_effort: reasoning_effort.clone(),
+                            tool_choice: if is_last_step {
+                                Some(serde_json::json!("none"))
+                            } else {
+                                None
+                            },
                         },
-                    },
-                );
-                tokio::pin!(chat);
-                let mut stream = loop {
-                    tokio::select! {
-                        result = &mut chat => break result?,
-                        _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
-                            if shutdown.load(Ordering::SeqCst) {
-                                return Ok::<_, anyhow::Error>(());
+                    );
+                    tokio::pin!(chat);
+
+                    loop {
+                        tokio::select! {
+                            result = &mut chat => {
+                                match result {
+                                    Ok(s) => {
+                                        stream = Some(s);
+                                        break 'retry;
+                                    }
+                                    Err(e) => {
+                                        if attempt < MAX_RETRIES && is_retriable_error(&e) {
+                                            let delay_secs = 2u64.pow(attempt + 1).min(8);
+                                            let detail = short_error(&e);
+                                            let mut remaining_ms = delay_secs * 1000;
+                                            while remaining_ms > 0 {
+                                                let secs = remaining_ms.div_ceil(1000);
+                                                let _ = tx.send(PromptEvent::RetryStatus(
+                                                    format!("retry {}/{} in {}s — {}",
+                                                        attempt + 1, MAX_RETRIES, secs, detail),
+                                                ));
+                                                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                                                if shutdown.load(Ordering::SeqCst) {
+                                                    return Ok::<_, anyhow::Error>(());
+                                                }
+                                                if abort.load(Ordering::SeqCst) {
+                                                    let _ = tx.send(PromptEvent::Aborted);
+                                                    return Ok::<_, anyhow::Error>(());
+                                                }
+                                                remaining_ms = remaining_ms.saturating_sub(500);
+                                            }
+                                            break; // inner → retry outer
+                                        }
+                                        return Err(e);
+                                    }
+                                }
                             }
-                            if abort.load(Ordering::SeqCst) {
-                                let _ = tx.send(PromptEvent::Aborted);
-                                return Ok::<_, anyhow::Error>(());
+                            _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                                if shutdown.load(Ordering::SeqCst) {
+                                    return Ok::<_, anyhow::Error>(());
+                                }
+                                if abort.load(Ordering::SeqCst) {
+                                    let _ = tx.send(PromptEvent::Aborted);
+                                    return Ok::<_, anyhow::Error>(());
+                                }
                             }
                         }
                     }
-                };
+                }
+                let mut stream = stream.expect("retry loop sets stream or returns");
 
                 let mut assistant_text = String::new();
                 let mut thinking_text = String::new();
@@ -537,5 +586,26 @@ pub(super) fn spawn_prompt_worker(
         permission_receiver: permission_rx,
         followup_tx,
         progress_rx,
+    }
+}
+
+/// Whether an error from llm.chat() is worth retrying.
+fn is_retriable_error(err: &anyhow::Error) -> bool {
+    let msg = err.to_string();
+    // Don't retry 4xx (except 429 rate-limit and 408 timeout).
+    if msg.starts_with("HTTP 4") && !msg.starts_with("HTTP 429") && !msg.starts_with("HTTP 408") {
+        return false;
+    }
+    true
+}
+
+/// Short summary of an error for the status line.
+fn short_error(err: &anyhow::Error) -> String {
+    let msg = err.to_string();
+    let first_line = msg.lines().next().unwrap_or(&msg);
+    if first_line.len() > 50 {
+        format!("{}…", &first_line[..47])
+    } else {
+        first_line.to_string()
     }
 }

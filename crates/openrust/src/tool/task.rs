@@ -158,29 +158,63 @@ pub async fn run_agent(
             ));
         }
 
-        // Abortable LLM call: if the network hangs, Esc can still interrupt.
-        let chat = llm.chat(
-            history.clone(),
-            tool_defs.clone(),
-            RequestOptions {
-                model: model.to_string(),
-                temperature: None,
-                max_tokens: None,
-                top_p: None,
-                system: Some(system.to_string()),
-                reasoning_effort: reasoning_effort.map(str::to_string),
-                tool_choice: None,
-            },
-        );
-        tokio::pin!(chat);
-        let mut stream = loop {
-            tokio::select! {
-                result = &mut chat => break result?,
-                _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
-                    if is_cancelled() { return Ok(last_assistant); }
+        // Retryable + abortable LLM call with countdown via progress channel.
+        const MAX_RETRIES: u32 = 3;
+        let mut stream: Option<provider::ChunkStream> = None;
+        'retry: for attempt in 0..=MAX_RETRIES {
+            if is_cancelled() { return Ok(last_assistant); }
+
+            let chat = llm.chat(
+                history.clone(),
+                tool_defs.clone(),
+                RequestOptions {
+                    model: model.to_string(),
+                    temperature: None,
+                    max_tokens: None,
+                    top_p: None,
+                    system: Some(system.to_string()),
+                    reasoning_effort: reasoning_effort.map(str::to_string),
+                    tool_choice: None,
+                },
+            );
+            tokio::pin!(chat);
+
+            loop {
+                tokio::select! {
+                    result = &mut chat => {
+                        match result {
+                            Ok(s) => {
+                                stream = Some(s);
+                                break 'retry;
+                            }
+                            Err(e) => {
+                                if attempt < MAX_RETRIES && is_retriable_error(&e) {
+                                    let delay_secs = 2u64.pow(attempt + 1).min(8);
+                                    let detail = short_error(&e);
+                                    let mut remaining_ms = delay_secs * 1000;
+                                    while remaining_ms > 0 {
+                                        let secs = remaining_ms.div_ceil(1000);
+                                        send_progress(format!(
+                                            "sub-agent retry {}/{} in {}s — {}",
+                                            attempt + 1, MAX_RETRIES, secs, detail,
+                                        ));
+                                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                                        if is_cancelled() { return Ok(last_assistant); }
+                                        remaining_ms = remaining_ms.saturating_sub(500);
+                                    }
+                                    break; // inner → retry outer
+                                }
+                                return Err(e);
+                            }
+                        }
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                        if is_cancelled() { return Ok(last_assistant); }
+                    }
                 }
             }
-        };
+        }
+        let mut stream = stream.expect("retry loop sets stream or returns");
 
         let mut assistant_text = String::new();
         let mut pending: Vec<(String, String, String)> = Vec::new();
@@ -257,6 +291,26 @@ pub async fn run_agent(
         if pending.is_empty() && finish_seen {
             return Ok(last_assistant);
         }
+    }
+}
+
+/// Whether an error from llm.chat() is worth retrying.
+fn is_retriable_error(err: &anyhow::Error) -> bool {
+    let msg = err.to_string();
+    if msg.starts_with("HTTP 4") && !msg.starts_with("HTTP 429") && !msg.starts_with("HTTP 408") {
+        return false;
+    }
+    true
+}
+
+/// Short summary of an error for the progress channel.
+fn short_error(err: &anyhow::Error) -> String {
+    let msg = err.to_string();
+    let first_line = msg.lines().next().unwrap_or(&msg);
+    if first_line.len() > 50 {
+        format!("{}…", &first_line[..47])
+    } else {
+        first_line.to_string()
     }
 }
 

@@ -166,7 +166,7 @@ impl LlmProvider for OpenAICompatProvider {
             }
         }
 
-        let response = retry_with_backoff(3, || {
+        let response = retry_with_backoff(0, || {
             let client = &self.client;
             let url = &url;
             let api_key = &self.api_key;
