@@ -33,6 +33,16 @@ cd crates/openrust && cargo build --release
 
 Output: `crates/openrust/target/release/openrust`
 
+### First-time Setup (one-time)
+
+```bash
+mkdir -p ~/.local/share/openrust/bin ~/.local/bin && \
+  cp crates/openrust/target/release/openrust ~/.local/share/openrust/bin/openrust && \
+  ln -sf ~/.local/share/openrust/bin/openrust ~/.local/bin/openrust
+```
+
+`~/.local/bin` must be in `PATH`. Verify: `which openrust` should print `~/.local/bin/openrust`.
+
 ### Quick Build + Replace (compile & hot-swap)
 
 ```bash
@@ -56,6 +66,8 @@ When user says "update openrust" or "pull latest and rebuild":
 3. `cp ~/.local/share/openrust/bin/openrust ~/.local/share/openrust/bin/openrust.bak`
 4. `cp crates/openrust/target/release/openrust ~/.local/share/openrust/bin/openrust`
 5. Tell user to restart openrust
+
+Symlink (`~/.local/bin/openrust`) is created once during first-time setup and does not need updating.
 
 ### Build Flags
 
