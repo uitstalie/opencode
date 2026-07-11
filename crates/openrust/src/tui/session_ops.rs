@@ -435,7 +435,7 @@ impl SessionView {
                     .map(|s| s.id.clone())
             })
             .unwrap_or_else(|| target.to_string());
-        let Ok(Some(_)) = store.get_session(&id) else {
+        let Ok(Some(session)) = store.get_session(&id) else {
             self.note(format!("session not found: {}", target));
             return;
         };
@@ -447,6 +447,10 @@ impl SessionView {
         self.session_scroll = 0;
         self.view_mode = ViewMode::Session;
         self.reload_agents();
+
+        // Restore per-session model + reasoning effort overrides.
+        self.restore_session_runtime(&session);
+
         self.messages = history
             .iter()
             .filter(|message| {
@@ -471,6 +475,52 @@ impl SessionView {
             .map(|message| render::DisplayMessage::new(&message.role, &message.content))
             .collect();
         self.note(format!("session: switched to {}", id));
+    }
+
+    /// Restore per-session model and reasoning effort overrides.
+    ///
+    /// If the session has a model override, switch the runtime (provider,
+    /// llm, system prompt) to that model. If not, fall back to the global
+    /// config model. Reasoning effort is restored from the session record
+    /// (or cleared if None).
+    fn restore_session_runtime(&mut self, session: &crate::core::session::Session) {
+        if let Some(model_spec) = &session.model {
+            let (provider_name, model_name, _) =
+                crate::core::config::parse_model_spec(model_spec);
+            if let Some(resolved) = self.config.get_provider(provider_name)
+                && let Some(llm) = provider::create_provider(&resolved) {
+                    self.provider_name = provider_name.to_string();
+                    self.model = resolved
+                        .models
+                        .get(model_name)
+                        .and_then(|m| m.name.as_deref())
+                        .unwrap_or(model_name)
+                        .to_string();
+                    self.llm = Some(Arc::from(llm));
+                    if let Ok(prompt) =
+                        crate::system_prompt::SystemPrompt::from_config(&self.config, &resolved)
+                    {
+                        self.system_prompt = prompt;
+                    }
+                }
+        } else {
+            // No override — restore from global config.
+            if let Some((provider_name, model)) = self.config.resolve_provider_model()
+                && let Some(resolved) = self.config.get_provider(&provider_name)
+                    && let Some(llm) = provider::create_provider(&resolved) {
+                        self.provider_name = provider_name;
+                        self.model = model;
+                        self.llm = Some(Arc::from(llm));
+                        if let Ok(prompt) =
+                            crate::system_prompt::SystemPrompt::from_config(
+                                &self.config,
+                                &resolved,
+                            ) {
+                            self.system_prompt = prompt;
+                        }
+                    }
+        }
+        self.reasoning_effort = session.reasoning_effort.clone();
     }
 
     pub(super) fn delete_session(&mut self, target: &str) {

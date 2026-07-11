@@ -140,6 +140,7 @@ impl SessionView {
         match self.save_global_config() {
             Ok(()) => {
                 self.reload_config();
+                self.persist_session_model();
                 self.note(format!(
                     "provider: {} · model: {}",
                     self.provider_name, self.model
@@ -246,6 +247,7 @@ impl SessionView {
         match self.save_global_config() {
             Ok(()) => {
                 self.reload_config();
+                self.persist_session_model();
                 self.note(format!("model: {}/{}", self.provider_name, self.model));
             }
             Err(err) => self.note(format!("failed to save model: {}", err)),
@@ -261,6 +263,7 @@ impl SessionView {
                 return;
             }
         };
+        self.persist_session_reasoning();
         self.note(format!(
             "model thinking effort: {}",
             self.reasoning_effort.as_deref().unwrap_or("off")
@@ -288,6 +291,22 @@ impl SessionView {
 
     pub(super) fn save_global_config(&self) -> anyhow::Result<()> {
         self.config.save_global()
+    }
+
+    /// Persist current model to the active session record.
+    fn persist_session_model(&self) {
+        if let Some(store) = &self.store {
+            let spec = format!("{}/{}", self.provider_name, self.model);
+            let _ = store.set_session_model(&self.session_id, Some(spec));
+        }
+    }
+
+    /// Persist current reasoning effort to the active session record.
+    fn persist_session_reasoning(&self) {
+        if let Some(store) = &self.store {
+            let _ =
+                store.set_session_reasoning(&self.session_id, self.reasoning_effort.clone());
+        }
     }
 
 }

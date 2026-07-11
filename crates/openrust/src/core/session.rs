@@ -14,6 +14,14 @@ pub struct Session {
     pub summary: Option<String>,
     #[serde(default)]
     pub agent: Option<String>,
+    /// Per-session model override, e.g. "deepseek/deepseek-v4-pro".
+    /// When `None`, inherits the global config model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Per-session reasoning effort: "low" | "medium" | "high".
+    /// When `None`, reasoning is off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -313,6 +321,8 @@ impl SessionStore {
             title: None,
             summary: None,
             agent: None,
+            model: None,
+            reasoning_effort: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -385,6 +395,26 @@ impl SessionStore {
     pub fn set_session_agent(&self, session_id: &str, agent: Option<String>) -> anyhow::Result<()> {
         self.update_session(session_id, |s| {
             s.agent = agent.clone();
+            s.updated_at = now_string();
+        })?;
+        Ok(())
+    }
+
+    pub fn set_session_model(&self, session_id: &str, model: Option<String>) -> anyhow::Result<()> {
+        self.update_session(session_id, |s| {
+            s.model = model.clone();
+            s.updated_at = now_string();
+        })?;
+        Ok(())
+    }
+
+    pub fn set_session_reasoning(
+        &self,
+        session_id: &str,
+        effort: Option<String>,
+    ) -> anyhow::Result<()> {
+        self.update_session(session_id, |s| {
+            s.reasoning_effort = effort.clone();
             s.updated_at = now_string();
         })?;
         Ok(())
