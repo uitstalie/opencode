@@ -1,25 +1,28 @@
-# fake_opencode — openencode 的完整 Rust 重写
+# openrust — Rust AI Coding Agent
 
-基于 [uitstalie/opencode](https://github.com/uitstalie/opencode.git) fork，进行完整 Rust 重写。
-原 TypeScript 实现已全部移除，单一 Rust 二进制 `openrust`，零 TS/Node/Bun 依赖，无 gRPC sidecar。
+单一 Rust 二进制 `openrust`，零 TS/Node/Bun 依赖，无 gRPC sidecar。
 
-- **默认分支**：`dev`（当前 Rust TUI 工作分支：`rust`，镜像于 `origin/rust`）
-- **工作区**：本仓库即为可直接编辑的源码，Rust 代码在 `crates/openrust/`
-- 修改源码后需 编译 → 替换二进制 → 重启 opencode
+- **默认分支**：`dev`（当前 TUI 工作分支：`rust`，镜像于 `origin/rust`）
+- **源码**：`crates/openrust/`
+- 修改源码后需 编译 → 替换二进制 → 重启 openrust
 
 ---
 
 ## Deploy & Update (AI Operations Guide)
 
-This section covers how to build, deploy, replace, and update the openrust binary on this machine.
-Follow these steps exactly and in order.
-
 ### Platform
 
 - Cross-platform: Linux (x64) and Windows (x64)
-- Install path: platform-aware via `core::platform::PlatformPaths` (e.g. `~/.local/share/openrust/` on Linux, `%APPDATA%\openrust\` on Windows)
-- Binary path: `<data_dir>/bin/openrust` (Linux) or `<data_dir>\bin\openrust.exe` (Windows)
-- Build tool: cargo (in `crates/openrust/`)
+- 路径由 `core::platform::PlatformPaths` 管理：
+
+| Scope | Linux | Windows |
+|-------|-------|---------|
+| config | `~/.config/openrust/` | `%APPDATA%\openrust\` |
+| data | `~/.local/share/openrust/` | `%LOCALAPPDATA%\openrust\` |
+| cache | `~/.cache/openrust/` | `%LOCALAPPDATA%\openrust\cache\` |
+| binary | `~/.local/share/openrust/bin/openrust` | `%LOCALAPPDATA%\openrust\bin\openrust.exe` |
+
+- Build tool: `cargo`（在 `crates/openrust/`）
 - Binary name: `openrust`
 
 ### Quick Build (current platform only)
@@ -34,25 +37,25 @@ Output: `crates/openrust/target/release/openrust`
 
 ```bash
 cd crates/openrust && cargo build --release && \
-  cp ~/.opencode/bin/openrust ~/.opencode/bin/openrust.bak && \
-  cp target/release/openrust ~/.opencode/bin/openrust
+  cp ~/.local/share/openrust/bin/openrust ~/.local/share/openrust/bin/openrust.bak && \
+  cp target/release/openrust ~/.local/share/openrust/bin/openrust
 ```
 
-On Windows, use `copy` instead of `cp` and adjust the install path (typically `%APPDATA%\openrust\bin\openrust.exe`).
+On Windows, use `copy` instead of `cp`.
 
-After replacement, the user must **restart opencode** for the new binary to take effect.
+After replacement, the user must **restart openrust** for the new binary to take effect.
 
-⚠️ **Always backup before replacing**: copy `~/.opencode/bin/openrust` to `~/.opencode/bin/openrust.bak` first. If the new binary fails, restore with `cp ~/.opencode/bin/openrust.bak ~/.opencode/bin/openrust`.
+⚠️ **Always backup before replacing**. If the new binary fails, restore from `.bak`.
 
 ### Full Update Workflow
 
-When user says "update opencode" or "pull latest and rebuild":
+When user says "update openrust" or "pull latest and rebuild":
 
-1. `git pull origin <branch>` (the current working branch)
+1. `git pull origin <branch>`
 2. `cd crates/openrust && cargo build --release`
-3. `cp ~/.opencode/bin/openrust ~/.opencode/bin/openrust.bak`
-4. `cp crates/openrust/target/release/openrust ~/.opencode/bin/openrust`
-5. Tell user to restart opencode
+3. `cp ~/.local/share/openrust/bin/openrust ~/.local/share/openrust/bin/openrust.bak`
+4. `cp crates/openrust/target/release/openrust ~/.local/share/openrust/bin/openrust`
+5. Tell user to restart openrust
 
 ### Build Flags
 
@@ -64,15 +67,11 @@ When user says "update opencode" or "pull latest and rebuild":
 
 ### Troubleshooting
 
-- **build fails**: run `cd crates/openrust && cargo check` for detailed errors. Dependencies are fetched automatically by cargo; no separate install step.
-- **clippy warnings**: run `cd crates/openrust && cargo clippy` and fix before committing.
-- **binary doesn't start**: check `<data_dir>/bin/openrust --version`, verify arch matches (`uname -m` should be x86_64 on Linux).
-- **push blocked by hooks**: pre-push hooks were removed with the TS toolchain. If a hook is re-added later and fails on unrelated errors, use `git push --no-verify` with user confirmation.
+- **build fails**: `cd crates/openrust && cargo check`
+- **clippy warnings**: `cd crates/openrust && cargo clippy` and fix before committing.
+- **binary doesn't start**: `~/.local/share/openrust/bin/openrust --version`, verify arch (`uname -m` should be x86_64 on Linux).
 
 ---
-
-- The default branch in this repo is `dev`; the Rust TUI work currently lives on `rust` (mirrored to `origin/rust`).
-- Local `main` ref may not exist; use `dev` or `origin/dev` for diffs.
 
 ## Branch Names
 
@@ -84,7 +83,7 @@ Examples: `session-recovery`, `fix-scroll-state`, `provider-auth`.
 
 Use conventional commit-style messages and PR titles: `type(scope): summary`.
 
-Valid types are `feat`, `fix`, `docs`, `chore`, `refactor`, and `test`. Scopes are optional; use the affected Rust module or area when helpful, e.g. `core`, `tui`, `cli`, `tool`, `provider`, `openrust`, or `config`.
+Valid types are `feat`, `fix`, `docs`, `chore`, `refactor`, and `test`. Scopes are optional; use the affected Rust module or area when helpful, e.g. `core`, `tui`, `cli`, `tool`, `provider`, or `config`.
 
 Examples: `fix(tui): simplify thinking toggle rendering`, `docs: update build guide`, `chore(openrust): bump deps`.
 
@@ -155,8 +154,8 @@ fn foo(cond: bool) -> u32 {
 
 The crate follows a flat module tree under `crates/openrust/src/`:
 
-- `cli/` — CLI entrypoint and `debug` subcommands (debug-first strategy: core logic is verified via `opencode debug <subcommand>` before TUI integration).
-- `core/` — session, config, provider (trait + types), vault, crypto, compaction, permission, paths, platform, agent, session_input, token.
+- `cli/` — CLI entrypoint and `debug` subcommands (debug-first strategy: core logic is verified via `openrust debug <subcommand>` before TUI integration).
+- `core/` — session, config, provider (trait + types), vault, crypto, compaction, permission, paths, platform, agent, session_input, token, memory.
 - `tool/` — tool registry and individual tools.
 - `tui/` — ratatui/crossterm terminal UI, worker, rendering.
 - `provider/` — concrete LLM provider implementations (the `LlmProvider` trait itself lives in `core/provider.rs`).
@@ -172,11 +171,16 @@ openrust uses a unified `.openrust/` directory for project-level configuration:
 project-root/
 ├── AGENTS.md              # Project-level AI instructions (injected into system prompt)
 ├── .openrust/
-│   ├── config.jsonc       # Project config override (JSONC, replaces openrust.json)
+│   ├── config.jsonc       # Project config override (JSONC)
+│   ├── config.json        # Project config override (plain JSON, alternative)
 │   ├── agents/            # Custom agent definitions (markdown with frontmatter)
 │   │   └── *.md
-│   └── skills/            # Custom skills
-│       └── */SKILL.md
+│   ├── skills/            # Custom skills
+│   │   └── */SKILL.md
+│   ├── rules/             # Project-level rules (markdown, concatenated)
+│   │   └── *.md
+│   └── memory/            # Project-level memory (category-based .md files)
+│       └── {category}.md
 ```
 
 **Loading priorities** (first match wins):
@@ -184,11 +188,18 @@ project-root/
 | Resource | Search order |
 |----------|-------------|
 | AGENTS.md | `<cwd>/AGENTS.md` (only) |
-| Config | `.openrust/config.jsonc` → `openrust.json` (legacy) → global `~/.config/openrust/config.json` |
-| Agents | `.openrust/agents/` → global `config_dir/agents/` |
-| Skills | `.openrust/skills/` → `.opencode/skills/` (legacy) → `skills/` → global `config_dir/skills/` |
+| Config | `.openrust/config.jsonc` → `.openrust/config.json` → `openrust.json` (legacy) → global `~/.config/openrust/config.json` |
+| Agents | `.openrust/agents/` → global `~/.config/openrust/agents/` |
+| Skills | `.openrust/skills/` → `skills/` → global `~/.config/openrust/skills/` |
+| Rules | `.openrust/rules/*.md` (concatenated) + global `~/.config/openrust/rules/*.md` (concatenated) |
 
 AGENTS.md is injected into the system prompt's `<instructions>` section wrapped in `<project-instructions>` tags.
+
+Project rules are injected as `<project-rules>`, global rules as `<global-rules>`. All `*.md` files in each rules directory are sorted by filename and concatenated.
+
+### Built-in Providers
+
+`Config::load()` 自动填充内置 provider 定义（deepseek, glm, zhipuai-coding-plan, openai, anthropic, gemini）。用户只需提供 `api_key`，其余字段（base_url, models, reasoning 等）开箱即用。用户定义同名 provider 时**完全替换**内置定义。
 
 ## Testing
 
@@ -200,5 +211,4 @@ AGENTS.md is injected into the system prompt's `<instructions>` section wrapped 
 ## Type Checking & Linting
 
 - Always run `cargo check` (and ideally `cargo clippy`) from `crates/openrust/` before pushing.
-- `cargo check` is the equivalent of the old `bun typecheck`; `clippy` enforces idiomatic Rust.
 - Never leave `clippy` warnings in committed code.
