@@ -17,7 +17,7 @@ use crate::core::provider::{
     ChunkStream, LlmProvider, Message, RequestOptions, StreamChunk, Usage,
 };
 
-use super::{merge_options_into, retry_with_backoff};
+use super::{merge_options_into, retry_with_backoff, sse_data_lines};
 
 pub struct GeminiProvider {
     name: String,
@@ -188,109 +188,97 @@ impl LlmProvider for GeminiProvider {
         })
         .await?;
 
-        let stream = response.bytes_stream();
         let chunk_stream = async_stream::stream! {
-            let mut buffer = String::new();
             let mut finish_emitted = false;
 
-            for await chunk in stream {
-                let chunk = match chunk {
-                    Ok(c) => c,
+            for await result in sse_data_lines(response) {
+                let data = match result {
+                    Ok(d) => d,
                     Err(e) => {
-                        yield Err(anyhow::anyhow!("Stream error: {}", e));
+                        yield Err(e);
                         break;
                     }
                 };
-                buffer.push_str(&String::from_utf8_lossy(&chunk));
 
-                while let Some(pos) = buffer.find('\n') {
-                    let line = buffer[..pos].trim().to_string();
-                    buffer = buffer[pos + 1..].to_string();
-                    if line.is_empty() || line.starts_with(':') { continue; }
-                    let Some(data) = line.strip_prefix("data:") else { continue; };
-                    let data = data.strip_prefix(' ').unwrap_or(data);
-                    if data == "[DONE]" { break; }
+                let parsed: Value = match serde_json::from_str(&data) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
 
-                    let parsed: Value = match serde_json::from_str(data) {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
+                let mut tool_idx: usize = 0;
 
-                    let mut tool_idx: usize = 0;
-
-                    if let Some(candidates) = parsed["candidates"].as_array() {
-                        for candidate in candidates {
-                            let parts = &candidate["content"]["parts"];
-                            if let Some(parts_arr) = parts.as_array() {
-                                for part in parts_arr {
-                                    // Thinking text
-                                    if part["thought"].as_bool() == Some(true) {
-                                        if let Some(text) = part["text"].as_str() {
-                                            yield Ok(StreamChunk::ReasoningDelta(text.to_string()));
-                                        }
-                                        continue;
-                                    }
-                                    // Regular text
+                if let Some(candidates) = parsed["candidates"].as_array() {
+                    for candidate in candidates {
+                        let parts = &candidate["content"]["parts"];
+                        if let Some(parts_arr) = parts.as_array() {
+                            for part in parts_arr {
+                                // Thinking text
+                                if part["thought"].as_bool() == Some(true) {
                                     if let Some(text) = part["text"].as_str() {
-                                        yield Ok(StreamChunk::TextDelta(text.to_string()));
+                                        yield Ok(StreamChunk::ReasoningDelta(text.to_string()));
                                     }
-                                    // Tool call (complete in one chunk)
-                                    if let Some(fc) = part.get("functionCall") {
-                                        let id = format!("tool_{}", tool_idx);
-                                        tool_idx += 1;
-                                        let name = fc["name"].as_str().unwrap_or("").to_string();
-                                        let args = serde_json::to_string(&fc["args"])
-                                            .unwrap_or_default();
-                                        yield Ok(StreamChunk::ToolCallStart {
-                                            id: id.clone(),
-                                            name,
-                                        });
-                                        yield Ok(StreamChunk::ToolCallDelta {
-                                            id: id.clone(),
-                                            args,
-                                        });
-                                        yield Ok(StreamChunk::ToolCallEnd { id });
-                                    }
+                                    continue;
                                 }
-                            }
-
-                            // Finish reason
-                            if let Some(reason) = candidate["finishReason"].as_str() {
-                                let mapped = match reason {
-                                    "STOP" => None, // handled below — may have tool calls
-                                    "MAX_TOKENS" => Some("length"),
-                                    "SAFETY" | "RECITATION" | "BLOCKLIST" |
-                                    "PROHIBITED_CONTENT" | "SPII" | "IMAGE_SAFETY" => {
-                                        Some("content_filter")
-                                    }
-                                    "MALFORMED_FUNCTION_CALL" => Some("error"),
-                                    _ => Some(reason),
-                                };
-                                if let Some(r) = mapped {
-                                    let usage = parse_gemini_usage(&parsed);
-                                    finish_emitted = true;
-                                    yield Ok(StreamChunk::Finish {
-                                        usage,
-                                        reason: Some(r.to_string()),
+                                // Regular text
+                                if let Some(text) = part["text"].as_str() {
+                                    yield Ok(StreamChunk::TextDelta(text.to_string()));
+                                }
+                                // Tool call (complete in one chunk)
+                                if let Some(fc) = part.get("functionCall") {
+                                    let id = format!("tool_{}", tool_idx);
+                                    tool_idx += 1;
+                                    let name = fc["name"].as_str().unwrap_or("").to_string();
+                                    let args = serde_json::to_string(&fc["args"])
+                                        .unwrap_or_default();
+                                    yield Ok(StreamChunk::ToolCallStart {
+                                        id: id.clone(),
+                                        name,
                                     });
+                                    yield Ok(StreamChunk::ToolCallDelta {
+                                        id: id.clone(),
+                                        args,
+                                    });
+                                    yield Ok(StreamChunk::ToolCallEnd { id });
                                 }
                             }
                         }
-                    }
 
-                    // Usage metadata can appear without finishReason (e.g. last chunk).
-                    if !finish_emitted
-                        && parsed.get("usageMetadata").is_some()
-                        && parsed.get("candidates").and_then(|c| c.as_array())
-                            .is_none_or(|c| c.is_empty())
-                    {
-                        let usage = parse_gemini_usage(&parsed);
-                        finish_emitted = true;
-                        yield Ok(StreamChunk::Finish {
-                            usage,
-                            reason: Some("stop".to_string()),
-                        });
+                        // Finish reason
+                        if let Some(reason) = candidate["finishReason"].as_str() {
+                            let mapped = match reason {
+                                "STOP" => None, // handled below — may have tool calls
+                                "MAX_TOKENS" => Some("length"),
+                                "SAFETY" | "RECITATION" | "BLOCKLIST" |
+                                "PROHIBITED_CONTENT" | "SPII" | "IMAGE_SAFETY" => {
+                                    Some("content_filter")
+                                }
+                                "MALFORMED_FUNCTION_CALL" => Some("error"),
+                                _ => Some(reason),
+                            };
+                            if let Some(r) = mapped {
+                                let usage = parse_gemini_usage(&parsed);
+                                finish_emitted = true;
+                                yield Ok(StreamChunk::Finish {
+                                    usage,
+                                    reason: Some(r.to_string()),
+                                });
+                            }
+                        }
                     }
+                }
+
+                // Usage metadata can appear without finishReason (e.g. last chunk).
+                if !finish_emitted
+                    && parsed.get("usageMetadata").is_some()
+                    && parsed.get("candidates").and_then(|c| c.as_array())
+                        .is_none_or(|c| c.is_empty())
+                {
+                    let usage = parse_gemini_usage(&parsed);
+                    finish_emitted = true;
+                    yield Ok(StreamChunk::Finish {
+                        usage,
+                        reason: Some("stop".to_string()),
+                    });
                 }
             }
 

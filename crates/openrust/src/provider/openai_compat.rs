@@ -185,162 +185,134 @@ impl LlmProvider for OpenAICompatProvider {
         })
         .await?;
 
-        let stream = response.bytes_stream();
-
         let chunk_stream = async_stream::stream! {
             // Tracks active tool calls by (streaming index, call id).
             let mut call_ids: Vec<(usize, String)> = Vec::new();
             // Args received before the id-bearing delta for an index —
             // flushed once the id arrives (some providers send args first).
             let mut pending_args: Vec<(usize, String)> = Vec::new();
-            let mut buffer = String::new();
             let mut finish_emitted = false;
 
-            for await chunk in stream {
-                let chunk = match chunk {
-                    Ok(c) => c,
+            for await result in super::sse_data_lines(response) {
+                let data = match result {
+                    Ok(d) => d,
                     Err(e) => {
-                        yield Err(anyhow::anyhow!("Stream error: {}", e));
+                        yield Err(e);
                         break;
                     }
                 };
 
-                buffer.push_str(&String::from_utf8_lossy(&chunk));
+                let parsed: Value = match serde_json::from_str(&data) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::warn!("Failed to parse SSE: {}", e);
+                        continue;
+                    }
+                };
 
-                // Parse SSE lines
-                while let Some(pos) = buffer.find('\n') {
-                    let line = buffer[..pos].trim().to_string();
-                    buffer = buffer[pos + 1..].to_string();
+                let Some(choices) = parsed["choices"].as_array() else {
+                    continue;
+                };
 
-                    if line.is_empty() || line.starts_with(':') { continue; }
-                    // SSE spec: data: optionally followed by a single space.
-                    let Some(data) = line.strip_prefix("data:") else { continue; };
-                    let data = data.strip_prefix(' ').unwrap_or(data);
-                    if data == "[DONE]" {
+                for choice in choices {
+                    let delta = &choice["delta"];
+
+                    // Tool calls
+                    if let Some(tool_calls) = delta["tool_calls"].as_array() {
+                        for tc in tool_calls {
+                            let index = tc["index"].as_u64().unwrap_or(0) as usize;
+                            let id = tc["id"].as_str().unwrap_or("").to_string();
+                            let fn_name = tc["function"]["name"].as_str().unwrap_or("").to_string();
+                            let args = tc["function"]["arguments"].as_str().unwrap_or("");
+
+                            if !id.is_empty() {
+                                call_ids.push((index, id.clone()));
+                                yield Ok(StreamChunk::ToolCallStart {
+                                    id: id.clone(),
+                                    name: fn_name,
+                                });
+                                // Flush any args that arrived before the id.
+                                let flush: Vec<String> = pending_args
+                                    .iter()
+                                    .filter(|(idx, _)| *idx == index)
+                                    .map(|(_, a)| a.clone())
+                                    .collect();
+                                pending_args.retain(|(idx, _)| *idx != index);
+                                for a in flush {
+                                    yield Ok(StreamChunk::ToolCallDelta {
+                                        id: id.clone(),
+                                        args: a,
+                                    });
+                                }
+                            }
+
+                            if !args.is_empty() {
+                                let routed_id = call_ids
+                                    .iter()
+                                    .rev()
+                                    .find(|(idx, _)| *idx == index)
+                                    .map(|(_, id)| id.clone());
+                                match routed_id {
+                                    Some(rid) => yield Ok(StreamChunk::ToolCallDelta {
+                                        id: rid,
+                                        args: args.to_string(),
+                                    }),
+                                    None => pending_args.push((index, args.to_string())),
+                                }
+                            }
+                        }
+                    }
+
+                    // Text content
+                    if let Some(content) = delta["content"].as_str()
+                        && !content.is_empty() {
+                            yield Ok(StreamChunk::TextDelta(content.to_string()));
+                        }
+
+                    // Reasoning content (DeepSeek uses reasoning_content, o1 uses reasoning)
+                    for key in &["reasoning_content", "reasoning"] {
+                        if let Some(reasoning) = delta[key].as_str()
+                            && !reasoning.is_empty() {
+                                yield Ok(StreamChunk::ReasoningDelta(reasoning.to_string()));
+                            }
+                        }
+
+                    // Finish reason
+                    if let Some(reason) = choice["finish_reason"].as_str() {
+                        let usage = parsed["usage"].as_object().map(|u| {
+                            let cache_hit = u
+                                .get("prompt_cache_hit_tokens")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or_else(|| {
+                                    u.get("prompt_tokens_details")
+                                        .and_then(|d| d.get("cached_tokens"))
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0)
+                                });
+                            let reasoning = u
+                                .get("completion_tokens_details")
+                                .and_then(|d| d.get("reasoning_tokens"))
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0);
+                            Usage {
+                                prompt_tokens: u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                                completion_tokens: u.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                                total_tokens: u.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                                prompt_cache_hit_tokens: cache_hit,
+                                reasoning_tokens: reasoning,
+                            }
+                        });
                         for (_, id) in &call_ids {
                             yield Ok(StreamChunk::ToolCallEnd {
                                 id: id.clone(),
                             });
                         }
                         call_ids.clear();
-                        if !finish_emitted {
-                            yield Ok(StreamChunk::Finish { usage: None, reason: None });
-                        }
-                        break;
-                    }
-
-                    let parsed: Value = match serde_json::from_str(data) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            tracing::warn!("Failed to parse SSE: {}", e);
-                            continue;
-                        }
-                    };
-
-                    let Some(choices) = parsed["choices"].as_array() else {
-                        continue;
-                    };
-
-                    for choice in choices {
-                        let delta = &choice["delta"];
-
-                        // Tool calls
-                        if let Some(tool_calls) = delta["tool_calls"].as_array() {
-                            for tc in tool_calls {
-                                let index = tc["index"].as_u64().unwrap_or(0) as usize;
-                                let id = tc["id"].as_str().unwrap_or("").to_string();
-                                let fn_name = tc["function"]["name"].as_str().unwrap_or("").to_string();
-                                let args = tc["function"]["arguments"].as_str().unwrap_or("");
-
-                                if !id.is_empty() {
-                                    call_ids.push((index, id.clone()));
-                                    yield Ok(StreamChunk::ToolCallStart {
-                                        id: id.clone(),
-                                        name: fn_name,
-                                    });
-                                    // Flush any args that arrived before the id.
-                                    let flush: Vec<String> = pending_args
-                                        .iter()
-                                        .filter(|(idx, _)| *idx == index)
-                                        .map(|(_, a)| a.clone())
-                                        .collect();
-                                    pending_args.retain(|(idx, _)| *idx != index);
-                                    for a in flush {
-                                        yield Ok(StreamChunk::ToolCallDelta {
-                                            id: id.clone(),
-                                            args: a,
-                                        });
-                                    }
-                                }
-
-                                if !args.is_empty() {
-                                    let routed_id = call_ids
-                                        .iter()
-                                        .rev()
-                                        .find(|(idx, _)| *idx == index)
-                                        .map(|(_, id)| id.clone());
-                                    match routed_id {
-                                        Some(rid) => yield Ok(StreamChunk::ToolCallDelta {
-                                            id: rid,
-                                            args: args.to_string(),
-                                        }),
-                                        None => pending_args.push((index, args.to_string())),
-                                    }
-                                }
-                            }
-                        }
-
-                        // Text content
-                        if let Some(content) = delta["content"].as_str()
-                            && !content.is_empty() {
-                                yield Ok(StreamChunk::TextDelta(content.to_string()));
-                            }
-
-                        // Reasoning content (DeepSeek uses reasoning_content, o1 uses reasoning)
-                        for key in &["reasoning_content", "reasoning"] {
-                            if let Some(reasoning) = delta[key].as_str()
-                                && !reasoning.is_empty() {
-                                    yield Ok(StreamChunk::ReasoningDelta(reasoning.to_string()));
-                                }
-                            }
-
-                        // Finish reason
-                        if let Some(reason) = choice["finish_reason"].as_str() {
-                            let usage = parsed["usage"].as_object().map(|u| {
-                                let cache_hit = u
-                                    .get("prompt_cache_hit_tokens")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or_else(|| {
-                                        u.get("prompt_tokens_details")
-                                            .and_then(|d| d.get("cached_tokens"))
-                                            .and_then(|v| v.as_u64())
-                                            .unwrap_or(0)
-                                    });
-                                let reasoning = u
-                                    .get("completion_tokens_details")
-                                    .and_then(|d| d.get("reasoning_tokens"))
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0);
-                                Usage {
-                                    prompt_tokens: u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                                    completion_tokens: u.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                                    total_tokens: u.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                                    prompt_cache_hit_tokens: cache_hit,
-                                    reasoning_tokens: reasoning,
-                                }
-                            });
-                            for (_, id) in &call_ids {
-                                yield Ok(StreamChunk::ToolCallEnd {
-                                    id: id.clone(),
-                                });
-                            }
-                            call_ids.clear();
-                            finish_emitted = true;
-                            yield Ok(StreamChunk::Finish {
-                                usage,
-                                reason: Some(reason.to_string()),
-                            });
-                        }
+                        finish_emitted = true;
+                        yield Ok(StreamChunk::Finish {
+                            usage,
+                            reason: Some(reason.to_string()),
+                        });
                     }
                 }
             }
@@ -350,6 +322,9 @@ impl LlmProvider for OpenAICompatProvider {
                 yield Ok(StreamChunk::ToolCallEnd {
                     id: id.clone(),
                 });
+            }
+            if !finish_emitted {
+                yield Ok(StreamChunk::Finish { usage: None, reason: None });
             }
         };
 

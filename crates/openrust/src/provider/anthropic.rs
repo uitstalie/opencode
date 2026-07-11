@@ -16,7 +16,7 @@ use crate::core::provider::{
     ChunkStream, LlmProvider, Message, RequestOptions, StreamChunk, Usage,
 };
 
-use super::{merge_options_into, retry_with_backoff};
+use super::{merge_options_into, retry_with_backoff, sse_data_lines};
 
 pub struct AnthropicProvider {
     name: String,
@@ -174,9 +174,7 @@ impl LlmProvider for AnthropicProvider {
         })
         .await?;
 
-        let stream = response.bytes_stream();
         let chunk_stream = async_stream::stream! {
-            let mut buffer = String::new();
             // Tracks content block info by index: (kind, id_for_tool_use)
             let mut blocks: HashMap<usize, BlockInfo> = HashMap::new();
             let mut input_tokens: u64 = 0;
@@ -185,126 +183,116 @@ impl LlmProvider for AnthropicProvider {
             let mut cache_create: u64 = 0;
             let mut finish_emitted = false;
 
-            for await chunk in stream {
-                let chunk = match chunk {
-                    Ok(c) => c,
+            for await result in sse_data_lines(response) {
+                let data = match result {
+                    Ok(d) => d,
                     Err(e) => {
-                        yield Err(anyhow::anyhow!("Stream error: {}", e));
+                        yield Err(e);
                         break;
                     }
                 };
-                buffer.push_str(&String::from_utf8_lossy(&chunk));
 
-                while let Some(pos) = buffer.find('\n') {
-                    let line = buffer[..pos].trim().to_string();
-                    buffer = buffer[pos + 1..].to_string();
-                    if line.is_empty() || line.starts_with(':') { continue; }
-                    let Some(data) = line.strip_prefix("data:") else { continue; };
-                    let data = data.strip_prefix(' ').unwrap_or(data);
-                    if data == "[DONE]" { break; }
+                let parsed: Value = match serde_json::from_str(&data) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
 
-                    let parsed: Value = match serde_json::from_str(data) {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
+                let event_type = parsed["type"].as_str().unwrap_or("");
+                match event_type {
+                    "message_start" => {
+                        if let Some(usage) = parsed["message"]["usage"].as_object() {
+                            input_tokens = usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                            cache_read = usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                            cache_create = usage.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                        }
+                    }
+                    "content_block_start" => {
+                        let index = parsed["index"].as_u64().unwrap_or(0) as usize;
+                        let block = &parsed["content_block"];
+                        let kind = block["type"].as_str().unwrap_or("text").to_string();
+                        let id = block["id"].as_str().unwrap_or("").to_string();
+                        let name = block["name"].as_str().unwrap_or("").to_string();
+                        blocks.insert(index, BlockInfo { kind, id, name });
 
-                    let event_type = parsed["type"].as_str().unwrap_or("");
-                    match event_type {
-                        "message_start" => {
-                            if let Some(usage) = parsed["message"]["usage"].as_object() {
-                                input_tokens = usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                                cache_read = usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                                cache_create = usage.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                            }
+                        // Emit initial text if present.
+                        if let Some(text) = block["text"].as_str()
+                            && !text.is_empty()
+                        {
+                            yield Ok(StreamChunk::TextDelta(text.to_string()));
                         }
-                        "content_block_start" => {
-                            let index = parsed["index"].as_u64().unwrap_or(0) as usize;
-                            let block = &parsed["content_block"];
-                            let kind = block["type"].as_str().unwrap_or("text").to_string();
-                            let id = block["id"].as_str().unwrap_or("").to_string();
-                            let name = block["name"].as_str().unwrap_or("").to_string();
-                            blocks.insert(index, BlockInfo { kind, id, name });
-
-                            // Emit initial text if present.
-                            if let Some(text) = block["text"].as_str()
-                                && !text.is_empty()
-                            {
-                                yield Ok(StreamChunk::TextDelta(text.to_string()));
-                            }
-                            // Emit ToolCallStart for tool_use blocks.
-                            if block["type"].as_str() == Some("tool_use") {
-                                let bi = blocks.get(&index).unwrap();
-                                yield Ok(StreamChunk::ToolCallStart {
-                                    id: bi.id.clone(),
-                                    name: bi.name.clone(),
-                                });
-                            }
-                        }
-                        "content_block_delta" => {
-                            let index = parsed["index"].as_u64().unwrap_or(0) as usize;
-                            let delta = &parsed["delta"];
-                            match delta["type"].as_str() {
-                                Some("text_delta") => {
-                                    if let Some(text) = delta["text"].as_str() {
-                                        yield Ok(StreamChunk::TextDelta(text.to_string()));
-                                    }
-                                }
-                                Some("thinking_delta") => {
-                                    if let Some(text) = delta["thinking"].as_str() {
-                                        yield Ok(StreamChunk::ReasoningDelta(text.to_string()));
-                                    }
-                                }
-                                Some("input_json_delta") => {
-                                    if let Some(partial) = delta["partial_json"].as_str()
-                                        && let Some(bi) = blocks.get(&index)
-                                    {
-                                        yield Ok(StreamChunk::ToolCallDelta {
-                                            id: bi.id.clone(),
-                                            args: partial.to_string(),
-                                        });
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                        "content_block_stop" => {
-                            let index = parsed["index"].as_u64().unwrap_or(0) as usize;
-                            if let Some(bi) = blocks.get(&index)
-                                && bi.kind == "tool_use"
-                            {
-                                yield Ok(StreamChunk::ToolCallEnd {
-                                    id: bi.id.clone(),
-                                });
-                            }
-                        }
-                        "message_delta" => {
-                            let stop_reason = parsed["delta"]["stop_reason"].as_str();
-                            if let Some(usage) = parsed["usage"].as_object() {
-                                output_tokens = usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(output_tokens);
-                            }
-                            let reason = stop_reason.map(|r| match r {
-                                "end_turn" | "stop_sequence" | "pause_turn" => "stop",
-                                "max_tokens" => "length",
-                                "tool_use" => "tool_calls",
-                                _ => r,
-                            }).map(String::from);
-                            finish_emitted = true;
-                            yield Ok(StreamChunk::Finish {
-                                usage: Some(Usage {
-                                    prompt_tokens: input_tokens + cache_read + cache_create,
-                                    completion_tokens: output_tokens,
-                                    total_tokens: input_tokens + cache_read + cache_create + output_tokens,
-                                    prompt_cache_hit_tokens: cache_read,
-                                    reasoning_tokens: 0,
-                                }),
-                                reason,
+                        // Emit ToolCallStart for tool_use blocks.
+                        if block["type"].as_str() == Some("tool_use") {
+                            let bi = blocks.get(&index).unwrap();
+                            yield Ok(StreamChunk::ToolCallStart {
+                                id: bi.id.clone(),
+                                name: bi.name.clone(),
                             });
                         }
-                        "message_stop" if !finish_emitted => {
-                            yield Ok(StreamChunk::Finish { usage: None, reason: None });
-                        }
-                        _ => {}
                     }
+                    "content_block_delta" => {
+                        let index = parsed["index"].as_u64().unwrap_or(0) as usize;
+                        let delta = &parsed["delta"];
+                        match delta["type"].as_str() {
+                            Some("text_delta") => {
+                                if let Some(text) = delta["text"].as_str() {
+                                    yield Ok(StreamChunk::TextDelta(text.to_string()));
+                                }
+                            }
+                            Some("thinking_delta") => {
+                                if let Some(text) = delta["thinking"].as_str() {
+                                    yield Ok(StreamChunk::ReasoningDelta(text.to_string()));
+                                }
+                            }
+                            Some("input_json_delta") => {
+                                if let Some(partial) = delta["partial_json"].as_str()
+                                    && let Some(bi) = blocks.get(&index)
+                                {
+                                    yield Ok(StreamChunk::ToolCallDelta {
+                                        id: bi.id.clone(),
+                                        args: partial.to_string(),
+                                    });
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    "content_block_stop" => {
+                        let index = parsed["index"].as_u64().unwrap_or(0) as usize;
+                        if let Some(bi) = blocks.get(&index)
+                            && bi.kind == "tool_use"
+                        {
+                            yield Ok(StreamChunk::ToolCallEnd {
+                                id: bi.id.clone(),
+                            });
+                        }
+                    }
+                    "message_delta" => {
+                        let stop_reason = parsed["delta"]["stop_reason"].as_str();
+                        if let Some(usage) = parsed["usage"].as_object() {
+                            output_tokens = usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(output_tokens);
+                        }
+                        let reason = stop_reason.map(|r| match r {
+                            "end_turn" | "stop_sequence" | "pause_turn" => "stop",
+                            "max_tokens" => "length",
+                            "tool_use" => "tool_calls",
+                            _ => r,
+                        }).map(String::from);
+                        finish_emitted = true;
+                        yield Ok(StreamChunk::Finish {
+                            usage: Some(Usage {
+                                prompt_tokens: input_tokens + cache_read + cache_create,
+                                completion_tokens: output_tokens,
+                                total_tokens: input_tokens + cache_read + cache_create + output_tokens,
+                                prompt_cache_hit_tokens: cache_read,
+                                reasoning_tokens: 0,
+                            }),
+                            reason,
+                        });
+                    }
+                    "message_stop" if !finish_emitted => {
+                        yield Ok(StreamChunk::Finish { usage: None, reason: None });
+                    }
+                    _ => {}
                 }
             }
 

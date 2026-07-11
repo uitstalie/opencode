@@ -95,3 +95,87 @@ fn rand_seed() -> u64 {
         .unwrap_or_default()
         .subsec_nanos() as u64
 }
+
+/// Append raw bytes to a byte buffer and extract all complete UTF-8 text,
+/// leaving any trailing incomplete multi-byte sequence in the buffer.
+///
+/// This prevents mojibake when a TCP chunk splits a multi-byte character
+/// (e.g. emoji) at an arbitrary byte boundary.
+fn drain_complete_utf8(buf: &mut Vec<u8>, incoming: &[u8]) -> String {
+    buf.extend_from_slice(incoming);
+    let mut cut = buf.len();
+    while cut > 0 {
+        if std::str::from_utf8(&buf[..cut]).is_ok() {
+            break;
+        }
+        cut -= 1;
+    }
+    let trailing = buf[cut..].to_vec();
+    let text = std::str::from_utf8(&buf[..cut])
+        .unwrap_or_default()
+        .to_string();
+    buf.clear();
+    buf.extend_from_slice(&trailing);
+    text
+}
+
+/// Parse an HTTP response body as an SSE stream, yielding each `data:`
+/// payload as a decoded `String`.
+///
+/// Handles:
+/// - Byte-level buffering so multi-byte UTF-8 characters split across TCP
+///   chunks are reassembled correctly (no mojibake on emoji/CJK).
+/// - Line buffering so SSE events split across chunks are reassembled.
+/// - Skipping non-`data:` lines (comments, `event:`, `id:`, etc.).
+/// - Stopping on the `[DONE]` sentinel.
+///
+/// Each provider only needs to JSON-parse the yielded strings.
+pub(crate) fn sse_data_lines(
+    response: reqwest::Response,
+) -> impl futures::Stream<Item = anyhow::Result<String>> + Send {
+    use futures::StreamExt;
+
+    async_stream::stream! {
+        let mut stream = response.bytes_stream();
+        let mut byte_buf: Vec<u8> = Vec::new();
+        let mut line_buf = String::new();
+
+        while let Some(chunk_result) = stream.next().await {
+            let chunk = match chunk_result {
+                Ok(c) => c,
+                Err(e) => {
+                    yield Err(anyhow::anyhow!("Stream error: {}", e));
+                    return;
+                }
+            };
+            line_buf.push_str(&drain_complete_utf8(&mut byte_buf, &chunk));
+
+            while let Some(pos) = line_buf.find('\n') {
+                let line = line_buf[..pos].trim().to_string();
+                line_buf = line_buf[pos + 1..].to_string();
+                if line.is_empty() || line.starts_with(':') {
+                    continue;
+                }
+                let Some(data) = line.strip_prefix("data:") else {
+                    continue;
+                };
+                let data = data.strip_prefix(' ').unwrap_or(data);
+                if data == "[DONE]" {
+                    return;
+                }
+                yield Ok(data.to_string());
+            }
+        }
+
+        // Drain any remaining partial line (no trailing newline).
+        let remaining = line_buf.trim();
+        if !remaining.is_empty()
+            && let Some(data) = remaining.strip_prefix("data:")
+        {
+            let data = data.trim_start();
+            if data != "[DONE]" && !data.is_empty() {
+                yield Ok(data.to_string());
+            }
+        }
+    }
+}
