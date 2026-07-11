@@ -14,3 +14,21 @@
 - ESC 中断保留流式传输的部分助手文本（而非丢弃），中断时丢弃 pending 提示队列（干净中断）；跟进消息用独立 channel（followup_tx），不复用 pending_prompts——主循环持久化消息，worker 仅在当前回合注入 #architecture #decision #confirmed
 - 30fps 统一轮询（33ms poll_timeout）：AI 运行时 poll 超时强制重绘驱动 spinner，非运行时省 CPU——替代之前 1ms 空轮询 #decision #confirmed
 - `mode` 字段语义混乱根因：它被当作 primary/subagent 分类用，但 `tools_for_mode` 期望工具集语义（plan/explore/all），导致 write 过滤从未生效（builtin plan agent mode="primary" ≠ "plan"）——需彻底删除 #decision #confirmed
+- 后台 agent（title/summary/compact/memory）复用 `shared_runtime()` + `thread::spawn` + `run_agent()` 模式，零架构改动：`shared_runtime()` 是进程级 `OnceLock<Runtime>`（`session_ops.rs:15-23`），消息逐条持久化到 sled，`PromptEvent::Finish` 时 store 已有完整对话；同 provider 复用 LlmProvider 实例，不同 provider 自动创建新实例 #architecture #decision #confirmed
+- 记忆 agent 用增量提取（水位线 + 新消息 delta），非全量扫描：水位线存 `SessionStore` sled key，agent 完成后推进，失败靠 `UNIQUE(target,content)` 幂等兜底 #architecture #decision #confirmed
+- 后台 agent 可配独立模型（config `background_model: Option<String>`），解析链 `config.background_model` → `config.model`（fallback），现有 `generate_title/summary/compact` 和未来 `generate_memory` 统一走此解析 #decision #confirmed
+- 记忆存储用纯 .md 文件（无 sled/SQLite），进程内 Mutex 串行化写锁，无 git 依赖：简化实现，避免 DB 迁移开销，原子写回保证一致性 #architecture #decision #confirmed
+- 记忆工具精简到 2 个（memory_read + memory_record）：memory_review 删除（去重改用 trim+lowercase 完整 content 比较在 MemoryStore 内部处理），dreaming_compress 改为手动触发的 `/dream` 命令（类似 `/compact`），不是工具 #architecture #decision #confirmed
+- 记忆内容永远不注入 system prompt 正文，只注入静态 `<memory>` 位置索引段（零查询开销）：保持 prompt prefix 稳定，避免动态注入破坏 prefix caching #architecture #decision #confirmed
+- `target`/`name` 参数统一为 `category`，tool 内部按 scope 验证合法值：简化 API 接口 #decision #confirmed
+- 后台记忆 agent 并发对策：memory 提取延迟 5s 错峰，避免与 title/summary 抢 LLM 窗口 #decision #confirmed
+- Provider 配置全 config-driven：ModelConfig 新增 4 个可选字段（`reasoning_options` 自由 JSON / `reasoning_send_effort` bool / `max_tokens_key` string / `system_role` string），代码零 `starts_with` 前缀匹配——所有 provider-specific 行为由 config 驱动，不再在代码中硬编码 provider 名称判断 #architecture #decision #confirmed
+- 内置 provider 完整定义：`builtin_providers()` 返回 `HashMap<String, ProviderConfig>`（含 base_url + protocol + models + reasoning 字段 + context limits），`Config::load()` 用 `entry().or_insert()` 填充（内置是 fallback 层）；用户写同名 provider 时完全替换内置定义，非逐字段 merge #architecture #decision #confirmed
+- SystemPrompt `render()` 纯函数化：`shell_kind` + `skills` 在构造时解析缓存，`render()` 不再访问任何外部状态——保证同一 `SystemPrompt` 实例多次渲染结果完全一致，维护 prompt 前缀稳定性（保护 prefix caching） #architecture #decision #confirmed
+- thinking effort 链入：模型选择完成后检测该模型的 `reasoning_options`/`reasoning_send_effort` 字段，仅当模型支持 reasoning 时自动弹出 thinking effort 对话框；引导流程为 provider → API key → model → thinking effort（reasoning 模型才弹） #decision #confirmed
+- config.json 中保存的 provider 定义会覆盖内置——更新内置定义后需手动清理 config.json（当前设计，不需要版本号机制）：内置 provider 是 fallback 层，用户 config.json 中已有的同名定义不会被自动更新 #decision #confirmed
+- zhipuai-coding-plan base_url 为 `https://open.bigmodel.cn/api/coding/paas/v4`（不是通用 `/api/paas/v4`）：coding plan 专用端点 #decision #confirmed
+- retry 从 provider 移到调用方：provider 只做单次请求（`retry_with_backoff(0)`），worker + run_agent 负责重试 + 倒计时推送——provider 不关心重试策略，调用方控制退避和 UI 反馈 #architecture #decision #confirmed
+- `SlashResult` 枚举：`handle_slash_command` 从返回 `bool` 改为返回 `SlashResult`（NotHandled/Handled/Prompt），支持 command-as-prompt 模式——`/init` 返回 `Prompt(template)` 注入模板为用户消息让模型执行，而非 UI 动作 #architecture #decision #confirmed
+- context 显示优先用 `cache.total`（协议返回的 prompt_tokens），首回合无 cache 时回退到 `token::estimate_messages` 估算——用真实值替代估算值 #decision #confirmed
+- Esc 中断用 `tokio::select!` + 500ms 轮询 abort flag，不依赖 provider HTTP 超时——覆盖 worker 和 run_agent 的 `llm.chat()` + `stream.next()` #architecture #decision #confirmed

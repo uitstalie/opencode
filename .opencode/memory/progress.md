@@ -1,10 +1,10 @@
 # Project Progress
 
-> 最后更新：2026-07-08
+> 最后更新：2026-07-11
 
 ## Rust 重写里程碑（openrust）
 - Phase 0 / 0.9 / 1A–1D / 1 收尾 / 2 全部完成：CLI + Provider + 14 工具 + 会话/权限/system prompt + 最小 TUI + 真实 tool loop + task 子 agent + 权限弹窗 + 富渲染（markdown/syntect/diff/sidebar）
-- `cargo test` 192 passed，零 warning；分支 `opencode-rust-tui` 已推送
+- `cargo test` 274 passed，零 warning；分支 `opencode-rust-tui` 已推送
 - 路线图已重估：Phase 3 改为主线能力补齐 + 交互层打磨，Phase 4 改为 TS 退场门槛定义 + 迁移收口，新增 Phase 5 用于对齐 Phase 1 / 2 与最新 `dev-ai-release`
 
 ## 已完成
@@ -159,7 +159,66 @@
 - **Clippy 全面清理**（8 个预存 + auto-fix）：&PathBuf→&Path, vec!→array, match→let, needless_range_loop, unwrap→if let, 添加 too_many_arguments
 - `cargo test` 192 passed，零 warning
 
+### 后台 Agent + 记忆系统设计
+- Skills/rules/agents 审查修复完成并提交（commit `93e6b44db`，已 rebase 到远程之上）：create-agent 技能 mode→tools 文档修正、read_only 预设补排除 undo_edit、AGENTS.md agents 加载路径去 legacy 目录、skill.rs split_frontmatter 去重、agent.rs body offset CRLF 安全、task.rs 移除 unreachable fallback
+- 设计文档 `doc/background-agent-design.md` 创建（~730 行），多轮修订后提交（commit `c2beb7947`）：后台 agent 复用 `shared_runtime()` + `run_agent()` 模式、增量提取（水位线 + delta 快照）、`background_model` config 字段（fallback 主 model）
+- dev-ai 分支记忆系统调研完成：4 工具（memory_review/memory_record/dreaming_compress/memory_read）+ 3 层存储（project sled+md / user md / dreaming md）+ memory-extract agent
+- **设计文档核心决策全部落定**（P0 不再待确认）：Memory 内容不注入 system prompt 正文，只注入静态 `<memory>` 位置索引段（零查询开销）；存储纯 .md 无 DB（无 sled/SQLite），进程内 Mutex 串行化写，无 git 依赖；工具砍到 2 个（砍掉 memory_review，dreaming_compress 改为独立 /dream 操作）；target/name 统一为 category；去重用 trim+lowercase 完整比较；memory-extract agent 只有 2 工具两层提取（project+user）；后台 agent 并发对策：memory 延迟 5s 错峰
+
+### 记忆系统阶段 1 实现（commit `e5c60d0d0`）
+- `core/memory.rs`（~300 行）：纯 .md 存储，Scope/Category 枚举，路径解析（含 sha256 dreaming hash），进程内 Mutex 写锁，完整 content 去重，原子写回，日期计算（无 chrono），11 个单元测试全通过
+- `tool/memory_record.rs`（~110 行）：写入工具，scope/category 验证
+- `tool/memory_read.rs`（~115 行）：读取工具，无参数 → overview，有参数 → 过滤
+- catalog 注册 2 个工具 + Memory 分类
+- system_prompt.rs 注入硬编码 `<memory>` 索引段
+
+### 记忆系统阶段 2 + clippy/test 修复（commits `f74041fa7` / `5d829fddc`）
+- memory-extract builtin agent + `generate_memory()` 增量提取：水位线 + 5s 错峰 + fire-and-forget
+- SessionStore 加 `memory_watermarks` named tree（key=session_id, value=u64 BE bytes）
+- `resolve_background_provider()` / `resolve_background_provider_model()` 实现
+- Config 加 `background_model` 字段，fallback 到主 `model`
+- `PromptEvent::Finish` 在 `prompt_flow.rs` 和 `mod.rs` 两处触发 `generate_summary()` + `generate_memory()`
+- 12 个 pre-existing clippy warnings 全修 + platform_paths 测试平台感知修复
+
+### Provider 重构 — config-driven + 内置注册表（commits `6c83ec689` / `a690570b8` / `89985662f`）
+- `openai_compat.rs` 移除所有 `starts_with` 前缀匹配，加 4 个 ModelConfig 字段（`reasoning_options`(自由 JSON) / `reasoning_send_effort`(bool) / `max_tokens_key`(string) / `system_role`(string)），4 个可选字段带默认值
+- `builtin_providers()` 完整定义 deepseek/glm/zhipuai-coding-plan/openai/anthropic/gemini，`Config::load()` 用 `entry().or_insert()` 填充；用户同名 provider 完全替换内置（非逐字段 merge）
+- 删除 `OpenAICompatProvider` 的 `provider_defaults()` / `defaults` 字段
+- Anthropic reasoning fallback：effort→budget（low=8k, mid=16k, high=32k），reasoning_options 可覆盖
+- Gemini reasoning fallback：`thinkingConfig:{includeThoughts:true}`，reasoning_options 可覆盖
+- openrust.json 精简：deepseek 只需 api_key（内置提供 base_url/models/reasoning）
+
+### `/dream` 命令（commit `5ad0c800c`）
+- `SlashCommand::Dream` 变体 + input.rs 解析
+- dreaming builtin agent + system prompt（跨 session 模式分析、先读后写、质量优先）
+- `dream()` 方法：list_sessions → summary（无 summary 时 fallback 到 title + 最近 3 条消息）→ 后台 dreaming agent（max_steps=20）提取跨 session 模式 → 写入 `scope=dreaming`
+- TUI 显示 "dreaming: analyzing N session(s)..."
+- `cargo test` 274 passed，零 warning
+
+### openrust identity 清理 + 引导流 + provider 优化（commits `d65e6bbfa` / `cb33af510` / `b8e997d1b` / `a24ce106d` / `7dda287c5` / `da556be8d` / `d21186a47`）
+- identity 清理：移除源码全部 opencode 引用（crypto pepper → `openrust-cred-v1`、skill 路径、测试临时文件、注释）
+- AGENTS.md 重写：零 opencode 引用，部署路径 `~/.local/share/openrust/bin/openrust`，含 symlink first-time setup、rules/memory/providers 段
+- prompt 前缀稳定性修复：`shell_kind` + `skills` 移到 `SystemPrompt` 构造时缓存，`render()` 变纯函数，保证同一实例渲染永远一致
+- `/connect` 引导式 provider switch：选 provider → API key 输入（缺时）→ model 选择 → thinking effort（支持的模型自动链入）；新增 `begin_provider_switch`/`save_switch_api_key`/`open_provider_model_dialog`/`switch_provider_model` + `DialogKind::ProviderModel` + `pending_provider` 状态 + `Dialog` title/description 改 `String`
+- zhipuai-coding-plan 模型更新：glm-5.2(1M,send_effort) + glm-5.1(auto-migrate) + glm-5-turbo(200K) + glm-4.7(128K)；base_url 修为 `/api/coding/paas/v4`
+- thinking effort 链入修复：选完模型后检测 `reasoning_options`/`reasoning_send_effort`，自动弹 thinking effort 对话框
+- 清理 `~/.config/openrust/config.json`：删除所有 provider 定义和 model 字段，让内置定义生效
+
+### 状态栏重构 + 交互层增强（commits `55d6e915d` / `c7f05d8cf` / `8087df113` / `70b0ee7ba` / `885895543` + retry 待 commit）
+- **状态栏拆分**：model/thinking/agent 移到输入框下方独立 info 行；status 行保留 context/cache/tasks/running；`StatusBar::render(info_area, status_area)` + `SessionLayout`/`HomeLayout` 新增 `info: Rect`
+- **`/connect` 始终弹 API key**：空回车 = 复用已有 key，非空则保存新 key
+- **session delete 子命令**：`debug session delete <id>` + `delete-all`
+- **Esc 中断扩展到 LLM 调用层**：`tokio::select!` + 500ms 轮询 abort flag，覆盖 worker + run_agent 的 `llm.chat()` 和 `stream.next()`（此前仅中断 UI 层）
+- **context 用协议返回值**：`cache.total`（真实 prompt_tokens）替代 `token::estimate_messages` 估算；首回合无 cache 时回退到估算
+- **retry 倒计时**（待 commit）：provider 内部 `retry_with_backoff(0)` 只做单次请求，retry 逻辑移到 worker + run_agent 层；指数退避 2/4/8s；`is_retriable_error`（4xx 除 429/408 不重试）；`PromptEvent::RetryStatus` 推送倒计时到状态栏；三个 provider 均改为 `retry_with_backoff(0)`
+
 ## 进行中
+- **`/init` command-as-prompt**：正在实现
+  1. `SlashCommand::Init(String)` + `SlashResult` 枚举（NotHandled/Handled/Prompt）已加到 types.rs
+  2. `handle_slash_command` 改返回 `SlashResult`，添加 Init 分支 — 适配中
+  3. `init_template()` 函数（从 dev-ai initialize.txt 改编，4 Phase：Check → Investigate → Report → Scaffold）— 待做
+  4. system prompt onboarding hint（AGENTS.md/.openrust/ 缺失时注入）— 待做
+  5. `/init` 解析 + `enqueue_or_run_prompt` 调用适配 — 待做
 - **mode → read_only 迁移**：用户决定彻底删除 `mode` 概念，agent 能力完全由 md 文件定义；工具集控制改由 frontmatter `read_only: true` 布尔实现。8 步计划已定但尚未实现
 - Phase 5 已启动：以最新 `dev-ai-release` 为基线审计 Phase 1 / 2 语义差距，首版矩阵见 `doc/openrust-phase5-alignment.md`
 
