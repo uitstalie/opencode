@@ -257,17 +257,47 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
     );
 
     // ── Zhipu AI Coding Plan ──────────────────────────
-    let coding_thinking = serde_json::json!({"thinking": {"type": "enabled", "clear_thinking": false}});
+    let coding_thinking = serde_json::json!({"thinking": {"type": "enabled"}});
     map.insert(
         "zhipuai-coding-plan".into(),
         ProviderConfig {
-            base_url: Some("https://open.bigmodel.cn/api/paas/v4".into()),
+            base_url: Some("https://open.bigmodel.cn/api/coding/paas/v4".into()),
             protocol: Some("openai".into()),
             models: [
+                (
+                    "glm-5.2".into(),
+                    ModelConfig {
+                        name: Some("glm-5.2".into()),
+                        limit: Some(ModelLimit { context: Some(1_000_000), output: Some(128_000) }),
+                        reasoning_options: Some(coding_thinking.clone()),
+                        reasoning_send_effort: Some(true),
+                        ..Default::default()
+                    },
+                ),
                 (
                     "glm-5.1".into(),
                     ModelConfig {
                         name: Some("glm-5.1".into()),
+                        limit: Some(ModelLimit { context: Some(1_000_000), output: Some(128_000) }),
+                        reasoning_options: Some(coding_thinking.clone()),
+                        reasoning_send_effort: Some(true),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "glm-5-turbo".into(),
+                    ModelConfig {
+                        name: Some("glm-5-turbo".into()),
+                        limit: Some(ModelLimit { context: Some(200_000), output: Some(128_000) }),
+                        reasoning_options: Some(coding_thinking.clone()),
+                        reasoning_send_effort: Some(false),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "glm-4.7".into(),
+                    ModelConfig {
+                        name: Some("glm-4.7".into()),
                         limit: Some(ModelLimit { context: Some(128_000), output: Some(16_384) }),
                         reasoning_options: Some(coding_thinking),
                         reasoning_send_effort: Some(false),
