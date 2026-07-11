@@ -284,26 +284,22 @@ pub fn model_supports_images(model: &str) -> bool {
 // ── Factory ────────────────────────────────────────
 
 /// Detect the protocol for a provider: explicit config field, then base_url heuristic.
-fn detect_protocol(cfg: &ResolvedProvider) -> &'static str {
-    if let Some(ref p) = cfg.protocol {
-        return match p.as_str() {
-            "anthropic" => "anthropic",
-            "gemini" | "google" => "gemini",
-            _ => "openai",
-        };
-    }
-    let base_url = cfg.base_url.as_deref().unwrap_or("");
-    if base_url.contains("anthropic.com") {
-        "anthropic"
-    } else if base_url.contains("googleapis.com") {
-        "gemini"
-    } else {
-        "openai"
+/// Determine the wire protocol for a provider.
+///
+/// Returns `None` when `protocol` is missing or set to an unrecognized
+/// value. The caller is expected to surface a clear error to the user.
+fn detect_protocol(cfg: &ResolvedProvider) -> Option<&'static str> {
+    let protocol = cfg.protocol.as_deref()?;
+    match protocol {
+        "openai" => Some("openai"),
+        "anthropic" => Some("anthropic"),
+        "gemini" | "google" => Some("gemini"),
+        _ => None,
     }
 }
 
 /// Create a provider from config, routing to the correct protocol implementation.
-/// Returns `None` with a warning log when the API key is missing.
+/// Returns `None` with a warning log when the API key or protocol is missing.
 pub fn create_provider(cfg: &ResolvedProvider) -> Option<Box<dyn LlmProvider>> {
     if cfg.api_key.is_none() {
         tracing::warn!(
@@ -312,7 +308,24 @@ pub fn create_provider(cfg: &ResolvedProvider) -> Option<Box<dyn LlmProvider>> {
         );
         return None;
     }
-    match detect_protocol(cfg) {
+    let protocol = match detect_protocol(cfg) {
+        Some(p) => p,
+        None => {
+            let hint = match cfg.protocol.as_deref() {
+                None => format!(
+                    "provider '{}' has no protocol configured — add \"protocol\": \"openai\" (or \"anthropic\" / \"gemini\")",
+                    cfg.name
+                ),
+                Some(other) => format!(
+                    "provider '{}' has unknown protocol '{}' — must be openai, anthropic, or gemini",
+                    cfg.name, other
+                ),
+            };
+            tracing::warn!("{}", hint);
+            return None;
+        }
+    };
+    match protocol {
         "anthropic" => crate::provider::anthropic::create(cfg)
             .map(|p| Box::new(p) as Box<dyn LlmProvider>),
         "gemini" => crate::provider::gemini::create(cfg)
