@@ -595,4 +595,95 @@ impl SessionView {
             }
         });
     }
+
+    /// `/dream` — manually triggered cross-session pattern extraction.
+    ///
+    /// Collects all session summaries (or title + last messages as fallback),
+    /// then spawns a background `dreaming` agent that writes patterns to
+    /// `scope=dreaming`.
+    pub(super) fn dream(&mut self) {
+        let Some(store) = self.store.clone() else {
+            self.note("session store unavailable".to_string());
+            return;
+        };
+        let Some((llm, model)) = self.resolve_background_provider() else {
+            self.note("no LLM available for dreaming".to_string());
+            return;
+        };
+
+        // Build snapshot from all sessions.
+        let sessions = store.list_sessions().unwrap_or_default();
+        if sessions.is_empty() {
+            self.note("no sessions to analyze".to_string());
+            return;
+        }
+
+        let mut snapshot = String::new();
+        for s in &sessions {
+            snapshot.push_str(&format!("\n## Session: {}", s.title.as_deref().unwrap_or(&s.id)));
+            if let Some(ref summary) = s.summary {
+                snapshot.push_str(&format!("\nSummary: {summary}\n"));
+            } else {
+                // Fallback: title + last 3 user/assistant messages.
+                match store.get_messages(&s.id) {
+                    Ok(msgs) => {
+                        let tail: Vec<_> = msgs
+                            .iter()
+                            .filter(|m| m.role == "user" || m.role == "assistant")
+                            .rev()
+                            .take(3)
+                            .collect::<Vec<_>>()
+                            .into_iter()
+                            .rev()
+                            .collect();
+                        if !tail.is_empty() {
+                            snapshot.push('\n');
+                            for m in &tail {
+                                snapshot.push_str(&format!("{}: {}\n", m.role, m.content));
+                            }
+                        }
+                    }
+                    Err(_) => { /* skip unreadable sessions */ }
+                }
+            }
+        }
+
+        if snapshot.trim().is_empty() {
+            self.note("no session content to analyze".to_string());
+            return;
+        }
+
+        let cwd = self.cwd.clone();
+        let session_count = sessions.len();
+        self.status = "dreaming...".to_string();
+        self.note(format!(
+            "dreaming: analyzing {} session(s) in background...",
+            session_count
+        ));
+
+        std::thread::spawn(move || {
+            let rt = shared_runtime();
+            let system = agent::builtin_agent_system("dreaming")
+                .unwrap_or("Analyze cross-session patterns.")
+                .to_string();
+            let prompt = format!(
+                "The following is a snapshot of ALL sessions for this project.\n\
+                 Analyze the user's cross-session behavioral patterns and record\n\
+                 any recurring patterns to dreaming memory.\n\n{snapshot}"
+            );
+            let result = rt.block_on(crate::tool::task::run_agent(
+                llm.as_ref(),
+                &model,
+                &system,
+                "[memory_read, memory_record]",
+                20,
+                None,
+                vec![provider::Message::user(prompt)],
+                &crate::tool::ToolContext::new(cwd),
+            ));
+            if let Err(e) = result {
+                tracing::warn!("dreaming failed: {e}");
+            }
+        });
+    }
 }

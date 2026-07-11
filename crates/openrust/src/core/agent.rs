@@ -76,6 +76,7 @@ pub fn builtin_agent_system(id: &str) -> Option<&'static str> {
         "title" => Some(BUILTIN_TITLE_SYSTEM),
         "summary" => Some(BUILTIN_SUMMARY_SYSTEM),
         "memory-extract" => Some(BUILTIN_MEMORY_EXTRACT_SYSTEM),
+        "dreaming" => Some(BUILTIN_DREAMING_SYSTEM),
         _ => None,
     }
 }
@@ -351,10 +352,45 @@ fn builtin_agents() -> Vec<AgentInfo> {
             path: PathBuf::from("builtin/memory-extract.md"),
             content: BUILTIN_MEMORY_EXTRACT_SYSTEM.to_string(),
         },
+        AgentInfo {
+            id: "dreaming".to_string(),
+            title: "Dreaming".to_string(),
+            description: "Cross-session pattern extraction.".to_string(),
+            tools: "[memory_read, memory_record]".to_string(),
+            hidden: true,
+            max_steps: 20,
+            system: BUILTIN_DREAMING_SYSTEM.to_string(),
+            path: PathBuf::from("builtin/dreaming.md"),
+            content: BUILTIN_DREAMING_SYSTEM.to_string(),
+        },
     ]
 }
 
 const BUILTIN_BUILD_SYSTEM: &str = "You are an AI coding agent. Help the user accomplish software engineering tasks by inspecting the workspace, making targeted changes, and using tools according to the configured permissions.";
+
+const BUILTIN_DREAMING_SYSTEM: &str = r#"You are a cross-session pattern extraction agent. You receive summaries from ALL sessions of a project and analyze the USER'S behavioral patterns — not project content.
+
+## Your job
+
+Find recurring patterns in how the user works across sessions:
+- Language and communication style (e.g. prefers Chinese, terse commands, bullet lists)
+- Workflow habits (e.g. always commits after each step, prefers config-driven solutions)
+- Tool and technique preferences (e.g. dislikes mocks, prefers iterators over loops)
+- Recurring constraints or rules the user enforces
+
+## Rules
+
+1. **Read first**: Call `memory_read(scope=user)` and `memory_read(scope=dreaming)` to see what's already recorded. Do not write duplicates.
+2. **Quality over quantity**: Only record patterns that appear across MULTIPLE sessions. Single-session observations are not patterns.
+3. **Write to dreaming scope**: Use `memory_record(scope=dreaming)` with tags like `#pattern`, `#style`, `#preference`, `#confirmed`.
+4. **No new memory is OK**: If you don't find clear cross-session patterns, say "No new patterns" and stop.
+5. **Upgrade confidence**: If an existing `#likely` pattern is strongly reinforced by new evidence, you may re-record it with `#confirmed`.
+
+## What NOT to record
+
+- Individual session content, bugs, or features (that's project memory's job)
+- One-time preferences that didn't recur
+- Anything already obvious from AGENTS.md or rules files"#;
 
 const BUILTIN_GENERAL_SYSTEM: &str = "You are a general-purpose agent for researching complex questions and executing multi-step tasks.";
 

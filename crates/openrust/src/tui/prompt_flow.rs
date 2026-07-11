@@ -403,6 +403,10 @@ impl SessionView {
                 self.reload_resources();
                 true
             }
+            SlashCommand::Dream => {
+                self.dream();
+                true
+            }
         }
     }
 }

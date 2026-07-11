@@ -40,6 +40,7 @@ pub(super) fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "/files" | "/tree" => Some(SlashCommand::Files),
         "/diff" => Some(SlashCommand::Diff),
         "/reload" => Some(SlashCommand::Reload),
+        "/dream" => Some(SlashCommand::Dream),
         _ => None,
     }
 }

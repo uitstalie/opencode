@@ -260,6 +260,7 @@ pub(super) enum SlashCommand {
     Files,
     Diff,
     Reload,
+    Dream,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
