@@ -44,7 +44,11 @@ impl SessionView {
                 None => "cache: n/a".to_string(),
             }
         };
-        let used = token::estimate_messages(&self.messages);
+        let used = if self.cache.total > 0 {
+            self.cache.total as u64
+        } else {
+            token::estimate_messages(&self.messages) as u64
+        };
         let window = self.current_context_window();
         let context = format!(
             "context: {} / {} tokens ({:.0}%)",
