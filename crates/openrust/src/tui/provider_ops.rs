@@ -34,8 +34,8 @@ impl SessionView {
         }
     }
 
-    /// Begin a guided provider switch: collect API key if missing, then
-    /// let the user pick a model from that provider's registered models.
+    /// Begin a guided provider switch: always show the API key prompt
+    /// (empty submit = reuse existing key), then let the user pick a model.
     pub(super) fn begin_provider_switch(&mut self, provider: &str) {
         if !self.config.provider.contains_key(provider) {
             self.note(format!("provider not configured: {}", provider));
@@ -48,21 +48,26 @@ impl SessionView {
             .get_provider(provider)
             .is_some_and(|r| r.api_key.is_some());
 
-        if has_key {
-            self.open_provider_model_dialog();
+        let description = if has_key {
+            format!(
+                "输入 {} 的新 API key，或直接回车复用已有 key。",
+                provider,
+            )
         } else {
-            self.ui.pending_text_input = Some(super::types::PendingTextInput {
-                title: format!("{} · API key", provider),
-                description: format!(
-                    "输入 {} 的 API key。若暂时没有可直接回车跳过，之后用 /connect key {} <key>。",
-                    provider, provider,
-                ),
-                value: String::new(),
-                editor: super::util::single_line_textarea("", true),
-                submit: SessionView::save_switch_api_key,
-            });
-            self.status = format!("connect: API key for {}", provider);
-        }
+            format!(
+                "输入 {} 的 API key。",
+                provider,
+            )
+        };
+
+        self.ui.pending_text_input = Some(super::types::PendingTextInput {
+            title: format!("{} · API key", provider),
+            description,
+            value: String::new(),
+            editor: super::util::single_line_textarea("", true),
+            submit: SessionView::save_switch_api_key,
+        });
+        self.status = format!("connect: API key for {}", provider);
     }
 
     /// Save the API key entered during guided switch, then show model dialog.
