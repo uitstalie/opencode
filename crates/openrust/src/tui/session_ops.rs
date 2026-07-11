@@ -9,6 +9,19 @@ use crate::core::agent;
 use crate::core::compaction;
 use crate::core::provider::{self, Message, MessageContent};
 
+/// Lazily-initialized shared tokio runtime for fire-and-forget background
+/// threads (title, summary, compaction). Avoids creating a new `Runtime`
+/// per thread.
+fn shared_runtime() -> &'static tokio::runtime::Runtime {
+    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("failed to create background tokio runtime")
+    })
+}
+
 impl SessionView {
     pub(super) fn create_session(&mut self) {
         self.session_id = format!("session-{}", now_micros());
@@ -245,10 +258,7 @@ impl SessionView {
             self.status = "compacting...".to_string();
 
             std::thread::spawn(move || {
-                let rt = match tokio::runtime::Runtime::new() {
-                    Ok(rt) => rt,
-                    Err(_) => return,
-                };
+                let rt = shared_runtime();
                 let system = agent::builtin_agent_system("compaction")
                     .unwrap_or("Summarize this conversation history. Be concise.")
                     .to_string();
@@ -339,10 +349,7 @@ impl SessionView {
         let cwd = self.cwd.clone();
 
         std::thread::spawn(move || {
-            let rt = match tokio::runtime::Runtime::new() {
-                Ok(rt) => rt,
-                Err(_) => return,
-            };
+            let rt = shared_runtime();
             let system = agent::builtin_agent_system("title")
                 .unwrap_or("Generate a concise title.")
                 .to_string();
@@ -388,10 +395,7 @@ impl SessionView {
         let cwd = self.cwd.clone();
 
         std::thread::spawn(move || {
-            let rt = match tokio::runtime::Runtime::new() {
-                Ok(rt) => rt,
-                Err(_) => return,
-            };
+            let rt = shared_runtime();
             let system = agent::builtin_agent_system("summary")
                 .unwrap_or("Summarize what was done.")
                 .to_string();

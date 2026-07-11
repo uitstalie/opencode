@@ -600,6 +600,12 @@ impl SessionView {
             }
         }
 
+        // Drain sub-agent progress messages (live status from run_agent).
+        let mut latest_progress: Option<String> = None;
+        while let Ok(msg) = job.progress_rx.try_recv() {
+            latest_progress = Some(msg);
+        }
+
         let mut needs_render = false;
         for event in events {
             match event {
@@ -795,6 +801,13 @@ impl SessionView {
                     self.generate_summary();
                 }
             }
+        }
+
+        if let Some(msg) = latest_progress
+            && self.ai_running
+        {
+            self.status = msg;
+            needs_render = true;
         }
 
         Ok(needs_render)

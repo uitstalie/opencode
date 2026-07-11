@@ -21,6 +21,8 @@ pub(super) struct PromptJob {
     /// Sender held by the TUI; worker drains this each step to inject
     /// follow-up user messages queued while the turn is in flight.
     pub(super) followup_tx: mpsc::Sender<String>,
+    /// Receiver for sub-agent progress strings (drained by the TUI pump).
+    pub(super) progress_rx: mpsc::Receiver<String>,
 }
 
 #[derive(Debug)]
@@ -107,6 +109,7 @@ pub(super) fn spawn_prompt_worker(
     let (ask_tx, ask_rx) = mpsc::channel::<AskRequest>();
     let (permission_tx, permission_rx) = mpsc::channel::<PermissionRequest>();
     let (followup_tx, followup_rx) = mpsc::channel::<String>();
+    let (progress_tx, progress_rx) = mpsc::channel::<String>();
     std::thread::spawn(move || {
         let rt = match tokio::runtime::Runtime::new() {
             Ok(rt) => rt,
@@ -149,6 +152,8 @@ pub(super) fn spawn_prompt_worker(
                 model: Some(model.clone()),
                 reasoning_effort: reasoning_effort.clone(),
                 shutdown: Some(Arc::clone(&shutdown)),
+                abort: Some(Arc::clone(&abort)),
+                progress_tx: Some(progress_tx),
                 presets: presets.clone(),
                 ..ToolContext::new(std::path::PathBuf::new())
             };
@@ -503,5 +508,6 @@ pub(super) fn spawn_prompt_worker(
         ask_receiver: ask_rx,
         permission_receiver: permission_rx,
         followup_tx,
+        progress_rx,
     }
 }

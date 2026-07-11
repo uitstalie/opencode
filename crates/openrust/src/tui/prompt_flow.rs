@@ -135,6 +135,11 @@ impl SessionView {
             }
         }
 
+        let mut latest_progress: Option<String> = None;
+        while let Ok(msg) = job.progress_rx.try_recv() {
+            latest_progress = Some(msg);
+        }
+
         let mut finished = false;
         let mut needs_render = false;
         for event in events {
@@ -283,6 +288,13 @@ impl SessionView {
             if finished {
                 break;
             }
+        }
+
+        if let Some(msg) = latest_progress
+            && self.ai_running
+        {
+            self.status = msg;
+            needs_render = true;
         }
 
         if needs_render {

@@ -59,12 +59,17 @@ impl Tool for TaskTool {
             },
         };
 
-        // Sub-agent context: no LLM (prevents recursive task), no interactive channels.
+        // Sub-agent context: no LLM (prevents recursive task), no interactive
+        // channels, no session store (prevents overwriting parent's TODO list).
         let sub_ctx = ToolContext {
             llm: None,
             ask_tx: None,
             permission_tx: None,
             interactive: false,
+            store: None,
+            session_id: None,
+            abort: ctx.abort.clone(),
+            progress_tx: ctx.progress_tx.clone(),
             ..ctx.clone()
         };
 
@@ -123,11 +128,34 @@ pub async fn run_agent(
     let mut last_assistant = String::new();
     let mut step_count: u32 = 0;
 
+    let send_progress = |msg: String| {
+        if let Some(tx) = &tool_ctx.progress_tx {
+            let _ = tx.send(msg);
+        }
+    };
+    let is_cancelled = || {
+        if let Some(flag) = &tool_ctx.shutdown
+            && flag.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return true;
+        }
+        if let Some(flag) = &tool_ctx.abort
+            && flag.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return true;
+        }
+        false
+    };
+
     loop {
+        if is_cancelled() {
+            return Ok(last_assistant);
+        }
         step_count += 1;
         if step_count > max_steps {
             return Ok(last_assistant);
         }
+        send_progress(format!("sub-agent step {step_count}/{max_steps}"));
 
         let is_last_step = step_count >= max_steps;
         if is_last_step {
@@ -159,10 +187,9 @@ pub async fn run_agent(
         let mut finish_seen = false;
 
         while let Some(chunk) = stream.next().await {
-            if let Some(flag) = &tool_ctx.shutdown
-                && flag.load(std::sync::atomic::Ordering::SeqCst) {
-                    return Ok(last_assistant);
-                }
+            if is_cancelled() {
+                return Ok(last_assistant);
+            }
             match chunk? {
                 StreamChunk::TextDelta(text) => assistant_text.push_str(&text),
                 StreamChunk::ReasoningDelta(_) => {}
@@ -184,6 +211,10 @@ pub async fn run_agent(
         }
 
         for (id, name, args) in &pending {
+            if is_cancelled() {
+                return Ok(last_assistant);
+            }
+            send_progress(format!("sub-agent: {name}"));
             let output = run_tool(name, args, tool_ctx).await.into_text();
             executed_calls.push(provider::ToolCall {
                 id: id.clone(),

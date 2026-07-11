@@ -56,8 +56,14 @@ impl SessionView {
             self.note(format!("provider {} has no model", provider_name));
             return;
         };
-        let result = match tokio::runtime::Runtime::new() {
-            Ok(rt) => rt.block_on(async {
+        let rt = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt,
+            Err(err) => {
+                self.note(format!("runtime error: {}", err));
+                return;
+            }
+        };
+        let result = rt.block_on(async {
                 let mut stream = provider
                     .chat(
                         vec![Message {
@@ -88,9 +94,7 @@ impl SessionView {
                     }
                 }
                 Ok(())
-            }),
-            Err(err) => Err(anyhow::Error::from(err)),
-        };
+            });
         match result {
             Ok(()) => self.note(format!("provider verified: {}", provider_name)),
             Err(err) => self.note(format!("provider verify failed: {}", err)),

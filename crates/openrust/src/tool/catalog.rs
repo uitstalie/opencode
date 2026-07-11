@@ -174,7 +174,7 @@ pub fn create_tool(name: &str, undo_store: Option<Arc<UndoStore>>) -> Option<Box
     }
 }
 
-const SUBTASK_EXCLUDE: &[&str] = &["task", "question"];
+const SUBTASK_EXCLUDE: &[&str] = &["task", "question", "todowrite"];
 
 /// Resolve a frontmatter `tools` spec into concrete tool metadata.
 ///
@@ -339,6 +339,7 @@ mod tests {
         let names: Vec<&str> = tools.iter().map(|t| t.name).collect();
         assert!(!names.contains(&"task"));
         assert!(!names.contains(&"question"));
+        assert!(!names.contains(&"todowrite"));
         assert!(names.contains(&"read"));
     }
 }

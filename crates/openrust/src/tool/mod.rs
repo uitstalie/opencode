@@ -204,9 +204,14 @@ pub struct ToolContext {
     pub reasoning_effort: Option<String>,
     /// Shared shutdown flag — checked by nested agent loops (task tool).
     pub shutdown: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// Per-turn abort flag (ESC). Propagated into sub-agent loops so the
+    /// user can interrupt a running sub-agent.
+    pub abort: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// Channel for sub-agent progress feedback. When `run_agent` sends a
+    /// short status string here, the TUI displays it live.
+    pub progress_tx: Option<std::sync::mpsc::Sender<String>>,
     /// Tool presets for resolving agent `tools` specs (config overlay + builtins).
     pub presets: std::collections::HashMap<String, Vec<String>>,
-
 }
 
 impl ToolContext {
@@ -225,6 +230,8 @@ impl ToolContext {
             model: None,
             reasoning_effort: None,
             shutdown: None,
+            abort: None,
+            progress_tx: None,
             presets: std::collections::HashMap::new(),
         }
     }
