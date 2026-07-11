@@ -506,4 +506,93 @@ impl SessionView {
     pub(super) fn scroll_session_down(&mut self, lines: usize) {
         self.session_scroll = self.session_scroll.saturating_sub(lines);
     }
+
+    /// Resolve the LLM provider+model for background agents.
+    /// Prefers `background_model`; falls back to the main `model`.
+    /// Reuses `self.llm` when the provider is the same.
+    fn resolve_background_provider(&self) -> Option<(Arc<dyn provider::LlmProvider>, String)> {
+        let bg_spec = self.config.background_model.as_deref();
+        let main_spec = self.config.model.as_deref();
+
+        // No background override → use main provider
+        if bg_spec.is_none() || bg_spec == main_spec {
+            return self
+                .llm
+                .as_ref()
+                .map(|l| (Arc::clone(l), self.model.clone()));
+        }
+
+        // Background model set — resolve provider+model
+        let (provider_name, wire_model) = self.config.resolve_background_provider_model()?;
+
+        // Same provider, different model → reuse existing LLM with different model name
+        if provider_name == self.provider_name {
+            return self
+                .llm
+                .as_ref()
+                .map(|l| (Arc::clone(l), wire_model));
+        }
+
+        // Different provider — create new instance
+        let resolved = self.config.get_provider(&provider_name)?;
+        let new_llm = provider::create_provider(&resolved)?;
+        Some((Arc::from(new_llm), wire_model))
+    }
+
+    /// Fire-and-forget incremental memory extraction.
+    ///
+    /// Reads the watermark, collects messages since the last extraction,
+    /// and spawns a background thread running the `memory-extract` agent.
+    /// A 5 s delay avoids competing with title/summary LLM calls.
+    pub(super) fn generate_memory(&self) {
+        let Some(store) = self.store.clone() else { return; };
+        let session_id = self.session_id.clone();
+
+        let Some((llm, model)) = self.resolve_background_provider() else { return; };
+
+        let watermark = store.get_memory_watermark(&session_id).unwrap_or(0);
+        let all_msgs = store.get_messages(&session_id).unwrap_or_default();
+        let new_msgs: Vec<_> = all_msgs.iter().filter(|m| m.seq > watermark).collect();
+
+        // Need at least 3 new messages to be worth extracting
+        if new_msgs.len() < 3 { return; }
+
+        let last_seq = new_msgs.last().unwrap().seq;
+        let conversation = new_msgs
+            .iter()
+            .map(|m| format!("{}: {}", m.role, m.content))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let cwd = self.cwd.clone();
+        let store_clone = store.clone();
+
+        std::thread::spawn(move || {
+            // Stagger to avoid competing with title/summary on the same LLM window
+            std::thread::sleep(std::time::Duration::from_secs(5));
+
+            let rt = shared_runtime();
+            let system = agent::builtin_agent_system("memory-extract")
+                .unwrap_or("Extract stable memories from the conversation.")
+                .to_string();
+            let result = rt.block_on(crate::tool::task::run_agent(
+                llm.as_ref(),
+                &model,
+                &system,
+                "[memory_read, memory_record]",
+                15,
+                None,
+                vec![provider::Message::user(conversation)],
+                &crate::tool::ToolContext::new(cwd),
+            ));
+
+            // Advance watermark regardless of success/failure so we don't
+            // re-process the same messages on every turn.
+            let _ = store_clone.set_memory_watermark(&session_id, last_seq);
+            let _ = store_clone.flush();
+
+            if let Err(e) = result {
+                tracing::warn!("memory extraction failed: {e}");
+            }
+        });
+    }
 }

@@ -746,6 +746,7 @@ impl SessionView {
                     self.assistant_preview.clear();
                     needs_render = true;
                     self.generate_summary();
+                    self.generate_memory();
                 }
                 PromptEvent::Error(err) => {
                     tracing::error!(error = %err, "prompt worker error");

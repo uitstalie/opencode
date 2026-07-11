@@ -75,6 +75,7 @@ pub fn builtin_agent_system(id: &str) -> Option<&'static str> {
         "compaction" => Some(BUILTIN_COMPACTION_SYSTEM),
         "title" => Some(BUILTIN_TITLE_SYSTEM),
         "summary" => Some(BUILTIN_SUMMARY_SYSTEM),
+        "memory-extract" => Some(BUILTIN_MEMORY_EXTRACT_SYSTEM),
         _ => None,
     }
 }
@@ -339,6 +340,17 @@ fn builtin_agents() -> Vec<AgentInfo> {
             path: PathBuf::from("builtin/summary.md"),
             content: BUILTIN_SUMMARY_SYSTEM.to_string(),
         },
+        AgentInfo {
+            id: "memory-extract".to_string(),
+            title: "Memory Extract".to_string(),
+            description: "Background memory extraction agent.".to_string(),
+            tools: "[memory_read, memory_record]".to_string(),
+            hidden: true,
+            max_steps: 15,
+            system: BUILTIN_MEMORY_EXTRACT_SYSTEM.to_string(),
+            path: PathBuf::from("builtin/memory-extract.md"),
+            content: BUILTIN_MEMORY_EXTRACT_SYSTEM.to_string(),
+        },
     ]
 }
 
@@ -438,6 +450,38 @@ Rules:
 - Never ask questions or add new questions
 - If the conversation ends with an unanswered question to the user, preserve that exact question
 - If the conversation ends with an imperative statement or request to the user (e.g. "Now please run the command and paste the console output"), always include that exact request in the summary"#;
+
+const BUILTIN_MEMORY_EXTRACT_SYSTEM: &str = r#"You are a background memory extraction agent. Your job is to review recent conversation messages and extract stable conclusions worth remembering.
+
+## Rules
+
+1. **Incremental input**: You receive only the messages since the last extraction, not the full conversation.
+2. **Quality over quantity**: Only record stable conclusions, decisions, preferences, or patterns. NEVER record transient state, in-progress steps, single git commands, error traces, or implementation trivia (line numbers, variable names).
+3. **Read before write**: Call memory_read first to see what already exists. Do not write duplicates.
+4. **Two layers only**:
+   - scope=project: progress, TODO, tech, conclusion (categories for the current project)
+   - scope=user: preferences, constraints, patterns, style (cross-project user habits)
+   - Do NOT write dreaming scope — that is a separate manual operation.
+5. **No new memory is OK**: If the conversation contains nothing worth remembering, say "No new memory" and stop. Do not force writes.
+6. **Tags**: Use tags to classify confidence and type: #confirmed #likely #decision #architecture #constraint #preference #pattern #style #issue
+
+## What to record
+
+- Technical decision with rationale → scope=project, category=tech
+- Work milestone reached → scope=project, category=progress
+- Non-transient pending task → scope=project, category=TODO
+- Strategic project decision → scope=project, category=conclusion
+- User preference seen → scope=user, category=preferences
+- Hard constraint stated → scope=user, category=constraints
+- Reusable workflow pattern → scope=user, category=patterns
+- Style convention → scope=user, category=style
+
+## What NOT to record
+
+- Debug sessions, error traces, temporary workarounds
+- Single-use commands, file paths, variable names
+- In-progress steps that may change
+- Anything already in AGENTS.md or rules (those are authoritative)"#;
 
 #[cfg(test)]
 mod tests {

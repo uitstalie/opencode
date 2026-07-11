@@ -261,6 +261,7 @@ impl SessionView {
                     needs_render = true;
                     finished = true;
                     self.generate_summary();
+                    self.generate_memory();
                 }
                 super::PromptEvent::Error(err) => {
                     self.note(format!("provider error: {}", err));

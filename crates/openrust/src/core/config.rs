@@ -23,6 +23,11 @@ pub struct Config {
     #[serde(default)]
     pub model: Option<String>,
 
+    /// Model for background agents (title, summary, memory-extract).
+    /// Falls back to `model` when unset.
+    #[serde(default)]
+    pub background_model: Option<String>,
+
     #[serde(default)]
     pub provider: HashMap<String, ProviderConfig>,
 
@@ -206,6 +211,9 @@ impl Config {
         if other.model.is_some() {
             self.model = other.model;
         }
+        if other.background_model.is_some() {
+            self.background_model = other.background_model;
+        }
         for (name, incoming) in other.provider {
             self.provider
                 .entry(name)
@@ -225,6 +233,22 @@ impl Config {
     /// Resolve the configured provider and wire model name for API calls.
     pub fn resolve_provider_model(&self) -> Option<(String, String)> {
         let model_spec = self.model.as_deref()?;
+        let (provider_name, model_name, variant) = parse_model_spec(model_spec);
+        let provider = self.provider.get(provider_name)?;
+        let wire_model = variant
+            .or_else(|| {
+                provider
+                    .models
+                    .get(model_name)
+                    .and_then(|m| m.name.as_deref())
+            })
+            .unwrap_or(model_name);
+        Some((provider_name.to_string(), wire_model.to_string()))
+    }
+
+    /// Like `resolve_provider_model` but prefers `background_model` over `model`.
+    pub fn resolve_background_provider_model(&self) -> Option<(String, String)> {
+        let model_spec = self.background_model.as_deref().or(self.model.as_deref())?;
         let (provider_name, model_name, variant) = parse_model_spec(model_spec);
         let provider = self.provider.get(provider_name)?;
         let wire_model = variant
@@ -547,6 +571,7 @@ mod tests {
     fn provider_deep_merge_preserves_models_from_both_layers() {
         let mut global = Config {
             model: None,
+            background_model: None,
             provider: HashMap::from([(
                 "shared".to_string(),
                 ProviderConfig {
@@ -562,6 +587,7 @@ mod tests {
 
         let project = Config {
             model: Some("shared/project-model".to_string()),
+            background_model: None,
             provider: HashMap::from([(
                 "shared".to_string(),
                 ProviderConfig {
@@ -630,6 +656,7 @@ mod tests {
     fn provider_api_key_falls_back_to_config_value() {
         let config = Config {
             model: Some("config-only-provider/deepseek-v4-pro".to_string()),
+            background_model: None,
             provider: HashMap::from([(
                 "config-only-provider".to_string(),
                 ProviderConfig {

@@ -570,6 +570,27 @@ impl SessionStore {
         Ok(())
     }
 
+    /// Get the memory extraction watermark (last processed message seq) for a session.
+    /// Returns 0 if no watermark has been set.
+    pub fn get_memory_watermark(&self, session_id: &str) -> anyhow::Result<u64> {
+        let tree = self.db.open_tree("memory_watermarks")?;
+        let val = tree.get(session_id.as_bytes())?;
+        Ok(val
+            .and_then(|v| {
+                let bytes: [u8; 8] = v.as_ref().try_into().ok()?;
+                Some(u64::from_be_bytes(bytes))
+            })
+            .unwrap_or(0))
+    }
+
+    /// Set the memory extraction watermark for a session.
+    pub fn set_memory_watermark(&self, session_id: &str, seq: u64) -> anyhow::Result<()> {
+        let tree = self.db.open_tree("memory_watermarks")?;
+        tree.insert(session_id.as_bytes(), &seq.to_be_bytes())?;
+        tree.flush()?;
+        Ok(())
+    }
+
     fn message_key(&self, session_id: &str, message_id: &str) -> String {
         format!("{session_id}:{message_id}")
     }
