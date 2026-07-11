@@ -99,8 +99,27 @@ pub struct ModelConfig {
     #[serde(default)]
     pub limit: Option<ModelLimit>,
 
+    /// Static body fields always merged into the API request.
     #[serde(default)]
     pub options: Option<serde_json::Value>,
+
+    /// Body fields merged when `reasoning_effort` is set at runtime.
+    /// Free-form JSON — covers any provider-specific reasoning activation
+    /// fields (e.g. `{"thinking":{"type":"enabled"}}`).
+    #[serde(default)]
+    pub reasoning_options: Option<serde_json::Value>,
+
+    /// Whether to send `reasoning_effort` value in the body (default true).
+    #[serde(default)]
+    pub reasoning_send_effort: Option<bool>,
+
+    /// Override the body key for max tokens (default `"max_tokens"`).
+    #[serde(default)]
+    pub max_tokens_key: Option<String>,
+
+    /// Override the role for system messages (default `"system"`).
+    #[serde(default)]
+    pub system_role: Option<String>,
 
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub headers: HashMap<String, String>,
@@ -120,6 +139,18 @@ impl ModelConfig {
         }
         if other.options.is_some() {
             self.options = other.options;
+        }
+        if other.reasoning_options.is_some() {
+            self.reasoning_options = other.reasoning_options;
+        }
+        if other.reasoning_send_effort.is_some() {
+            self.reasoning_send_effort = other.reasoning_send_effort;
+        }
+        if other.max_tokens_key.is_some() {
+            self.max_tokens_key = other.max_tokens_key;
+        }
+        if other.system_role.is_some() {
+            self.system_role = other.system_role;
         }
         for (k, v) in other.headers {
             self.headers.insert(k, v);

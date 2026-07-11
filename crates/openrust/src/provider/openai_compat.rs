@@ -109,47 +109,52 @@ impl LlmProvider for OpenAICompatProvider {
         if let Some(top_p) = options.top_p {
             body["top_p"] = serde_json::json!(top_p);
         }
-        let is_glm = options.model.starts_with("glm-");
-        let is_deepseek = options.model.starts_with("deepseek-");
-        // OpenAI o1/o3 reasoning models need a different request format.
-        let is_oai_reasoning = !is_glm && !is_deepseek && options.reasoning_effort.is_some();
+
+        // All provider-specific behaviour comes from ModelConfig, not hardcoded
+        // prefix matching. Defaults match standard OpenAI format.
+        let model_cfg = self.models.get(&options.model);
+        let max_tokens_key = model_cfg
+            .and_then(|c| c.max_tokens_key.as_deref())
+            .unwrap_or("max_tokens");
+        let system_role = model_cfg
+            .and_then(|c| c.system_role.as_deref())
+            .unwrap_or("system");
+        let send_effort = model_cfg
+            .and_then(|c| c.reasoning_send_effort)
+            .unwrap_or(true);
+        let reasoning_opts = model_cfg.and_then(|c| c.reasoning_options.as_ref());
 
         if let Some(max_tok) = options.max_tokens {
-            let key = if is_oai_reasoning {
-                "max_completion_tokens"
-            } else {
-                "max_tokens"
-            };
-            body[key] = serde_json::json!(max_tok);
+            body[max_tokens_key] = serde_json::json!(max_tok);
         }
-        // GLM and DeepSeek both use thinking:{type:enabled} to toggle deep reasoning.
-        // GLM includes clear_thinking:false to preserve reasoning content in responses.
-        if is_glm && options.reasoning_effort.is_some() {
-            body["thinking"] = serde_json::json!({ "type": "enabled", "clear_thinking": false });
-        } else if is_deepseek && options.reasoning_effort.is_some() {
-            body["thinking"] = serde_json::json!({ "type": "enabled" });
+
+        // When reasoning is on, merge provider-specific body fields from
+        // `reasoning_options`, then optionally send the effort level.
+        if options.reasoning_effort.is_some() {
+            if let Some(opts) = reasoning_opts {
+                merge_options_into(&mut body, opts);
+            }
+            if send_effort
+                && let Some(ref effort) = options.reasoning_effort
+            {
+                body["reasoning_effort"] = serde_json::json!(effort);
+            }
         }
-        // DeepSeek and OpenAI support effort levels alongside thinking; GLM does not.
-        if !is_glm
-            && let Some(ref effort) = options.reasoning_effort
-        {
-            body["reasoning_effort"] = serde_json::json!(effort);
-        }
+
         if let Some(ref tc) = options.tool_choice {
             body["tool_choice"] = tc.clone();
         }
         if let Some(ref system) = options.system
-            && let Some(arr) = body["messages"].as_array_mut() {
-                // o1-preview/o1-mini reject "system" role, require "developer".
-                let role = if is_oai_reasoning { "developer" } else { "system" };
-                arr.insert(
-                    0,
-                    serde_json::json!({
-                        "role": role,
-                        "content": system,
-                    }),
-                );
-            }
+            && let Some(arr) = body["messages"].as_array_mut()
+        {
+            arr.insert(
+                0,
+                serde_json::json!({
+                    "role": system_role,
+                    "content": system,
+                }),
+            );
+        }
 
         tracing::debug!("POST {} (model={})", url, options.model);
 
