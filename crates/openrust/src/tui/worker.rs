@@ -277,25 +277,39 @@ pub(super) fn spawn_prompt_worker(
                     compaction::trim_history(&mut history, context_window, 24_000, 6);
                 }
 
-                let mut stream = llm
-                    .chat(
-                        history.clone(),
-                        tool_defs.clone(),
-                        RequestOptions {
-                            model: model.clone(),
-                            temperature: None,
-                            max_tokens: None,
-                            top_p: None,
-                            system: Some(system.clone()),
-                            reasoning_effort: reasoning_effort.clone(),
-                            tool_choice: if is_last_step {
-                                Some(serde_json::json!("none"))
-                            } else {
-                                None
-                            },
+                // Abortable LLM call: if the network hangs, Esc can still interrupt.
+                let chat = llm.chat(
+                    history.clone(),
+                    tool_defs.clone(),
+                    RequestOptions {
+                        model: model.clone(),
+                        temperature: None,
+                        max_tokens: None,
+                        top_p: None,
+                        system: Some(system.clone()),
+                        reasoning_effort: reasoning_effort.clone(),
+                        tool_choice: if is_last_step {
+                            Some(serde_json::json!("none"))
+                        } else {
+                            None
                         },
-                    )
-                    .await?;
+                    },
+                );
+                tokio::pin!(chat);
+                let mut stream = loop {
+                    tokio::select! {
+                        result = &mut chat => break result?,
+                        _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                            if shutdown.load(Ordering::SeqCst) {
+                                return Ok::<_, anyhow::Error>(());
+                            }
+                            if abort.load(Ordering::SeqCst) {
+                                let _ = tx.send(PromptEvent::Aborted);
+                                return Ok::<_, anyhow::Error>(());
+                            }
+                        }
+                    }
+                };
 
                 let mut assistant_text = String::new();
                 let mut thinking_text = String::new();
@@ -305,68 +319,82 @@ pub(super) fn spawn_prompt_worker(
                 let mut tool_outputs: Vec<ToolOutput> = Vec::new();
                 let mut finish_seen = false;
 
-                while let Some(chunk) = stream.next().await {
-                    if shutdown.load(Ordering::SeqCst) {
-                        return Ok::<_, anyhow::Error>(());
-                    }
-                    if abort.load(Ordering::SeqCst) {
-                        let _ = tx.send(PromptEvent::Aborted);
-                        return Ok::<_, anyhow::Error>(());
-                    }
-                    match chunk? {
-                        StreamChunk::TextDelta(text) => {
-                            assistant_text.push_str(&text);
-                            let _ = tx.send(PromptEvent::AssistantDelta(text));
-                        }
-                        StreamChunk::ReasoningDelta(text) => {
-                            thinking_text.push_str(&text);
-                            let _ = tx.send(PromptEvent::ThinkingDelta(text));
-                        }
-                        StreamChunk::ToolCallStart { id, name } => {
-                            pending_tools.push((id.clone(), name.clone(), String::new()));
-                            let _ = tx.send(PromptEvent::ToolCallStart { id, name });
-                        }
-                        StreamChunk::ToolCallDelta { id, args } => {
-                            if let Some((_, _, buffer)) = pending_tools
-                                .iter_mut()
-                                .rev()
-                                .find(|(call_id, _, _)| call_id == &id)
-                            {
-                                buffer.push_str(&args);
+                loop {
+                    tokio::select! {
+                        chunk = stream.next() => {
+                            let Some(chunk) = chunk else { break; };
+                            if shutdown.load(Ordering::SeqCst) {
+                                return Ok::<_, anyhow::Error>(());
+                            }
+                            if abort.load(Ordering::SeqCst) {
+                                let _ = tx.send(PromptEvent::Aborted);
+                                return Ok::<_, anyhow::Error>(());
+                            }
+                            match chunk? {
+                                StreamChunk::TextDelta(text) => {
+                                    assistant_text.push_str(&text);
+                                    let _ = tx.send(PromptEvent::AssistantDelta(text));
+                                }
+                                StreamChunk::ReasoningDelta(text) => {
+                                    thinking_text.push_str(&text);
+                                    let _ = tx.send(PromptEvent::ThinkingDelta(text));
+                                }
+                                StreamChunk::ToolCallStart { id, name } => {
+                                    pending_tools.push((id.clone(), name.clone(), String::new()));
+                                    let _ = tx.send(PromptEvent::ToolCallStart { id, name });
+                                }
+                                StreamChunk::ToolCallDelta { id, args } => {
+                                    if let Some((_, _, buffer)) = pending_tools
+                                        .iter_mut()
+                                        .rev()
+                                        .find(|(call_id, _, _)| call_id == &id)
+                                    {
+                                        buffer.push_str(&args);
+                                    }
+                                }
+                                StreamChunk::ToolCallEnd { id } => {
+                                    let Some((call_id, name, args)) = pending_tools
+                                        .iter()
+                                        .find(|(cid, _, _)| cid == &id)
+                                        .cloned()
+                                    else {
+                                        continue;
+                                    };
+                                    let _ = tx.send(PromptEvent::ToolRunning { id: call_id.clone() });
+                                    let tool_output = crate::tool::run_tool(&name, &args, &tool_ctx).await;
+                                    let has_image = matches!(&tool_output, crate::tool::ToolResult::Image { .. });
+                                    let image_b64 = match &tool_output {
+                                        crate::tool::ToolResult::Image { base64_data, mime_type, .. } => Some((base64_data.clone(), mime_type.clone())),
+                                        _ => None,
+                                    };
+                                    let tool_text = tool_output.into_text();
+                                    executed_tools.push(provider::ToolCall {
+                                        id: call_id.clone(),
+                                        kind: "function".to_string(),
+                                        function: provider::ToolCallFunction {
+                                            name: name.clone(),
+                                            arguments: args.clone(),
+                                        },
+                                    });
+                                    tool_outputs.push((call_id, name, args, tool_text, has_image, image_b64));
+                                }
+                                StreamChunk::Finish { usage, .. } => {
+                                    finish_seen = true;
+                                    if let Some(u) = &usage {
+                                        current_total_tokens = u.total_tokens;
+                                        total_prompt_tokens = total_prompt_tokens.saturating_add(u.prompt_tokens);
+                                        total_cache_hit_tokens = total_cache_hit_tokens.saturating_add(u.prompt_cache_hit_tokens);
+                                    }
+                                }
                             }
                         }
-                        StreamChunk::ToolCallEnd { id } => {
-                            let Some((call_id, name, args)) = pending_tools
-                                .iter()
-                                .find(|(cid, _, _)| cid == &id)
-                                .cloned()
-                            else {
-                                continue;
-                            };
-                            let _ = tx.send(PromptEvent::ToolRunning { id: call_id.clone() });
-                            let tool_output = crate::tool::run_tool(&name, &args, &tool_ctx).await;
-                            let has_image = matches!(&tool_output, crate::tool::ToolResult::Image { .. });
-                            let image_b64 = match &tool_output {
-                                crate::tool::ToolResult::Image { base64_data, mime_type, .. } => Some((base64_data.clone(), mime_type.clone())),
-                                _ => None,
-                            };
-                            let tool_text = tool_output.into_text();
-                            executed_tools.push(provider::ToolCall {
-                                id: call_id.clone(),
-                                kind: "function".to_string(),
-                                function: provider::ToolCallFunction {
-                                    name: name.clone(),
-                                    arguments: args.clone(),
-                                },
-                            });
-                            tool_outputs.push((call_id, name, args, tool_text, has_image, image_b64));
-                        }
-                        StreamChunk::Finish { usage, .. } => {
-                            finish_seen = true;
-                            if let Some(u) = &usage {
-                                current_total_tokens = u.total_tokens;
-                                total_prompt_tokens = total_prompt_tokens.saturating_add(u.prompt_tokens);
-                                total_cache_hit_tokens = total_cache_hit_tokens.saturating_add(u.prompt_cache_hit_tokens);
+                        _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                            if shutdown.load(Ordering::SeqCst) {
+                                return Ok::<_, anyhow::Error>(());
+                            }
+                            if abort.load(Ordering::SeqCst) {
+                                let _ = tx.send(PromptEvent::Aborted);
+                                return Ok::<_, anyhow::Error>(());
                             }
                         }
                     }

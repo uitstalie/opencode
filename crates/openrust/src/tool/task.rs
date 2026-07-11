@@ -158,21 +158,29 @@ pub async fn run_agent(
             ));
         }
 
-        let mut stream = llm
-            .chat(
-                history.clone(),
-                tool_defs.clone(),
-                RequestOptions {
-                    model: model.to_string(),
-                    temperature: None,
-                    max_tokens: None,
-                    top_p: None,
-                    system: Some(system.to_string()),
-                    reasoning_effort: reasoning_effort.map(str::to_string),
-                    tool_choice: None,
-                },
-            )
-            .await?;
+        // Abortable LLM call: if the network hangs, Esc can still interrupt.
+        let chat = llm.chat(
+            history.clone(),
+            tool_defs.clone(),
+            RequestOptions {
+                model: model.to_string(),
+                temperature: None,
+                max_tokens: None,
+                top_p: None,
+                system: Some(system.to_string()),
+                reasoning_effort: reasoning_effort.map(str::to_string),
+                tool_choice: None,
+            },
+        );
+        tokio::pin!(chat);
+        let mut stream = loop {
+            tokio::select! {
+                result = &mut chat => break result?,
+                _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                    if is_cancelled() { return Ok(last_assistant); }
+                }
+            }
+        };
 
         let mut assistant_text = String::new();
         let mut pending: Vec<(String, String, String)> = Vec::new();
@@ -180,27 +188,32 @@ pub async fn run_agent(
         let mut tool_outputs: Vec<(String, String)> = Vec::new();
         let mut finish_seen = false;
 
-        while let Some(chunk) = stream.next().await {
-            if is_cancelled() {
-                return Ok(last_assistant);
-            }
-            match chunk? {
-                StreamChunk::TextDelta(text) => assistant_text.push_str(&text),
-                StreamChunk::ReasoningDelta(_) => {}
-                StreamChunk::ToolCallStart { id, name } => {
-                    pending.push((id, name, String::new()));
-                }
-                StreamChunk::ToolCallDelta { id, args } => {
-                    if let Some((_, _, buffer)) = pending
-                        .iter_mut()
-                        .rev()
-                        .find(|(call_id, _, _)| call_id == &id)
-                    {
-                        buffer.push_str(&args);
+        loop {
+            tokio::select! {
+                chunk = stream.next() => {
+                    let Some(chunk) = chunk else { break; };
+                    match chunk? {
+                        StreamChunk::TextDelta(text) => assistant_text.push_str(&text),
+                        StreamChunk::ReasoningDelta(_) => {}
+                        StreamChunk::ToolCallStart { id, name } => {
+                            pending.push((id, name, String::new()));
+                        }
+                        StreamChunk::ToolCallDelta { id, args } => {
+                            if let Some((_, _, buffer)) = pending
+                                .iter_mut()
+                                .rev()
+                                .find(|(call_id, _, _)| call_id == &id)
+                            {
+                                buffer.push_str(&args);
+                            }
+                        }
+                        StreamChunk::ToolCallEnd { id: _ } => {}
+                        StreamChunk::Finish { .. } => finish_seen = true,
                     }
                 }
-                StreamChunk::ToolCallEnd { id: _ } => {}
-                StreamChunk::Finish { .. } => finish_seen = true,
+                _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                    if is_cancelled() { return Ok(last_assistant); }
+                }
             }
         }
 
