@@ -249,6 +249,18 @@ impl SessionView {
                 self.reload_config();
                 self.persist_session_model();
                 self.note(format!("model: {}/{}", self.provider_name, self.model));
+                // Chain into thinking-effort selection if the model supports reasoning.
+                let supports_reasoning = self
+                    .config
+                    .provider
+                    .get(&self.provider_name)
+                    .and_then(|p| p.models.get(&self.model))
+                    .is_some_and(|m| {
+                        m.reasoning_options.is_some() || m.reasoning_send_effort.unwrap_or(false)
+                    });
+                if supports_reasoning {
+                    self.open_reasoning_dialog(None);
+                }
             }
             Err(err) => self.note(format!("failed to save model: {}", err)),
         }

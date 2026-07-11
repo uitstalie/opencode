@@ -351,36 +351,37 @@ impl SessionView {
             Some(spec) if spec.contains('/') => self.switch_model(spec),
             _ => {
                 let current = self.config.model.as_deref().unwrap_or("");
-                let mut options = self
+                let provider = &self.provider_name;
+                let mut options: Vec<_> = self
                     .config
                     .provider
-                    .iter()
-                    .flat_map(|(provider, cfg)| {
+                    .get(provider)
+                    .map(|cfg| {
                         let mut models = cfg.models.keys().cloned().collect::<Vec<_>>();
                         models.sort();
                         models
-                            .into_iter()
-                            .map(|model| {
-                                let spec = format!("{}/{}", provider, model);
-                                let active = if spec == current { "● " } else { "" };
-                                DialogOption::new(
-                                    spec.clone(),
-                                    format!("{}{}", active, spec),
-                                    "切换到这个已注册模型。",
-                                )
-                            })
-                            .collect::<Vec<_>>()
                     })
-                    .collect::<Vec<_>>();
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|model| {
+                        let spec = format!("{}/{}", provider, model);
+                        let active = if spec == current { "● " } else { "" };
+                        DialogOption::new(
+                            spec,
+                            format!("{}{}", active, model),
+                            "切换到这个模型。",
+                        )
+                    })
+                    .collect();
                 options.push(DialogOption::new(
                     "__reasoning__",
                     "Thinking effort",
-                    "设置模型 reasoning_effort：low / medium / high / off。",
+                    "设置 reasoning_effort：low / medium / high / off。",
                 ));
                 self.ui.dialog = Some(Dialog::new(
                     DialogKind::Model,
-                    "Models",
-                    "选择已注册模型，或进入 thinking effort 设置。",
+                    format!("{} · models", provider),
+                    "选择模型，或进入 thinking effort 设置。",
                     options,
                     0,
                 ));
