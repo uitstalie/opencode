@@ -128,7 +128,8 @@ impl SessionView {
         self.status = format!("connect: model for {}", provider);
     }
 
-    /// Finalize the guided switch: set the chosen model and clean up state.
+    /// Finalize the guided switch: set the chosen model, then offer
+    /// thinking-effort selection if the model supports reasoning.
     pub(super) fn switch_provider_model(&mut self, spec: &str) {
         self.config.model = Some(spec.to_string());
         match self.save_global_config() {
@@ -142,6 +143,19 @@ impl SessionView {
             Err(err) => self.note(format!("failed to save model: {}", err)),
         }
         self.ui.pending_provider = None;
+
+        // Chain into thinking-effort selection if the model supports reasoning.
+        let supports_reasoning = self
+            .config
+            .provider
+            .get(&self.provider_name)
+            .and_then(|p| p.models.get(&self.model))
+            .is_some_and(|m| {
+                m.reasoning_options.is_some() || m.reasoning_send_effort.unwrap_or(false)
+            });
+        if supports_reasoning {
+            self.open_reasoning_dialog(None);
+        }
     }
 
     pub(super) fn verify_provider(&mut self, provider_name: &str) {

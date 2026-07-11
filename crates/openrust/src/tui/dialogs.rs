@@ -389,7 +389,7 @@ impl SessionView {
         }
     }
 
-    fn open_reasoning_dialog(&mut self, selected: Option<&str>) {
+    pub(super) fn open_reasoning_dialog(&mut self, selected: Option<&str>) {
         let selected = match selected.or(self.reasoning_effort.as_deref()) {
             Some("low") => 0,
             Some("medium") => 1,
