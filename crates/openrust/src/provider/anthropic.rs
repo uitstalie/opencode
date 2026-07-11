@@ -112,13 +112,27 @@ impl LlmProvider for AnthropicProvider {
         if let Some(ref tc) = options.tool_choice {
             body["tool_choice"] = tc.clone();
         }
-        if let Some(ref effort) = options.reasoning_effort {
-            let budget = match effort.as_str() {
-                "low" => 8_000,
-                "high" => 32_000,
-                _ => 16_000,
-            };
-            body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": budget});
+
+        // Reasoning: `reasoning_options` from model config overrides the
+        // built-in effort→budget mapping.
+        let reasoning_opts = self
+            .models
+            .get(&options.model)
+            .and_then(|c| c.reasoning_options.as_ref());
+        if options.reasoning_effort.is_some() {
+            if let Some(opts) = reasoning_opts {
+                merge_options_into(&mut body, opts);
+            } else {
+                // Default: map effort level to token budget.
+                let effort = options.reasoning_effort.as_deref().unwrap_or("medium");
+                let budget = match effort {
+                    "low" => 8_000,
+                    "high" => 32_000,
+                    _ => 16_000,
+                };
+                body["thinking"] =
+                    serde_json::json!({"type": "enabled", "budget_tokens": budget});
+            }
         }
 
         // Deep-merge config options.

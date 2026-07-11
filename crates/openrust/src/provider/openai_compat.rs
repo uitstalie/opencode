@@ -26,6 +26,9 @@ pub struct OpenAICompatProvider {
     models: HashMap<String, ModelConfig>,
     provider_options: Option<Value>,
     headers: HashMap<String, String>,
+    /// Built-in defaults for known providers (DeepSeek, GLM, …).
+    /// Each field falls back to this when the model config doesn't set it.
+    defaults: ModelConfig,
 }
 
 impl OpenAICompatProvider {
@@ -42,6 +45,7 @@ impl OpenAICompatProvider {
             .connect_timeout(std::time::Duration::from_secs(15))
             .build()
             .unwrap_or_else(|_| Client::new());
+        let defaults = provider_defaults(&base_url);
         Self {
             name,
             api_key,
@@ -50,8 +54,35 @@ impl OpenAICompatProvider {
             models,
             provider_options,
             headers,
+            defaults,
         }
     }
+}
+
+/// Built-in reasoning/protocol defaults for well-known OpenAI-compatible APIs.
+///
+/// These are provider-level fallbacks: if the per-model `ModelConfig` already
+/// sets a field, the model config wins.  This just fills in the blanks so that
+/// popular providers work out-of-the-box without manual `reasoning_options`.
+fn provider_defaults(base_url: &str) -> ModelConfig {
+    let url = base_url.to_lowercase();
+    let mut d = ModelConfig::default();
+
+    if url.contains("deepseek.com") {
+        d.reasoning_options = Some(serde_json::json!({
+            "thinking": {"type": "enabled"}
+        }));
+    } else if url.contains("bigmodel.cn")
+        || url.contains("zhipuai.cn")
+        || url.contains("z.ai")
+    {
+        d.reasoning_options = Some(serde_json::json!({
+            "thinking": {"type": "enabled", "clear_thinking": false}
+        }));
+        d.reasoning_send_effort = Some(false);
+    }
+
+    d
 }
 
 #[async_trait]
@@ -110,19 +141,27 @@ impl LlmProvider for OpenAICompatProvider {
             body["top_p"] = serde_json::json!(top_p);
         }
 
-        // All provider-specific behaviour comes from ModelConfig, not hardcoded
-        // prefix matching. Defaults match standard OpenAI format.
+        // All provider-specific behaviour comes from config — no model-name
+        // prefix matching.  Resolution order for each field:
+        //   1. per-model ModelConfig (highest priority)
+        //   2. provider-level built-in defaults (DeepSeek, GLM, …)
+        //   3. standard OpenAI default
         let model_cfg = self.models.get(&options.model);
         let max_tokens_key = model_cfg
             .and_then(|c| c.max_tokens_key.as_deref())
+            .or(self.defaults.max_tokens_key.as_deref())
             .unwrap_or("max_tokens");
         let system_role = model_cfg
             .and_then(|c| c.system_role.as_deref())
+            .or(self.defaults.system_role.as_deref())
             .unwrap_or("system");
         let send_effort = model_cfg
             .and_then(|c| c.reasoning_send_effort)
+            .or(self.defaults.reasoning_send_effort)
             .unwrap_or(true);
-        let reasoning_opts = model_cfg.and_then(|c| c.reasoning_options.as_ref());
+        let reasoning_opts = model_cfg
+            .and_then(|c| c.reasoning_options.as_ref())
+            .or(self.defaults.reasoning_options.as_ref());
 
         if let Some(max_tok) = options.max_tokens {
             body[max_tokens_key] = serde_json::json!(max_tok);

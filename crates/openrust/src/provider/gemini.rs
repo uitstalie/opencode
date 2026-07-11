@@ -115,7 +115,13 @@ impl LlmProvider for GeminiProvider {
         if let Some(top_p) = options.top_p {
             gen_config.insert("topP".into(), serde_json::json!(top_p));
         }
-        if options.reasoning_effort.is_some() {
+        // Reasoning: skip default thinkingConfig if model config provides
+        // custom reasoning_options (they'll be merged below).
+        let reasoning_opts = self
+            .models
+            .get(&options.model)
+            .and_then(|c| c.reasoning_options.as_ref());
+        if options.reasoning_effort.is_some() && reasoning_opts.is_none() {
             gen_config.insert(
                 "thinkingConfig".into(),
                 serde_json::json!({"includeThoughts": true}),
@@ -143,6 +149,13 @@ impl LlmProvider for GeminiProvider {
         }
         if let Some(model_cfg) = self.models.get(&options.model)
             && let Some(ref opts) = model_cfg.options
+        {
+            merge_options_into(&mut body, opts);
+        }
+
+        // Apply custom reasoning options (overrides default thinkingConfig).
+        if options.reasoning_effort.is_some()
+            && let Some(opts) = reasoning_opts
         {
             merge_options_into(&mut body, opts);
         }
