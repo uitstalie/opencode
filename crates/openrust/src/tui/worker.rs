@@ -169,18 +169,14 @@ pub(super) fn spawn_prompt_worker(
 
             // Turn-start TODO injection: cross-turn persistence.
             // The supervisory list spans turns until all items are done.
+            // Uses role "user" (not "system") because many providers reject
+            // system messages in the middle of the conversation.
             if let (Some(store), Some(session_id)) =
                 (store_clone.as_ref(), session_id_clone.as_ref())
                 && let Ok(tasks) = store.list_tasks(session_id) {
                     let reminder = crate::tool::todowrite::todo_reminder(&tasks);
                     if !reminder.is_empty() {
-                        history.push(provider::Message {
-                            role: "system".to_string(),
-                            content: provider::MessageContent::text(reminder),
-                            name: None,
-                            tool_call_id: None,
-                            tool_calls: None,
-                        });
+                        history.push(provider::Message::user(reminder));
                     }
                 }
 
@@ -513,6 +509,8 @@ pub(super) fn spawn_prompt_worker(
                     }
                     // Inject TODO reminder only when the state changed
                     // (todowrite was called in this batch).
+                    // Uses role "user" because many providers reject system
+                    // messages in the middle of the conversation.
                     let todo_changed = tool_outputs
                         .iter()
                         .any(|(_, name, _, _, _, _)| name == "todowrite");
@@ -523,13 +521,7 @@ pub(super) fn spawn_prompt_worker(
                                 let reminder =
                                     crate::tool::todowrite::todo_reminder(&tasks);
                                 if !reminder.is_empty() {
-                                    history.push(provider::Message {
-                                        role: "system".to_string(),
-                                        content: provider::MessageContent::text(reminder),
-                                        name: None,
-                                        tool_call_id: None,
-                                        tool_calls: None,
-                                    });
+                                    history.push(provider::Message::user(reminder));
                                 }
                             }
 
