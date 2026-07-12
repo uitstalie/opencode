@@ -1,29 +1,29 @@
-//! Home view — the welcome/startup screen shown before a session starts.
+//! Home content — header, hint line, and status message for the Home view.
+//!
+//! Only renders the home-specific chrome. Input, status bar, toast,
+//! and modal overlays are handled as separate layers by the view system.
 
 use ratatui::{
     Frame,
-    layout::Alignment,
+    layout::{Alignment, Rect},
     style::Modifier,
     text::{Line, Span},
     widgets::{Paragraph, Wrap},
 };
 
-use crate::tui::components::{input::InputPanel, modal::ModalLayer, status::StatusBar, toast::Toast};
-use crate::tui::layout::home_layout;
 use crate::tui::SessionView;
 
-pub struct HomeView<'a> {
+pub struct HomeContent<'a> {
     view: &'a SessionView,
 }
 
-impl<'a> HomeView<'a> {
+impl<'a> HomeContent<'a> {
     pub fn new(view: &'a SessionView) -> Self {
         Self { view }
     }
 
-    pub fn render(&self, frame: &mut Frame) {
+    pub fn render(&self, frame: &mut Frame, header_area: Rect, hint_area: Rect, status_area: Rect) {
         let view = self.view;
-        let layout = home_layout(frame.area());
 
         let header = Paragraph::new(vec![
             Line::from(Span::styled(
@@ -32,12 +32,12 @@ impl<'a> HomeView<'a> {
             )),
             Line::from(""),
             Line::from(Span::styled(
-                "AI coding agent · Rust native runtime",
+                "AI coding agent \u{00b7} Rust native runtime",
                 view.theme.muted_style(),
             )),
             Line::from(Span::styled(
                 format!(
-                    "model {}/{} · agent {}",
+                    "model {}/{} \u{00b7} agent {}",
                     view.provider_name,
                     view.model,
                     view.current_session_agent().unwrap_or_else(|| "default".to_string())
@@ -47,26 +47,20 @@ impl<'a> HomeView<'a> {
         ])
         .alignment(Alignment::Center)
         .style(view.theme.panel_style());
-        frame.render_widget(header, layout.header);
-
-        InputPanel::new(view).render(frame, layout.input, "Prompt");
+        frame.render_widget(header, header_area);
 
         let hint = Paragraph::new(
-            "输入消息后 Enter 开始 · /connect 配置 provider · /models 选择模型 · Esc 退出",
+            "\u{8f93}\u{5165}\u{6d88}\u{606f}\u{540e} Enter \u{5f00}\u{59cb} \u{00b7} /connect \u{914d}\u{7f6e} provider \u{00b7} /models \u{9009}\u{62e9}\u{6a21}\u{578b} \u{00b7} Esc \u{9000}\u{51fa}",
         )
         .style(view.theme.muted_style())
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: false });
-        frame.render_widget(hint, layout.hint);
+        frame.render_widget(hint, hint_area);
 
         let status = Paragraph::new(view.home_status_message())
             .style(view.theme.muted_style())
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: false });
-        frame.render_widget(status, layout.status_message);
-
-        StatusBar::new(view).render(frame, layout.info, layout.status);
-        Toast::new(view).render(frame, frame.area());
-        ModalLayer::new(view).render(frame, frame.area());
+        frame.render_widget(status, status_area);
     }
 }

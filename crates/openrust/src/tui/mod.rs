@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use crossterm::{
     cursor,
-    event::{self, EnableBracketedPaste, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers},
+    event::{self, EnableBracketedPaste, EnableMouseCapture, Event},
     execute,
     terminal,
 };
@@ -37,6 +37,7 @@ mod latex;
 mod markdown;
 mod render;
 mod interaction;
+mod key_route;
 mod pending;
 mod persist;
 mod prompt_flow;
@@ -47,6 +48,7 @@ mod sidebar;
 mod templates;
 mod types;
 mod util;
+mod view;
 mod widgets;
 mod worker;
 
@@ -54,7 +56,7 @@ pub(in crate::tui) use types::*;
 use util::*;
 
 use dialog::{Dialog, DialogKind, slash_options};
-use input::{is_exit_command, load_script, should_exit};
+use input::{load_script};
 use render::{DisplayMessage, Theme, display_message_lines};
 use worker::{PromptEvent, PromptJob, SessionRuntimeGuard, spawn_prompt_worker};
 
@@ -236,6 +238,7 @@ impl SessionView {
                 area_top: Cell::new(0),
                 area_height: Cell::new(24),
                 dialog_area: Cell::new(None),
+                input_area: Cell::new(ratatui::layout::Rect::ZERO),
             },
         }
     }
@@ -342,153 +345,14 @@ impl SessionView {
 
             for event in events {
                 match event {
-                    Event::Key(key) => {
-                        if key.kind != KeyEventKind::Press {
-                            continue;
-                        }
-                        if self.ui.pending_permission.is_some() {
-                            self.handle_permission_key(key);
-                            handled_input = true;
-                        } else if self.ui.pending_question.is_some() {
-                            self.handle_question_key(key);
-                            handled_input = true;
-                        } else if self.ui.pending_text_input.is_some() {
-                            self.handle_text_input_key(key);
-                            handled_input = true;
-                        } else if self.handle_global_copy_key(key)? {
-                            handled_input = true;
-                        } else if should_exit(&key) {
+                    Event::Key(key) => match self.route_key(key, terminal)? {
+                        view::KeyFlow::Exit => {
                             should_break = true;
                             break;
-                        } else if self.view_mode == ViewMode::Home
-                            && self.ui.dialog.is_none()
-                            && self.handle_home_key(terminal, key)?
-                        {
-                            handled_input = true;
-                        } else {
-                            match key.code {
-                                KeyCode::Esc if self.ai_running => {
-                                    self.abort_current_turn();
-                                    handled_input = true;
-                                }
-                                KeyCode::Esc if self.ui.dialog.is_some() => {
-                                    self.ui.dialog = None;
-                                    handled_input = true;
-                                }
-                                KeyCode::Up if self.ui.dialog.is_some() => {
-                                    if let Some(dialog) = &mut self.ui.dialog {
-                                        dialog.previous();
-                                    }
-                                    handled_input = true;
-                                }
-                                KeyCode::Down if self.ui.dialog.is_some() => {
-                                    if let Some(dialog) = &mut self.ui.dialog {
-                                        dialog.next();
-                                    }
-                                    handled_input = true;
-                                }
-                                KeyCode::Up if self.view_mode == ViewMode::Session => {
-                                    self.scroll_session_up(3);
-                                    handled_input = true;
-                                }
-                                KeyCode::Down if self.view_mode == ViewMode::Session => {
-                                    self.scroll_session_down(3);
-                                    handled_input = true;
-                                }
-                                KeyCode::Enter => {
-                                    let mut skip_input = false;
-                                    if self.ui.dialog.is_some() {
-                                        let is_slash = matches!(
-                                            self.ui.dialog.as_ref().map(|d| &d.kind),
-                                            Some(DialogKind::SlashHelp)
-                                        );
-                                        self.submit_dialog_selection();
-                                        handled_input = true;
-                                        skip_input = !is_slash;
-                                    }
-                                    if !skip_input {
-                                        let input = self.input.trim().to_string();
-                                        self.clear_input();
-                                        handled_input = true;
-                                        if input.is_empty() {
-                                            skip_input = true;
-                                        }
-                                        if !skip_input && is_exit_command(&input) {
-                                            return Ok(());
-                                        }
-                                        if !skip_input {
-                                            match self.handle_slash_command(&input) {
-                                                SlashResult::Handled => {}
-                                                SlashResult::Prompt(template) => {
-                                                    self.enqueue_or_run_prompt(terminal, template)?;
-                                                }
-                                                SlashResult::NotHandled => {
-                                                    self.enqueue_or_run_prompt(terminal, input)?;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                KeyCode::Backspace => {
-                                    if self.input_editor.input(textarea_input_from_key_event(key)) {
-                                        self.sync_input_state();
-                                        self.sync_slash_help();
-                                        handled_input = true;
-                                    }
-                                }
-                                KeyCode::Delete => {
-                                    if self.input_editor.input(textarea_input_from_key_event(key)) {
-                                        self.sync_input_state();
-                                        self.sync_slash_help();
-                                        handled_input = true;
-                                    }
-                                }
-                                KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End => {
-                                    self.input_editor.input(textarea_input_from_key_event(key));
-                                    self.sync_input_state();
-                                    handled_input = true;
-                                }
-                                KeyCode::PageUp => {
-                                    self.scroll_session_up(8);
-                                    handled_input = true;
-                                }
-                                KeyCode::PageDown => {
-                                    self.scroll_session_down(8);
-                                    handled_input = true;
-                                }
-                                KeyCode::Char('e')
-                                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                                {
-                                    self.toggle_tool_collapse();
-                                    handled_input = true;
-                                }
-                                KeyCode::Char(_) => {
-                                    if !key.modifiers.contains(KeyModifiers::CONTROL)
-                                        && self.input_editor.input(textarea_input_from_key_event(key)) {
-                                            self.sync_input_state();
-                                            self.sync_slash_help();
-                                            handled_input = true;
-                                        }
-                                }
-                                KeyCode::Tab => {
-                                    let slash_value = self
-                                        .ui
-                                        .dialog
-                                        .as_ref()
-                                        .filter(|d| d.kind == DialogKind::SlashHelp)
-                                        .and_then(|d| d.selected_value().map(str::to_string));
-                                    if let Some(value) = slash_value {
-                                        self.set_input_text(&value);
-                                        self.sync_slash_help();
-                                    } else {
-                                        self.cycle_agent();
-                                    }
-                                    handled_input = true;
-                                }
-                                _ => {}
-                            }
                         }
-                    }
+                        view::KeyFlow::Consumed => handled_input = true,
+                        view::KeyFlow::Propagate => {}
+                    },
                     Event::Mouse(mouse) => {
                         if matches!(mouse.kind, crossterm::event::MouseEventKind::Moved) {
                             continue;
@@ -545,6 +409,24 @@ impl SessionView {
         if let Some(msg) = self.display.iter_mut().rev().find(|m| m.role == "tool") {
             msg.collapsed = !msg.collapsed;
         }
+    }
+
+    /// Whether the slash-help popup should render as a Float layer.
+    pub(super) fn slash_help_active(&self) -> bool {
+        self.ui.dialog.as_ref().is_some_and(|d| {
+            d.kind == DialogKind::SlashHelp && d.option_count() > 0
+        })
+    }
+
+    /// Whether a modal overlay (dialog/question/permission/text-input) should render.
+    pub(super) fn overlay_active(&self) -> bool {
+        self.ui
+            .dialog
+            .as_ref()
+            .is_some_and(|d| d.kind != DialogKind::SlashHelp)
+            || self.ui.pending_question.is_some()
+            || self.ui.pending_permission.is_some()
+            || self.ui.pending_text_input.is_some()
     }
 
     fn note(&mut self, message: String) {
@@ -824,46 +706,14 @@ impl SessionView {
 
         Ok(needs_render)
     }
-
-    fn handle_home_key(
-        &mut self,
-        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-        key: event::KeyEvent,
-    ) -> anyhow::Result<bool> {
-        match key.code {
-            KeyCode::Enter => {
-                let input = self.input.trim().to_string();
-                if input.is_empty() {
-                    self.clear_input();
-                    return Ok(true);
-                }
-                if is_exit_command(&input) {
-                    return Ok(false);
-                }
-                self.clear_input();
-                match self.handle_slash_command(&input) {
-                    SlashResult::Handled => return Ok(true),
-                    SlashResult::Prompt(template) => {
-                        self.create_session();
-                        self.enqueue_or_run_prompt(terminal, template)?;
-                        return Ok(true);
-                    }
-                    SlashResult::NotHandled => {}
-                }
-                self.create_session();
-                self.enqueue_or_run_prompt(terminal, input)?;
-                Ok(true)
-            }
-            KeyCode::Esc => Ok(false),
-            _ => Ok(false),
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::input::{is_exit_command, should_exit};
     use super::util::{home_input_hint, read_line_span};
+    use crossterm::event::{KeyCode, KeyModifiers};
 
     #[test]
     fn script_loader_ignores_comments_and_blanks() {

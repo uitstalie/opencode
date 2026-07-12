@@ -7,9 +7,7 @@ use ratatui::{
     backend::CrosstermBackend,
 };
 
-use super::components::{HomeView, InputPanel, ModalLayer, SessionPanel, SidebarPanel, StatusBar, Toast};
 use super::dialog::DialogKind;
-use super::layout;
 use super::SessionView;
 
 impl SessionView {
@@ -56,32 +54,11 @@ impl SessionView {
     }
 
     pub(super) fn render_frame(&self, frame: &mut Frame) {
-        if self.view_mode == super::ViewMode::Home {
-            HomeView::new(self).render(frame);
-            return;
+        let mut layers = self.build_layers(frame.area());
+        layers.sort_by_key(|l| l.z());
+
+        for layer in &layers {
+            layer.render(self, frame);
         }
-        self.render_session_frame(frame);
-    }
-
-    fn render_session_frame(&self, frame: &mut Frame) {
-        let task_count = self
-            .store
-            .as_ref()
-            .and_then(|s| s.task_count(&self.session_id).ok())
-            .unwrap_or(0);
-
-        let layout = layout::session_layout(
-            frame.area(),
-            self.sidebar_visible,
-            self.sidebar.is_some(),
-            task_count,
-        );
-
-        SidebarPanel::new(self).render(frame, layout.sidebar_files, layout.sidebar_todo);
-        SessionPanel::new(self).render(frame, layout.session);
-        InputPanel::new(self).render(frame, layout.input, "Input");
-        StatusBar::new(self).render(frame, layout.info, layout.status);
-        Toast::new(self).render(frame, frame.area());
-        ModalLayer::new(self).render(frame, frame.area());
     }
 }

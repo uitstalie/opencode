@@ -1,10 +1,12 @@
-//! Input panel — renders the input textarea, the inline slash-help
-//! popup floating above it, and pins the hardware cursor.
+//! Input panel — renders the input textarea and pins the hardware cursor.
+//!
+//! Slash-help popup rendering has been extracted to [`SlashHelpPopup`]
+//! and is handled as a separate Float layer by the view system.
 
 use ratatui::{
     Frame,
     layout::Rect,
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, Borders},
 };
 use tui_textarea::TextArea;
 
@@ -21,49 +23,12 @@ impl<'a> InputPanel<'a> {
         Self { view }
     }
 
-    /// Render the slash-help popup (if active), the input textarea,
-    /// and place the hardware cursor.  `title` distinguishes Home
-    /// ("Prompt") from Session ("Input").
+    /// Render the input textarea and place the hardware cursor.
+    /// `title` distinguishes Home ("Prompt") from Session ("Input").
     pub fn render(&self, frame: &mut Frame, area: Rect, title: &str) {
-        self.render_slash_help(frame, area);
-
         let input = self.input_widget(title);
         frame.render_widget(&input, area);
         self.place_cursor(frame, area);
-    }
-
-    fn render_slash_help(&self, frame: &mut Frame, input_area: Rect) {
-        let view = self.view;
-        let Some(dialog) = &view.ui.dialog else {
-            return;
-        };
-        if dialog.kind != DialogKind::SlashHelp {
-            return;
-        }
-        let count = dialog.option_count();
-        if count == 0 {
-            return;
-        }
-        let panel_height = (count as u16 + 2).min(input_area.y);
-        let panel_area = Rect {
-            x: input_area.x,
-            y: input_area.y.saturating_sub(panel_height),
-            width: input_area.width,
-            height: panel_height,
-        };
-        frame.render_widget(Clear, panel_area);
-        let lines = dialog.compact_lines(&view.theme);
-        let panel = Paragraph::new(lines)
-            .style(view.theme.panel_style())
-            .block(
-                Block::default()
-                    .title(" Commands ")
-                    .title_style(view.theme.title_style())
-                    .borders(Borders::ALL)
-                    .border_style(view.theme.border_style()),
-            )
-            .wrap(Wrap { trim: false });
-        frame.render_widget(panel, panel_area);
     }
 
     fn place_cursor(&self, frame: &mut Frame, area: Rect) {

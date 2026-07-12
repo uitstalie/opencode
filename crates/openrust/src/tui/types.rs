@@ -314,6 +314,8 @@ pub(super) struct RenderState {
     pub(super) area_top: Cell<u16>,
     pub(super) area_height: Cell<u16>,
     pub(super) dialog_area: Cell<Option<ratatui::layout::Rect>>,
+    /// Last input area rect from layout — used by SlashHelp Float layer.
+    pub(super) input_area: Cell<ratatui::layout::Rect>,
 }
 
 pub(super) struct DialogState {
