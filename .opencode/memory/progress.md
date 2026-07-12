@@ -210,15 +210,22 @@
 - **session delete 子命令**：`debug session delete <id>` + `delete-all`
 - **Esc 中断扩展到 LLM 调用层**：`tokio::select!` + 500ms 轮询 abort flag，覆盖 worker + run_agent 的 `llm.chat()` 和 `stream.next()`（此前仅中断 UI 层）
 - **context 用协议返回值**：`cache.total`（真实 prompt_tokens）替代 `token::estimate_messages` 估算；首回合无 cache 时回退到估算
-- **retry 倒计时**（待 commit）：provider 内部 `retry_with_backoff(0)` 只做单次请求，retry 逻辑移到 worker + run_agent 层；指数退避 2/4/8s；`is_retriable_error`（4xx 除 429/408 不重试）；`PromptEvent::RetryStatus` 推送倒计时到状态栏；三个 provider 均改为 `retry_with_backoff(0)`
+- **retry 倒计时**（commit `7343faf91`）：provider 内部 `retry_with_backoff(0)` 只做单次请求，retry 逻辑移到 worker + run_agent 层；指数退避 2/4/8s；`is_retriable_error`（4xx 除 429/408 不重试）；`PromptEvent::RetryStatus` 推送倒计时到状态栏；三个 provider 均改为 `retry_with_backoff(0)`
+
+### 功能补齐（commits `14dc67f7b` / `008e94228` / `e51f2f7da` / `bced87e82` / `f270c6514`）
+- **`/init` command-as-prompt**（`14dc67f7b`）：`SlashResult` 枚举（NotHandled/Handled/Prompt）+ `init_template()` 4-Phase 模板（Check → Investigate → Report → Scaffold）+ system prompt onboarding hint（AGENTS.md/.openrust/ 缺失时注入）+ slash help 补全
+- **TODO 400 修复**（`008e94228`）：worker 里 TODO reminder 从 `role=system` 改 `role=user`，GLM/DeepSeek 不接受对话中段 system 消息
+- **per-session model + reasoning 持久化**（`e51f2f7da`）：Session 加 `model` + `reasoning_effort` 字段，switch_session 恢复，switch_model/set_reasoning_effort 写入 session
+- **`/models` 改进**（`bced87e82`）：只显示当前 provider 的模型 + 选完后自动链入 thinking effort 对话框
+- **provider SSE 抽象 + emoji 乱码修复**（`f270c6514`）：提取 `sse_data_lines()` 到 `provider/mod.rs`，UTF-8 安全字节缓冲（`drain_complete_utf8`），三个 provider 重写去掉重复 SSE 解析代码
+
+### `detect_protocol` 去掉 fallback（已 commit + push + deploy）
+- 移除 `base_url` 猜测逻辑，`protocol` 字段必须显式配置
+- 无 `protocol` → 报错：`no protocol configured — add "protocol": "openai"`
+- 无效 `protocol` → 报错：`unknown protocol 'foo' — must be openai, anthropic, or gemini`
+- 所有内置 provider 已硬编码 `protocol`，不受影响
 
 ## 进行中
-- **`/init` command-as-prompt**：正在实现
-  1. `SlashCommand::Init(String)` + `SlashResult` 枚举（NotHandled/Handled/Prompt）已加到 types.rs
-  2. `handle_slash_command` 改返回 `SlashResult`，添加 Init 分支 — 适配中
-  3. `init_template()` 函数（从 dev-ai initialize.txt 改编，4 Phase：Check → Investigate → Report → Scaffold）— 待做
-  4. system prompt onboarding hint（AGENTS.md/.openrust/ 缺失时注入）— 待做
-  5. `/init` 解析 + `enqueue_or_run_prompt` 调用适配 — 待做
 - **mode → read_only 迁移**：用户决定彻底删除 `mode` 概念，agent 能力完全由 md 文件定义；工具集控制改由 frontmatter `read_only: true` 布尔实现。8 步计划已定但尚未实现
 - Phase 5 已启动：以最新 `dev-ai-release` 为基线审计 Phase 1 / 2 语义差距，首版矩阵见 `doc/openrust-phase5-alignment.md`
 

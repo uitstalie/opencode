@@ -32,3 +32,7 @@
 - `SlashResult` 枚举：`handle_slash_command` 从返回 `bool` 改为返回 `SlashResult`（NotHandled/Handled/Prompt），支持 command-as-prompt 模式——`/init` 返回 `Prompt(template)` 注入模板为用户消息让模型执行，而非 UI 动作 #architecture #decision #confirmed
 - context 显示优先用 `cache.total`（协议返回的 prompt_tokens），首回合无 cache 时回退到 `token::estimate_messages` 估算——用真实值替代估算值 #decision #confirmed
 - Esc 中断用 `tokio::select!` + 500ms 轮询 abort flag，不依赖 provider HTTP 超时——覆盖 worker 和 run_agent 的 `llm.chat()` + `stream.next()` #architecture #decision #confirmed
+- Provider `protocol` 字段必须显式声明（`openai`/`anthropic`/`gemini`），不允许 `base_url` 猜测 fallback——无 `protocol` 或无效值直接报错提示用户配置，而非静默兜底到 openai_compat #decision #confirmed
+- TODO reminder 用 `role=user` 而非 `role=system`：很多 provider（GLM/DeepSeek）不接受对话中段的 system 消息，返回 400 #decision #confirmed
+- `sse_data_lines()` 统一 SSE 解析：字节级 UTF-8 安全缓冲（`drain_complete_utf8`）+ 行缓冲 + strip `data:` 前缀，三个 provider 只写 JSON 解析不再各自解析 SSE——修复多字节字符（emoji/CJK）在 chunk 边界断裂导致的乱码 #architecture #decision #confirmed
+- Per-session 持久化：Session 存可选 `model` + `reasoning_effort`，`switch_session` 通过 `restore_session_runtime` 恢复 provider/llm，`switch_model`/`set_reasoning_effort` 写入 session——切回旧 session 恢复当时的模型/thinking 设置 #architecture #decision #confirmed
