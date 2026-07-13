@@ -326,13 +326,23 @@ impl SessionView {
                 text: "tool".to_string(),
                 tool_message_index: None,
             });
+            let mut spans = vec![
+                Span::styled(format!("{frame} "), self.theme.tool_style()),
+                Span::styled(tool.name.clone(), self.theme.tool_style()),
+            ];
+            if !tool.input.is_empty() {
+                let input = if tool.input.len() > 120 {
+                    format!("  {}", &tool.input[..117])
+                } else {
+                    format!("  {}", tool.input)
+                };
+                spans.push(Span::styled(input, self.theme.muted_style()));
+            }
+            spans.push(Span::styled(format!("  [{label} · {elapsed}]"), self.theme.muted_style()));
+            let text = spans.iter().map(|s| s.content.as_ref()).collect::<Vec<_>>().join("");
             all_rows.push(SessionRenderLine {
-                line: Line::from(vec![
-                    Span::styled(format!("{frame} "), self.theme.tool_style()),
-                    Span::styled(tool.name.clone(), self.theme.tool_style()),
-                    Span::styled(format!("  [{label} · {elapsed}]"), self.theme.muted_style()),
-                ]),
-                text: format!("{frame} {}  [{label} · {elapsed}]", tool.name),
+                line: Line::from(spans),
+                text,
                 tool_message_index: None,
             });
             all_rows.push(SessionRenderLine {

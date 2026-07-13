@@ -518,13 +518,14 @@ impl SessionView {
                     self.pending_tool_calls.push(PendingTool {
                         id,
                         name: name.clone(),
+                        input: String::new(),
                         state: ToolState::Created,
                         started_at: Instant::now(),
                     });
                     self.status = format!("tool call: {}", name);
                     needs_render = true;
                 }
-                PromptEvent::ToolRunning { id } => {
+                PromptEvent::ToolRunning { id, args } => {
                     if let Some(tool) = self
                         .pending_tool_calls
                         .iter_mut()
@@ -532,6 +533,7 @@ impl SessionView {
                         .find(|t| t.id == id)
                     {
                         tool.state = ToolState::Running;
+                        tool.input = tool_display_input(&tool.name, &args);
                     }
                     needs_render = true;
                 }
@@ -590,7 +592,14 @@ impl SessionView {
                             ("edit" | "write", Some((_, before, after))) => {
                                 format!("{}:\n{}", item.name, diff::unified_diff(before, after))
                             }
-                            _ => format!("{}:\n{}", item.name, item.result),
+                            _ => {
+                                let input = types::tool_display_input(&item.name, &item.args);
+                                if input.is_empty() {
+                                    format!("{}:\n{}", item.name, item.result)
+                                } else {
+                                    format!("{} · {}:\n{}", item.name, input, item.result)
+                                }
+                            }
                         };
                         self.display.push(render::DisplayMessage::new_collapsed(
                             "tool",

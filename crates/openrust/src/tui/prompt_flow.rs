@@ -167,7 +167,7 @@ impl SessionView {
                     self.status = format!("tool call: {}", name);
                     needs_render = true;
                 }
-                super::PromptEvent::ToolRunning { id: _ } => {
+                super::PromptEvent::ToolRunning { id: _, args: _ } => {
                     self.status = "tool running".to_string();
                     needs_render = true;
                 }

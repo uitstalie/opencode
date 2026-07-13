@@ -285,6 +285,7 @@ pub(super) enum ToolState {
 pub(super) struct PendingTool {
     pub(super) id: String,
     pub(super) name: String,
+    pub(super) input: String,
     pub(super) state: ToolState,
     pub(super) started_at: std::time::Instant,
 }
@@ -327,4 +328,33 @@ pub(super) struct DialogState {
     pub(super) pending_text_input: Option<PendingTextInput>,
     pub(super) connect_draft: Option<ConnectDraft>,
     pub(super) pending_provider: Option<String>,
+}
+
+/// Extract a short human-readable summary from tool name + raw JSON args.
+///
+/// Shows the most relevant field per tool so the user knows what the
+/// tool is doing while it runs.
+pub(super) fn tool_display_input(tool_name: &str, args: &str) -> String {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(args) else {
+        return String::new();
+    };
+    let obj = match v.as_object() {
+        Some(o) => o,
+        None => return String::new(),
+    };
+    let summary = match tool_name {
+        "bash" => obj.get("command").and_then(|v| v.as_str()).map(str::to_string),
+        "read" => obj.get("filePath").or_else(|| obj.get("path")).and_then(|v| v.as_str()).map(str::to_string),
+        "write" => obj.get("filePath").and_then(|v| v.as_str()).map(str::to_string),
+        "edit" => obj.get("filePath").and_then(|v| v.as_str()).map(str::to_string),
+        "glob" => obj.get("pattern").and_then(|v| v.as_str()).map(str::to_string),
+        "grep" => obj.get("pattern").and_then(|v| v.as_str()).map(str::to_string),
+        "task" => obj.get("prompt").and_then(|v| v.as_str()).map(str::to_string),
+        "webfetch" => obj.get("url").and_then(|v| v.as_str()).map(str::to_string),
+        "websearch" => obj.get("query").and_then(|v| v.as_str()).map(str::to_string),
+        "skill" => obj.get("name").and_then(|v| v.as_str()).map(str::to_string),
+        "todowrite" => return "updating todos".to_string(),
+        _ => obj.values().next().and_then(|v| v.as_str()).map(str::to_string),
+    };
+    summary.unwrap_or_default()
 }

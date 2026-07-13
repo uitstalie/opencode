@@ -30,7 +30,7 @@ pub(super) enum PromptEvent {
     AssistantDelta(String),
     ThinkingDelta(String),
     ToolCallStart { id: String, name: String },
-    ToolRunning { id: String },
+    ToolRunning { id: String, args: String },
     ToolBatch {
         assistant: String,
         tool_calls: Vec<serde_json::Value>,
@@ -405,7 +405,7 @@ pub(super) fn spawn_prompt_worker(
                                     else {
                                         continue;
                                     };
-                                    let _ = tx.send(PromptEvent::ToolRunning { id: call_id.clone() });
+                                    let _ = tx.send(PromptEvent::ToolRunning { id: call_id.clone(), args: args.clone() });
                                     let tool_output = crate::tool::run_tool(&name, &args, &tool_ctx).await;
                                     let has_image = matches!(&tool_output, crate::tool::ToolResult::Image { .. });
                                     let image_b64 = match &tool_output {
