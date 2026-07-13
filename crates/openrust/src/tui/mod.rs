@@ -430,9 +430,17 @@ impl SessionView {
     }
 
     fn note(&mut self, message: String) {
+        tracing::info!(session = %self.session_id, "{}", message);
         self.status = message.lines().next().unwrap_or("Ready").to_string();
         self.ui.toast = Some(message);
         self.ui.toast_deadline = Some(Instant::now() + Duration::from_secs(4));
+    }
+
+    fn note_error(&mut self, message: String) {
+        tracing::error!(session = %self.session_id, "{}", message);
+        self.status = message.lines().next().unwrap_or("Error").to_string();
+        self.ui.toast = Some(message);
+        self.ui.toast_deadline = Some(Instant::now() + Duration::from_secs(8));
     }
 
     fn abort_current_turn(&mut self) {
@@ -647,8 +655,7 @@ impl SessionView {
                     self.generate_memory();
                 }
                 PromptEvent::Error(err) => {
-                    tracing::error!(error = %err, "prompt worker error");
-                    self.note(format!("provider error: {}", err));
+                    self.note_error(format!("provider error: {}", err));
                     self.pending_tool_calls.clear();
                     self.ai_running = false;
                     self.prompt_job = None;

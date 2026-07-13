@@ -20,6 +20,9 @@ pub enum Cmd {
         /// API key override
         #[arg(long)]
         api_key: Option<String>,
+        /// Reasoning effort level (low/medium/high)
+        #[arg(long)]
+        reasoning: Option<String>,
     },
     /// List available models for a provider
     Models {
@@ -61,6 +64,7 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
             prompt,
             model,
             api_key,
+            reasoning,
         } => {
             let mut resolved = config
                 .get_provider(&name)
@@ -104,7 +108,7 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
                             max_tokens: None,
                             top_p: None,
                             system: None,
-                            reasoning_effort: None,
+                            reasoning_effort: reasoning.clone(),
                             tool_choice: None,
                         },
                     )

@@ -212,7 +212,7 @@ impl SessionView {
                 match store.upsert_task(&self.session_id, &id, agent, title.clone(), status.clone(), None)
                 {
                     Ok(task) => self.note(format!("task added: {} [{}]", task.title, task.status)),
-                    Err(err) => self.note(format!("failed to add task: {}", err)),
+                    Err(err) => self.note_error(format!("failed to add task: {}", err)),
                 }
             }
             Some("done") => {
@@ -227,7 +227,7 @@ impl SessionView {
                 match store.update_task_status(&self.session_id, id, "completed") {
                     Ok(Some(task)) => self.note(format!("task completed: {}", task.id)),
                     Ok(None) => self.note(format!("task not found: {}", id)),
-                    Err(err) => self.note(format!("failed to update task: {}", err)),
+                    Err(err) => self.note_error(format!("failed to update task: {}", err)),
                 }
             }
             _ => {
@@ -285,7 +285,7 @@ impl SessionView {
                         "saved API key for {}; run /connect verify {}",
                         provider, provider
                     )),
-                    Err(err) => self.note(format!("failed to save API key: {}", err)),
+                    Err(err) => self.note_error(format!("failed to save API key: {}", err)),
                 }
                 self.reload_config();
             }
@@ -508,7 +508,7 @@ impl SessionView {
                     provider, provider
                 ));
             }
-            Err(err) => self.note(format!("failed to save provider: {}", err)),
+            Err(err) => self.note_error(format!("failed to save provider: {}", err)),
         }
     }
 
@@ -648,7 +648,7 @@ impl SessionView {
                     draft.provider, draft.provider, draft.model
                 ));
             }
-            Err(err) => self.note(format!("failed to save provider: {}", err)),
+            Err(err) => self.note_error(format!("failed to save provider: {}", err)),
         }
     }
 }

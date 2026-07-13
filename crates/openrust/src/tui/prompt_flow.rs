@@ -31,7 +31,7 @@ impl SessionView {
         self.thought_duration = None;
         self.render(stdout, Some(&self.status))?;
         let Some(llm) = &self.llm else {
-            self.note("LLM not initialized".to_string());
+            self.note_error("LLM not initialized".to_string());
             return Ok(());
         };
         self.abort.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -99,8 +99,7 @@ impl SessionView {
         prompt: String,
     ) -> anyhow::Result<()> {
         if let Err(err) = self.handle_interactive_prompt(terminal, &prompt) {
-            tracing::error!(error = %err, "handle_interactive_prompt failed");
-            self.note(err.to_string());
+            self.note_error(err.to_string());
             self.render_terminal(terminal)?;
         }
         Ok(())
@@ -267,7 +266,7 @@ impl SessionView {
                     self.generate_memory();
                 }
                 super::PromptEvent::Error(err) => {
-                    self.note(format!("provider error: {}", err));
+                    self.note_error(format!("provider error: {}", err));
                     self.ai_running = false;
                     self.prompt_job = None;
                     self.assistant_preview.clear();
@@ -337,7 +336,7 @@ impl SessionView {
         self.render_terminal(terminal)?;
 
         let Some(llm) = &self.llm else {
-            self.note("LLM not initialized".to_string());
+            self.note_error("LLM not initialized".to_string());
             return Ok(());
         };
         self.abort.store(false, std::sync::atomic::Ordering::SeqCst);

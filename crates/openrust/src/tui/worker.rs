@@ -112,11 +112,12 @@ pub(super) fn spawn_prompt_worker(
     let (permission_tx, permission_rx) = mpsc::channel::<PermissionRequest>();
     let (followup_tx, followup_rx) = mpsc::channel::<String>();
     let (progress_tx, progress_rx) = mpsc::channel::<String>();
+    let session_id_for_log = session_id.clone();
     std::thread::spawn(move || {
         let rt = match tokio::runtime::Runtime::new() {
             Ok(rt) => rt,
             Err(err) => {
-                tracing::error!(error = %err, "tokio runtime creation failed");
+                tracing::error!(session = ?session_id_for_log, error = %err, "tokio runtime creation failed");
                 let _ = tx.send(PromptEvent::Error(err.to_string()));
                 return;
             }
@@ -567,7 +568,7 @@ pub(super) fn spawn_prompt_worker(
         }
 
         if let Err(err) = result {
-            tracing::error!(error = %err, "prompt worker failed");
+            tracing::error!(session = ?session_id_for_log, error = %err, "prompt worker failed");
             let _ = tx.send(PromptEvent::Error(err.to_string()));
         }
     });

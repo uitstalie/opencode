@@ -62,7 +62,7 @@ impl SessionView {
                 let label = agent_id.as_deref().unwrap_or("default");
                 self.note(format!("agent: {}", label));
             }
-            Err(err) => self.note(format!("failed to set agent: {}", err)),
+            Err(err) => self.note_error(format!("failed to set agent: {}", err)),
         }
     }
 
@@ -90,7 +90,7 @@ impl SessionView {
                 agent_id.as_deref().unwrap_or("default"),
                 tools
             )),
-            Err(err) => self.note(format!("failed to set agent: {}", err)),
+            Err(err) => self.note_error(format!("failed to set agent: {}", err)),
         }
     }
 
@@ -212,7 +212,7 @@ impl SessionView {
                 let label = resolved.as_deref().unwrap_or("default");
                 self.note(format!("agent: {}", label));
             }
-            Err(err) => self.note(format!("failed to set agent: {}", err)),
+            Err(err) => self.note_error(format!("failed to set agent: {}", err)),
         }
     }
 
@@ -436,11 +436,11 @@ impl SessionView {
             })
             .unwrap_or_else(|| target.to_string());
         let Ok(Some(session)) = store.get_session(&id) else {
-            self.note(format!("session not found: {}", target));
+            self.note_error(format!("session not found: {}", target));
             return;
         };
         let Ok(history) = store.effective_messages(&id) else {
-            self.note(format!("failed to load session: {}", id));
+            self.note_error(format!("failed to load session: {}", id));
             return;
         };
         self.session_id = id.clone();
@@ -545,7 +545,7 @@ impl SessionView {
         }
         match store.delete_session(&id) {
             Ok(()) => self.note(format!("session deleted: {}", id)),
-            Err(e) => self.note(format!("delete failed: {}", e)),
+            Err(e) => self.note_error(format!("delete failed: {}", e)),
         }
     }
 

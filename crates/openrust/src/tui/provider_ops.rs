@@ -14,11 +14,11 @@ use crate::core::{
 impl SessionView {
     pub(super) fn switch_provider(&mut self, provider: &str) {
         if !self.config.provider.contains_key(provider) {
-            self.note(format!("provider not configured: {}", provider));
+            self.note_error(format!("provider not configured: {}", provider));
             return;
         }
         let Some(model) = self.config.provider[provider].models.keys().next().cloned() else {
-            self.note(format!("provider has no registered models: {}", provider));
+            self.note_error(format!("provider has no registered models: {}", provider));
             return;
         };
         self.config.model = Some(format!("{}/{}", provider, model));
@@ -30,7 +30,7 @@ impl SessionView {
                     self.provider_name, self.model
                 ));
             }
-            Err(err) => self.note(format!("failed to save provider switch: {}", err)),
+            Err(err) => self.note_error(format!("failed to save provider switch: {}", err)),
         }
     }
 
@@ -38,7 +38,7 @@ impl SessionView {
     /// (empty submit = reuse existing key), then let the user pick a model.
     pub(super) fn begin_provider_switch(&mut self, provider: &str) {
         if !self.config.provider.contains_key(provider) {
-            self.note(format!("provider not configured: {}", provider));
+            self.note_error(format!("provider not configured: {}", provider));
             return;
         }
         self.ui.pending_provider = Some(provider.to_string());
@@ -79,7 +79,7 @@ impl SessionView {
         let key = value.trim();
         if !key.is_empty()
             && let Err(err) = crate::core::vault::Vault::save(&provider, key) {
-                self.note(format!("failed to save API key: {}", err));
+                self.note_error(format!("failed to save API key: {}", err));
             }
         self.reload_config();
         self.open_provider_model_dialog();
@@ -92,7 +92,7 @@ impl SessionView {
             return;
         };
         let Some(cfg) = self.config.provider.get(&provider) else {
-            self.note(format!("provider not configured: {}", provider));
+            self.note_error(format!("provider not configured: {}", provider));
             return;
         };
         let mut models: Vec<_> = cfg.models.keys().cloned().collect();
@@ -146,7 +146,7 @@ impl SessionView {
                     self.provider_name, self.model
                 ));
             }
-            Err(err) => self.note(format!("failed to save model: {}", err)),
+            Err(err) => self.note_error(format!("failed to save model: {}", err)),
         }
         self.ui.pending_provider = None;
 
@@ -166,15 +166,15 @@ impl SessionView {
 
     pub(super) fn verify_provider(&mut self, provider_name: &str) {
         let Some(resolved) = self.config.get_provider(provider_name) else {
-            self.note(format!("provider not configured: {}", provider_name));
+            self.note_error(format!("provider not configured: {}", provider_name));
             return;
         };
         if resolved.api_key.is_none() {
-            self.note(format!("provider {} has no API key", provider_name));
+            self.note_error(format!("provider {} has no API key", provider_name));
             return;
         }
         let Some(provider) = provider::create_provider(&resolved) else {
-            self.note(format!("failed to create provider: {}", provider_name));
+            self.note_error(format!("failed to create provider: {}", provider_name));
             return;
         };
         let Some(model) = self
@@ -190,7 +190,7 @@ impl SessionView {
         let rt = match tokio::runtime::Runtime::new() {
             Ok(rt) => rt,
             Err(err) => {
-                self.note(format!("runtime error: {}", err));
+                self.note_error(format!("runtime error: {}", err));
                 return;
             }
         };
@@ -228,7 +228,7 @@ impl SessionView {
             });
         match result {
             Ok(()) => self.note(format!("provider verified: {}", provider_name)),
-            Err(err) => self.note(format!("provider verify failed: {}", err)),
+            Err(err) => self.note_error(format!("provider verify failed: {}", err)),
         }
     }
 
@@ -240,7 +240,7 @@ impl SessionView {
             .get(provider)
             .is_some_and(|p| p.models.contains_key(model))
         {
-            self.note(format!("model not registered: {}", spec));
+            self.note_error(format!("model not registered: {}", spec));
             return;
         }
         self.config.model = Some(format!("{}/{}", provider, model));
@@ -262,7 +262,7 @@ impl SessionView {
                     self.open_reasoning_dialog(None);
                 }
             }
-            Err(err) => self.note(format!("failed to save model: {}", err)),
+            Err(err) => self.note_error(format!("failed to save model: {}", err)),
         }
     }
 
@@ -292,7 +292,7 @@ impl SessionView {
                     Some(r) => r,
                     None => {
                         self.config = config;
-                        self.note(format!("provider '{}' not found in config", provider_name));
+                        self.note_error(format!("provider '{}' not found in config", provider_name));
                         return;
                     }
                 };
@@ -314,7 +314,7 @@ impl SessionView {
                         } else {
                             "unknown protocol or misconfigured provider"
                         };
-                        self.note(format!(
+                        self.note_error(format!(
                             "failed to create provider '{}': {} — use /connect to configure",
                             provider_name, reason
                         ));
@@ -322,7 +322,7 @@ impl SessionView {
                 }
             }
             None => {
-                self.note("no model configured — use /connect to set up a provider".to_string());
+                self.note_error("no model configured — use /connect to set up a provider".to_string());
             }
         }
         self.config = config;

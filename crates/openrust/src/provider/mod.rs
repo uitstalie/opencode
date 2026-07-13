@@ -65,6 +65,7 @@ where
                     continue;
                 }
                 let text = response.text().await.unwrap_or_default();
+                tracing::error!("Provider returned {}: {}", status, text);
                 return Err(anyhow::anyhow!("HTTP {}: {}", status, text));
             }
             Err(e) => {

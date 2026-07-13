@@ -156,7 +156,7 @@ impl LlmProvider for OpenAICompatProvider {
             );
         }
 
-        tracing::debug!("POST {} (model={})", url, options.model);
+        tracing::debug!("POST {} (model={}) body={}", url, options.model, body);
 
         // Merge provider-level headers with model-level overrides.
         let mut headers = self.headers.clone();
