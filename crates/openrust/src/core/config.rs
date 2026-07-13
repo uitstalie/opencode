@@ -565,9 +565,8 @@ impl Config {
         if !has_key {
             let vault_path = crate::core::vault::Vault::path().display().to_string();
             errors.push(format!(
-                "No API key for provider '{}'. Set `provider.{}.api_key` in config, \
-                 or store it encrypted with: openrust debug vault set {} <key> \
-                 (vault: {})",
+                "No API key for provider '{}'. Run /connect key {} <key> inside openrust, \
+                 or store it with: openrust debug vault set {} <key> (vault: {})",
                 provider_name, provider_name, provider_name, vault_path
             ));
         }

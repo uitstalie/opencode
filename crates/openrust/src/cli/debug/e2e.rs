@@ -50,19 +50,12 @@ fn load_run_config(cwd: &std::path::Path) -> anyhow::Result<E2eRunConfig> {
 }
 
 fn resolve_run_config(config: Config) -> anyhow::Result<E2eRunConfig> {
-    let provider_name = config
-        .provider
-        .keys()
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("No provider configured"))?
-        .to_string();
+    let (provider_name, model) = config
+        .resolve_provider_model()
+        .ok_or_else(|| anyhow::anyhow!("No model configured (set \"model\": \"provider/model\" in config)"))?;
     let resolved = config
         .get_provider(&provider_name)
         .ok_or_else(|| anyhow::anyhow!("Provider '{}' not found", provider_name))?;
-    let model = config
-        .resolve_provider_model()
-        .map(|(_, model)| model)
-        .ok_or_else(|| anyhow::anyhow!("No model configured"))?;
 
     Ok(E2eRunConfig {
         config,
@@ -96,7 +89,7 @@ mod tests {
     #[test]
     fn resolve_run_config_errors_without_provider() {
         let err = resolve_run_config(Config::default()).unwrap_err();
-        assert_eq!(err.to_string(), "No provider configured");
+        assert!(err.to_string().contains("No model configured"));
     }
 
     #[test]
@@ -107,7 +100,7 @@ mod tests {
 
         let err = load_run_config(dir.path()).unwrap_err();
 
-        assert_ne!(err.to_string(), "No provider configured");
+        assert_ne!(err.to_string(), "No model configured");
     }
 
     #[test]
@@ -127,7 +120,10 @@ mod tests {
         })
         .unwrap_err();
 
-        assert_eq!(err.to_string(), "No model configured");
+        assert_eq!(
+            err.to_string(),
+            "No model configured (set \"model\": \"provider/model\" in config)"
+        );
     }
 
     #[test]

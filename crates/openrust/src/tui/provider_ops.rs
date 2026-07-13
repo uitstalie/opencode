@@ -283,10 +283,21 @@ impl SessionView {
     }
 
     pub(super) fn reload_config(&mut self) {
-        if let Ok(config) = Config::load(&self.cwd) {
-            if let Some((provider_name, model)) = config.resolve_provider_model()
-                && let Some(resolved) = config.get_provider(&provider_name)
-                    && let Some(llm) = provider::create_provider(&resolved) {
+        let Ok(config) = Config::load(&self.cwd) else {
+            return;
+        };
+        match config.resolve_provider_model() {
+            Some((provider_name, model)) => {
+                let resolved = match config.get_provider(&provider_name) {
+                    Some(r) => r,
+                    None => {
+                        self.config = config;
+                        self.note(format!("provider '{}' not found in config", provider_name));
+                        return;
+                    }
+                };
+                match provider::create_provider(&resolved) {
+                    Some(llm) => {
                         self.provider_name = provider_name;
                         self.model = model;
                         if let Ok(prompt) = crate::system_prompt::SystemPrompt::from_config(
@@ -297,8 +308,24 @@ impl SessionView {
                         }
                         self.llm = Some(Arc::from(llm));
                     }
-            self.config = config;
+                    None => {
+                        let reason = if resolved.api_key.is_none() {
+                            "no API key"
+                        } else {
+                            "unknown protocol or misconfigured provider"
+                        };
+                        self.note(format!(
+                            "failed to create provider '{}': {} — use /connect to configure",
+                            provider_name, reason
+                        ));
+                    }
+                }
+            }
+            None => {
+                self.note("no model configured — use /connect to set up a provider".to_string());
+            }
         }
+        self.config = config;
     }
 
     pub(super) fn save_global_config(&self) -> anyhow::Result<()> {
