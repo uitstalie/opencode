@@ -197,6 +197,9 @@ pub(super) struct SessionRenderLine {
     pub(super) line: ratatui::text::Line<'static>,
     pub(super) text: String,
     pub(super) tool_message_index: Option<usize>,
+    /// Logical message index; adjacent lines with the same index
+    /// belong to the same message block for background styling.
+    pub(super) message_index: usize,
 }
 
 #[derive(Default)]

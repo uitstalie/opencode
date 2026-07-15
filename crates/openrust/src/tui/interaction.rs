@@ -255,9 +255,12 @@ impl SessionView {
                     } else {
                         None
                     },
+                    message_index,
                 });
             }
         }
+
+        let mut live_idx = self.display.len();
 
         if self.ai_running && !self.thinking_preview.trim().is_empty()
             && self.thinking_mode == ThinkingMode::Show {
@@ -280,6 +283,7 @@ impl SessionView {
                     line: Line::from(header_spans),
                     text: "thinking".to_string(),
                     tool_message_index: None,
+                    message_index: live_idx,
                 });
                 for line in self.thinking_preview.lines() {
                     let rendered = super::latex::latex_to_unicode(line);
@@ -288,8 +292,10 @@ impl SessionView {
                         text: Self::flatten_line(&line),
                         line,
                         tool_message_index: None,
+                        message_index: live_idx,
                     });
                 }
+                live_idx += 1;
             }
 
         if self.ai_running && !self.assistant_preview.trim().is_empty() {
@@ -300,6 +306,7 @@ impl SessionView {
                 )]),
                 text: "assistant".to_string(),
                 tool_message_index: None,
+                message_index: live_idx,
             });
             for line in self.assistant_preview.lines() {
                 let rendered = super::latex::latex_to_unicode(line);
@@ -308,18 +315,21 @@ impl SessionView {
                     text: Self::flatten_line(&line),
                     line,
                     tool_message_index: None,
+                    message_index: live_idx,
                 });
             }
+            live_idx += 1;
         }
 
         // Live tool-call cards: created/running, before results land.
-        for tool in &self.pending_tool_calls {
+        for (tool_idx, tool) in self.pending_tool_calls.iter().enumerate() {
             let frame = spinner_frame();
             let label = match tool.state {
                 ToolState::Created => "created",
                 ToolState::Running => "running",
             };
             let elapsed = format_elapsed(tool.started_at);
+            let tool_msg_idx = live_idx + tool_idx;
             all_rows.push(SessionRenderLine {
                 line: Line::from(Span::styled(
                     "tool".to_string(),
@@ -327,6 +337,7 @@ impl SessionView {
                 )),
                 text: "tool".to_string(),
                 tool_message_index: None,
+                message_index: tool_msg_idx,
             });
             let mut spans = vec![
                 Span::styled(format!("{frame} "), self.theme.tool_style()),
@@ -346,11 +357,13 @@ impl SessionView {
                 line: Line::from(spans),
                 text,
                 tool_message_index: None,
+                message_index: tool_msg_idx,
             });
             all_rows.push(SessionRenderLine {
                 line: Line::from(""),
                 text: String::new(),
                 tool_message_index: None,
+                message_index: tool_msg_idx,
             });
         }
 
@@ -362,6 +375,7 @@ impl SessionView {
                 )),
                 text: "No messages yet. Type in the input window and press Enter.".to_string(),
                 tool_message_index: None,
+                message_index: 0,
             });
         }
 
@@ -369,6 +383,8 @@ impl SessionView {
         let all_rows: Vec<SessionRenderLine> = all_rows
             .into_iter()
             .flat_map(|row| {
+                let msg_idx = row.message_index;
+                let tool_idx = row.tool_message_index;
                 Self::wrap_line_by_width(&row.line, content_width)
                     .into_iter()
                     .map(move |line| {
@@ -376,7 +392,8 @@ impl SessionView {
                         SessionRenderLine {
                             line,
                             text,
-                            tool_message_index: row.tool_message_index,
+                            tool_message_index: tool_idx,
+                            message_index: msg_idx,
                         }
                     })
             })

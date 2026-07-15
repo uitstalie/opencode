@@ -31,22 +31,14 @@ impl<'a> SessionPanel<'a> {
         view.render.area_height.set(area.height);
 
         // Scan rows and render message blocks sequentially.
-        // A "block" is a contiguous run of non-empty lines (one message).
-        // Empty lines serve as transparent separators between blocks.
+        // A "block" is a contiguous run of lines sharing the same message_index.
         let mut y = area.y;
         let mut i = 0;
         while i < rows.len() && y < area.y + area.height {
-            // Skip empty separator lines.
-            while i < rows.len() && rows[i].text.is_empty() {
-                i += 1;
-                y += 1;
-            }
-            if i >= rows.len() || y >= area.y + area.height {
-                break;
-            }
-            // Collect this message block's non-empty lines.
+            let block_msg_index = rows[i].message_index;
+            // Collect all lines with the same message_index.
             let block_start = i;
-            while i < rows.len() && !rows[i].text.is_empty() {
+            while i < rows.len() && rows[i].message_index == block_msg_index {
                 i += 1;
             }
             let block_end = i;
