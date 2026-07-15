@@ -25,6 +25,7 @@ pub(super) enum DialogKind {
     Model,
     ReasoningEffort,
     SlashHelp,
+    Theme,
 }
 
 impl Dialog {
@@ -224,6 +225,7 @@ pub(super) fn slash_options(input: &str) -> Vec<DialogOption> {
             "Initialize project: check, investigate, scaffold docs",
         ),
         ("/dream", "dream", "Summarize sessions into dreaming memory"),
+        ("/theme", "theme", "Switch color theme"),
         ("/exit", "exit", "Exit the TUI"),
     ];
 

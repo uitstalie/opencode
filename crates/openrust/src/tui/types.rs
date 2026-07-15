@@ -262,6 +262,7 @@ pub(super) enum SlashCommand {
     Reload,
     Dream,
     Init(String),
+    Theme(Vec<String>),
 }
 
 /// Result of `handle_slash_command`.

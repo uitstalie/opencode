@@ -41,6 +41,7 @@ pub(super) fn parse_slash_command(input: &str) -> Option<SlashCommand> {
         "/diff" => Some(SlashCommand::Diff),
         "/reload" => Some(SlashCommand::Reload),
         "/dream" => Some(SlashCommand::Dream),
+        "/theme" => Some(SlashCommand::Theme(parts.map(str::to_string).collect())),
         "/init" => {
             let args = input.strip_prefix("/init").unwrap_or("").trim().to_string();
             Some(SlashCommand::Init(args))

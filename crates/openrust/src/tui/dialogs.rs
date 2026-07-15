@@ -412,6 +412,58 @@ impl SessionView {
         self.status = "dialog: thinking effort".to_string();
     }
 
+    pub(super) fn open_theme_dialog(&mut self, args: Vec<String>) {
+        // Direct switch: /theme dark
+        if let Some(name) = args.first()
+            && super::theme::builtin(name).is_some()
+        {
+            self.switch_theme(name);
+            return;
+        }
+        // Show dialog with built-in themes
+        let themes = ["dark", "light", "hacker"];
+        let options: Vec<_> = themes
+            .iter()
+            .map(|name| {
+                let active = if self.theme_name() == *name { "● " } else { "" };
+                DialogOption::new(
+                    *name,
+                    format!("{}{}", active, name),
+                    "切换到这个主题。",
+                )
+            })
+            .collect();
+        self.ui.dialog = Some(Dialog::new(
+            DialogKind::Theme,
+            "Theme",
+            "选择颜色主题。",
+            options,
+            0,
+        ));
+        self.status = "dialog: theme".to_string();
+    }
+
+    fn switch_theme(&mut self, name: &str) {
+        if let Some(tf) = super::theme::builtin(name)
+            && let Some(t) = tf.to_theme()
+        {
+            self.theme = t;
+            self.note(format!("theme: {}", name));
+            // Persist to config
+            self.config.theme = Some(serde_json::Value::String(name.to_string()));
+            if let Err(e) = self.config.save_global() {
+                tracing::warn!("failed to save theme config: {}", e);
+            }
+        }
+    }
+
+    fn theme_name(&self) -> &str {
+        match &self.config.theme {
+            Some(serde_json::Value::String(s)) => s.as_str(),
+            _ => "dark",
+        }
+    }
+
     pub(super) fn submit_dialog_selection(&mut self) {
         let Some(dialog) = self.ui.dialog.take() else {
             return;
@@ -473,6 +525,11 @@ impl SessionView {
                 if let Some(value) = dialog.selected_value() {
                     self.set_input_text(value);
                     self.ui.dialog = None;
+                }
+            }
+            DialogKind::Theme => {
+                if let Some(name) = dialog.selected_value() {
+                    self.switch_theme(name);
                 }
             }
         }
