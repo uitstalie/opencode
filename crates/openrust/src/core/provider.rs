@@ -223,6 +223,8 @@ pub struct RequestOptions {
     pub system: Option<String>,
     pub reasoning_effort: Option<String>,
     pub tool_choice: Option<serde_json::Value>,
+    /// Stable session identity used by providers that support prompt caching.
+    pub cache_key: Option<String>,
 }
 
 impl RequestOptions {
@@ -235,6 +237,7 @@ impl RequestOptions {
             system: None,
             reasoning_effort: None,
             tool_choice: None,
+            cache_key: None,
         }
     }
 }

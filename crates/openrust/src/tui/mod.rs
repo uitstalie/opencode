@@ -113,6 +113,8 @@ struct SessionView {
     cwd: PathBuf,
     session_id: String,
     store: Option<SessionStore>,
+    /// Explicit agent selection for the active session; `None` means default.
+    session_agent: Option<String>,
     messages: Vec<Message>,
     display: Vec<DisplayMessage>,
     transcript: Vec<String>,
@@ -192,6 +194,7 @@ impl SessionView {
             cwd,
             session_id,
             store,
+            session_agent: None,
             messages: Vec::new(),
             display: Vec::new(),
             transcript: Vec::new(),
@@ -801,6 +804,13 @@ mod tests {
 
         assert!(view.ui.pending_text_input.is_some());
         assert!(view.ui.connect_draft.is_some());
+
+        let input = view.ui.pending_text_input.take().unwrap();
+        (input.submit)(&mut view, "custom-provider");
+        assert_eq!(
+            view.ui.dialog.as_ref().map(|dialog| dialog.kind),
+            Some(DialogKind::ConnectProtocol)
+        );
     }
 
     #[test]

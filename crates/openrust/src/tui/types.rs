@@ -205,6 +205,7 @@ pub(super) struct SessionRenderLine {
 #[derive(Default)]
 pub(super) struct ConnectDraft {
     pub(super) provider: String,
+    pub(super) protocol: String,
     pub(super) base_url: String,
     pub(super) api_key: String,
     pub(super) models: Vec<ModelDraft>,
@@ -222,6 +223,7 @@ pub(super) struct ModelDraft {
     pub(super) wire_name: Option<String>,
     pub(super) context_limit: Option<u64>,
     pub(super) output_limit: Option<u64>,
+    pub(super) input_limit: Option<u64>,
     pub(super) reasoning: bool,
     pub(super) send_reasoning_effort: bool,
 }
@@ -234,6 +236,7 @@ pub(super) enum ModelEditStep {
     WireName,
     ContextLimit,
     OutputLimit,
+    InputLimit,
     Reasoning,
 }
 

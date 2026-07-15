@@ -196,6 +196,7 @@ pub(crate) fn sse_data_lines(
         let mut stream = response.bytes_stream();
         let mut byte_buf: Vec<u8> = Vec::new();
         let mut line_buf = String::new();
+        let mut data_lines: Vec<String> = Vec::new();
 
         while let Some(chunk_result) = stream.next().await {
             let chunk = match chunk_result {
@@ -210,28 +211,46 @@ pub(crate) fn sse_data_lines(
             while let Some(pos) = line_buf.find('\n') {
                 let line = line_buf[..pos].trim().to_string();
                 line_buf = line_buf[pos + 1..].to_string();
-                if line.is_empty() || line.starts_with(':') {
+                if line.is_empty() {
+                    if !data_lines.is_empty() {
+                        let data = data_lines.join("\n");
+                        data_lines.clear();
+                        if data == "[DONE]" {
+                            return;
+                        }
+                        tracing::trace!(chars = data.len(), "SSE data event received");
+                        yield Ok(data);
+                    }
+                    continue;
+                }
+                if line.starts_with(':') {
                     continue;
                 }
                 let Some(data) = line.strip_prefix("data:") else {
+                    if data_lines.is_empty() && line.starts_with('{') {
+                        tracing::trace!(chars = line.len(), "JSON response event received");
+                        yield Ok(line);
+                    }
                     continue;
                 };
-                let data = data.strip_prefix(' ').unwrap_or(data);
-                if data == "[DONE]" {
-                    return;
-                }
-                yield Ok(data.to_string());
+                data_lines.push(data.strip_prefix(' ').unwrap_or(data).to_string());
             }
         }
 
-        // Drain any remaining partial line (no trailing newline).
-        let remaining = line_buf.trim();
-        if !remaining.is_empty()
-            && let Some(data) = remaining.strip_prefix("data:")
-        {
-            let data = data.trim_start();
+        // Drain any remaining partial line (no trailing newline). Some relays
+        // return a complete JSON response instead of SSE despite stream=true.
+        let remaining = line_buf.trim_end_matches(['\r', '\n']);
+        if !remaining.is_empty() {
+            if let Some(data) = remaining.strip_prefix("data:") {
+                data_lines.push(data.strip_prefix(' ').unwrap_or(data).to_string());
+            } else if data_lines.is_empty() {
+                yield Ok(remaining.to_string());
+            }
+        }
+        if !data_lines.is_empty() {
+            let data = data_lines.join("\n");
             if data != "[DONE]" && !data.is_empty() {
-                yield Ok(data.to_string());
+                yield Ok(data);
             }
         }
     }

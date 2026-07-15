@@ -20,6 +20,10 @@ use std::path::{Path, PathBuf};
 /// Full openrust configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
+    /// Tracing filter, for example `openrust=debug` or `info`.
+    #[serde(default)]
+    pub log_level: Option<String>,
+
     #[serde(default)]
     pub model: Option<String>,
 
@@ -175,6 +179,9 @@ impl ModelConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelLimit {
     #[serde(default)]
+    pub input: Option<u64>,
+
+    #[serde(default)]
     pub context: Option<u64>,
 
     #[serde(default)]
@@ -205,7 +212,7 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
                     "deepseek-chat".into(),
                     ModelConfig {
                         name: Some("deepseek-chat".into()),
-                        limit: Some(ModelLimit { context: Some(64_000), output: Some(8_192) }),
+                        limit: Some(ModelLimit { input: None, context: Some(64_000), output: Some(8_192) }),
                         reasoning_options: Some(thinking_on.clone()),
                         ..Default::default()
                     },
@@ -214,7 +221,7 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
                     "deepseek-reasoner".into(),
                     ModelConfig {
                         name: Some("deepseek-reasoner".into()),
-                        limit: Some(ModelLimit { context: Some(64_000), output: Some(32_768) }),
+                        limit: Some(ModelLimit { input: None, context: Some(64_000), output: Some(32_768) }),
                         reasoning_options: Some(thinking_on.clone()),
                         ..Default::default()
                     },
@@ -223,7 +230,7 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
                     "deepseek-v4-pro".into(),
                     ModelConfig {
                         name: Some("deepseek-v4-pro".into()),
-                        limit: Some(ModelLimit { context: Some(128_000), output: Some(8_192) }),
+                        limit: Some(ModelLimit { input: None, context: Some(128_000), output: Some(8_192) }),
                         reasoning_options: Some(thinking_on),
                         ..Default::default()
                     },
@@ -247,7 +254,7 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
                     "glm-4.6".into(),
                     ModelConfig {
                         name: Some("glm-4.6".into()),
-                        limit: Some(ModelLimit { context: Some(128_000), output: Some(16_384) }),
+                        limit: Some(ModelLimit { input: None, context: Some(128_000), output: Some(16_384) }),
                         reasoning_options: Some(glm_thinking.clone()),
                         reasoning_send_effort: Some(false),
                         ..Default::default()
@@ -257,7 +264,7 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
                     "glm-4-plus".into(),
                     ModelConfig {
                         name: Some("glm-4-plus".into()),
-                        limit: Some(ModelLimit { context: Some(128_000), output: Some(4_096) }),
+                        limit: Some(ModelLimit { input: None, context: Some(128_000), output: Some(4_096) }),
                         reasoning_options: Some(glm_thinking),
                         reasoning_send_effort: Some(false),
                         ..Default::default()
@@ -282,7 +289,7 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
                     "glm-5.2".into(),
                     ModelConfig {
                         name: Some("glm-5.2".into()),
-                        limit: Some(ModelLimit { context: Some(1_000_000), output: Some(128_000) }),
+                        limit: Some(ModelLimit { input: None, context: Some(1_000_000), output: Some(128_000) }),
                         reasoning_options: Some(coding_thinking.clone()),
                         reasoning_send_effort: Some(true),
                         ..Default::default()
@@ -292,7 +299,7 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
                     "glm-5.1".into(),
                     ModelConfig {
                         name: Some("glm-5.1".into()),
-                        limit: Some(ModelLimit { context: Some(1_000_000), output: Some(128_000) }),
+                        limit: Some(ModelLimit { input: None, context: Some(1_000_000), output: Some(128_000) }),
                         reasoning_options: Some(coding_thinking.clone()),
                         reasoning_send_effort: Some(true),
                         ..Default::default()
@@ -302,7 +309,7 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
                     "glm-5-turbo".into(),
                     ModelConfig {
                         name: Some("glm-5-turbo".into()),
-                        limit: Some(ModelLimit { context: Some(200_000), output: Some(128_000) }),
+                        limit: Some(ModelLimit { input: None, context: Some(200_000), output: Some(128_000) }),
                         reasoning_options: Some(coding_thinking.clone()),
                         reasoning_send_effort: Some(false),
                         ..Default::default()
@@ -312,7 +319,7 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
                     "glm-4.7".into(),
                     ModelConfig {
                         name: Some("glm-4.7".into()),
-                        limit: Some(ModelLimit { context: Some(128_000), output: Some(16_384) }),
+                        limit: Some(ModelLimit { input: None, context: Some(128_000), output: Some(16_384) }),
                         reasoning_options: Some(coding_thinking),
                         reasoning_send_effort: Some(false),
                         ..Default::default()
@@ -328,7 +335,7 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
     // ── OpenAI ────────────────────────────────────────
     let oai_reasoning = |name: &str, ctx: u64, out: u64| ModelConfig {
         name: Some(name.into()),
-        limit: Some(ModelLimit { context: Some(ctx), output: Some(out) }),
+        limit: Some(ModelLimit { input: None, context: Some(ctx), output: Some(out) }),
         max_tokens_key: Some("max_completion_tokens".into()),
         system_role: Some("developer".into()),
         ..Default::default()
@@ -343,7 +350,7 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
                     "gpt-4o".into(),
                     ModelConfig {
                         name: Some("gpt-4o".into()),
-                        limit: Some(ModelLimit { context: Some(128_000), output: Some(16_384) }),
+                        limit: Some(ModelLimit { input: None, context: Some(128_000), output: Some(16_384) }),
                         ..Default::default()
                     },
                 ),
@@ -351,7 +358,7 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
                     "gpt-4o-mini".into(),
                     ModelConfig {
                         name: Some("gpt-4o-mini".into()),
-                        limit: Some(ModelLimit { context: Some(128_000), output: Some(16_384) }),
+                        limit: Some(ModelLimit { input: None, context: Some(128_000), output: Some(16_384) }),
                         ..Default::default()
                     },
                 ),
@@ -375,7 +382,7 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
                     "claude-sonnet-4-5-20250514".into(),
                     ModelConfig {
                         name: Some("claude-sonnet-4-5-20250514".into()),
-                        limit: Some(ModelLimit { context: Some(200_000), output: Some(16_384) }),
+                        limit: Some(ModelLimit { input: None, context: Some(200_000), output: Some(16_384) }),
                         ..Default::default()
                     },
                 ),
@@ -383,7 +390,7 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
                     "claude-haiku-4-5-20251001".into(),
                     ModelConfig {
                         name: Some("claude-haiku-4-5-20251001".into()),
-                        limit: Some(ModelLimit { context: Some(200_000), output: Some(8_192) }),
+                        limit: Some(ModelLimit { input: None, context: Some(200_000), output: Some(8_192) }),
                         ..Default::default()
                     },
                 ),
@@ -405,7 +412,7 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
                     "gemini-2.5-pro".into(),
                     ModelConfig {
                         name: Some("gemini-2.5-pro".into()),
-                        limit: Some(ModelLimit { context: Some(1_048_576), output: Some(65_536) }),
+                        limit: Some(ModelLimit { input: None, context: Some(1_048_576), output: Some(65_536) }),
                         ..Default::default()
                     },
                 ),
@@ -413,7 +420,7 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
                     "gemini-2.5-flash".into(),
                     ModelConfig {
                         name: Some("gemini-2.5-flash".into()),
-                        limit: Some(ModelLimit { context: Some(1_048_576), output: Some(65_536) }),
+                        limit: Some(ModelLimit { input: None, context: Some(1_048_576), output: Some(65_536) }),
                         ..Default::default()
                     },
                 ),
@@ -505,6 +512,9 @@ impl Config {
     }
 
     fn merge(&mut self, other: Config) {
+        if other.log_level.is_some() {
+            self.log_level = other.log_level;
+        }
         if other.model.is_some() {
             self.model = other.model;
         }
@@ -601,12 +611,43 @@ impl Config {
     pub fn resolve_context_window(&self) -> u64 {
         let model_spec = self.model.as_deref().unwrap_or("");
         let (provider_name, model_name, _) = parse_model_spec(model_spec);
+        let limit = self.provider
+            .get(provider_name)
+            .and_then(|p| p.models.get(model_name))
+            .and_then(|m| m.limit.as_ref());
+        if let Some(context) = limit.and_then(|l| l.context) {
+            return context;
+        }
+        if let (Some(input), Some(output)) = (
+            limit.and_then(|l| l.input),
+            limit.and_then(|l| l.output),
+        ) {
+            return input.saturating_add(output);
+        }
+        limit
+            .and_then(|l| l.input)
+            .unwrap_or_else(|| default_context_window(model_name))
+    }
+
+    /// Resolve the configured maximum output tokens for the active model.
+    pub fn resolve_output_tokens(&self) -> Option<u32> {
+        let (provider_name, model_name, _) = parse_model_spec(self.model.as_deref().unwrap_or(""));
         self.provider
             .get(provider_name)
             .and_then(|p| p.models.get(model_name))
             .and_then(|m| m.limit.as_ref())
-            .and_then(|l| l.context)
-            .unwrap_or_else(|| default_context_window(model_name))
+            .and_then(|l| l.output)
+            .and_then(|value| u32::try_from(value).ok())
+    }
+
+    /// Resolve the configured maximum input tokens for the active model.
+    pub fn resolve_input_tokens(&self) -> Option<u64> {
+        let (provider_name, model_name, _) = parse_model_spec(self.model.as_deref().unwrap_or(""));
+        self.provider
+            .get(provider_name)
+            .and_then(|p| p.models.get(model_name))
+            .and_then(|m| m.limit.as_ref())
+            .and_then(|l| l.input)
     }
 
     /// Get provider config by name, resolving API key from:
@@ -855,6 +896,34 @@ mod tests {
     }
 
     #[test]
+    fn model_limits_resolve_context_and_output_tokens() {
+        let config = Config {
+            model: Some("custom/model".to_string()),
+            provider: HashMap::from([(
+                "custom".to_string(),
+                ProviderConfig {
+                    models: HashMap::from([(
+                        "model".to_string(),
+                        ModelConfig {
+                            limit: Some(ModelLimit {
+                                input: Some(16_000),
+                                context: None,
+                                output: Some(4_000),
+                            }),
+                            ..Default::default()
+                        },
+                    )]),
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+
+        assert_eq!(config.resolve_context_window(), 20_000);
+        assert_eq!(config.resolve_output_tokens(), Some(4_000));
+    }
+
+    #[test]
     fn global_config_dir_is_stable_path() {
         let dir = Config::global_config_dir();
         assert!(dir.ends_with("openrust"));
@@ -869,6 +938,7 @@ mod tests {
     #[test]
     fn provider_deep_merge_preserves_models_from_both_layers() {
         let mut global = Config {
+            log_level: None,
             model: None,
             theme: None,
             background_model: None,
@@ -886,6 +956,7 @@ mod tests {
         };
 
         let project = Config {
+            log_level: None,
             model: Some("shared/project-model".to_string()),
             theme: None,
             background_model: None,
@@ -956,6 +1027,7 @@ mod tests {
     #[test]
     fn provider_api_key_falls_back_to_config_value() {
         let config = Config {
+            log_level: None,
             model: Some("config-only-provider/deepseek-v4-pro".to_string()),
             theme: None,
             background_model: None,

@@ -319,6 +319,7 @@ mod tests {
     #[test]
     fn from_config_uses_explicit_config_model() {
         let config = Config {
+            log_level: None,
             model: Some("deepseek/deepseek-v4-pro".to_string()),
             theme: None,
             background_model: None,

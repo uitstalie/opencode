@@ -36,3 +36,11 @@
 - TODO reminder 用 `role=user` 而非 `role=system`：很多 provider（GLM/DeepSeek）不接受对话中段的 system 消息，返回 400 #decision #confirmed
 - `sse_data_lines()` 统一 SSE 解析：字节级 UTF-8 安全缓冲（`drain_complete_utf8`）+ 行缓冲 + strip `data:` 前缀，三个 provider 只写 JSON 解析不再各自解析 SSE——修复多字节字符（emoji/CJK）在 chunk 边界断裂导致的乱码 #architecture #decision #confirmed
 - Per-session 持久化：Session 存可选 `model` + `reasoning_effort`，`switch_session` 通过 `restore_session_runtime` 恢复 provider/llm，`switch_model`/`set_reasoning_effort` 写入 session——切回旧 session 恢复当时的模型/thinking 设置 #architecture #decision #confirmed
+
+- `message_options` 为 per-message 原始 wire 字段注入（provider 不加工直接序列化），`options` 为语义化 key（CamelCase→snake_case 归一化后合并）——两者职责分离，避免格式转换与语义 key 混在一起 #architecture #decision #confirmed
+- 主题字段从 `private` 改为 `pub(super)`，`Theme::from_colors()` 在 `tui/render.rs` 定义但 `tui/theme.rs` 需要访问字段构建主题——super 可见性保证模块内共享而不导出到 core #decision #confirmed
+- `Config.theme` 用 `Option<serde_json::Value>`（非类型化 struct），纯 JSON 序列化透传——避免 core→tui 层的类型依赖，保持 `core/config.rs` 零 tui 引入 #architecture #decision #confirmed
+- `/theme` 对话框用独立 `DialogKind::Theme`，切换后通过 `save_global()` 持久化到 `config.theme`——不与 provider/model 对话框复用，避免状态混淆 #decision #confirmed
+- Model 配置循环用独立的 `DialogKind::ModelConfigLoop`（非复用 `ProviderModel`），避免与现有 provider 切换流的状态机歧义 #decision #confirmed
+- HTTP 层 retry 重新启用（`max_retries=1`，此前为 0）：连接错误在 HTTP 层重试一次后再上抛给 worker 层——减少 worker 层无谓的重试开销，provider 负责瞬时故障，worker 负责策略级重试 #architecture #decision #confirmed
+- `build_http_client()` 统一网络配置：TCP keep-alive 30s、HTTP/2 PING 30s 间隔 10s 超时、连接超时 15s→8s——所有 provider 共享同一客户端配置，减少连接断开导致的流中断 #architecture #decision #confirmed

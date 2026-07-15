@@ -106,6 +106,8 @@ pub(super) fn spawn_prompt_worker(
     tool_spec: String,
     presets: std::collections::HashMap<String, Vec<String>>,
     context_window: u64,
+    input_tokens: Option<u64>,
+    output_tokens: Option<u32>,
 ) -> PromptJob {
     let (tx, rx) = mpsc::channel();
     let (ask_tx, ask_rx) = mpsc::channel::<AskRequest>();
@@ -273,7 +275,16 @@ pub(super) fn spawn_prompt_worker(
                 // Trim history to fit within context window before calling LLM.
                 // Always keep the first 2 messages (system/user pair) and last 4.
                 if context_window > 0 {
-                    compaction::trim_history(&mut history, context_window, 24_000, 6);
+                    compaction::trim_history(
+                        &mut history,
+                        input_tokens.unwrap_or(context_window),
+                        if input_tokens.is_some() {
+                            0
+                        } else {
+                            output_tokens.map(u64::from).unwrap_or(24_000)
+                        },
+                        6,
+                    );
                 }
 
                 // Retryable + abortable LLM call: on retriable errors, show
@@ -295,7 +306,7 @@ pub(super) fn spawn_prompt_worker(
                         RequestOptions {
                             model: model.clone(),
                             temperature: None,
-                            max_tokens: None,
+                            max_tokens: output_tokens,
                             top_p: None,
                             system: Some(system.clone()),
                             reasoning_effort: reasoning_effort.clone(),
@@ -304,6 +315,9 @@ pub(super) fn spawn_prompt_worker(
                             } else {
                                 None
                             },
+                            cache_key: session_id_clone
+                                .as_deref()
+                                .map(str::to_string),
                         },
                     );
                     tokio::pin!(chat);
@@ -378,6 +392,7 @@ pub(super) fn spawn_prompt_worker(
                             }
                             match chunk? {
                                 StreamChunk::TextDelta(text) => {
+                                    tracing::trace!(chars = text.len(), "prompt worker received assistant text");
                                     assistant_text.push_str(&text);
                                     let _ = tx.send(PromptEvent::AssistantDelta(text));
                                 }
@@ -426,6 +441,7 @@ pub(super) fn spawn_prompt_worker(
                                 }
                                 StreamChunk::Finish { usage, .. } => {
                                     finish_seen = true;
+                                    tracing::debug!(usage = ?usage, "prompt worker received stream finish");
                                     if let Some(u) = &usage {
                                         current_total_tokens = u.total_tokens;
                                         total_prompt_tokens = total_prompt_tokens.saturating_add(u.prompt_tokens);

@@ -30,10 +30,10 @@ impl SessionView {
         self.session_scroll = 0;
         self.view_mode = ViewMode::Session;
         self.reload_agents();
+        self.session_agent = self.default_agent_id();
         if let Some(store) = &self.store {
-            let agent = self.default_agent_id();
             let _ = store.ensure_session(&self.session_id);
-            let _ = store.set_session_agent(&self.session_id, agent.clone());
+            let _ = store.set_session_agent(&self.session_id, self.session_agent.clone());
         }
         self.note(format!("session: created {}", self.session_id));
     }
@@ -59,6 +59,7 @@ impl SessionView {
         };
         match store.set_session_agent(&self.session_id, agent_id.clone()) {
             Ok(()) => {
+                self.session_agent = agent_id.clone();
                 let label = agent_id.as_deref().unwrap_or("default");
                 self.note(format!("agent: {}", label));
             }
@@ -85,20 +86,20 @@ impl SessionView {
         let agent_id = Some(agents[next].id.clone());
         let tools = agents[next].tools.clone();
         match store.set_session_agent(&self.session_id, agent_id.clone()) {
-            Ok(()) => self.note(format!(
-                "agent: {} (tools: {})",
-                agent_id.as_deref().unwrap_or("default"),
-                tools
-            )),
+            Ok(()) => {
+                self.session_agent = agent_id.clone();
+                self.note(format!(
+                    "agent: {} (tools: {})",
+                    agent_id.as_deref().unwrap_or("default"),
+                    tools
+                ));
+            }
             Err(err) => self.note_error(format!("failed to set agent: {}", err)),
         }
     }
 
     pub(super) fn current_session_agent(&self) -> Option<String> {
-        self.store
-            .as_ref()
-            .and_then(|store| store.get_session_agent(&self.session_id).ok().flatten())
-            .or_else(|| self.default_agent_id())
+        self.session_agent.clone().or_else(|| self.default_agent_id())
     }
 
     /// Resolve the current session's agent from the cached `self.agents`.
@@ -209,6 +210,7 @@ impl SessionView {
         };
         match store.set_session_agent(&self.session_id, resolved.clone()) {
             Ok(()) => {
+                self.session_agent = resolved.clone();
                 let label = resolved.as_deref().unwrap_or("default");
                 self.note(format!("agent: {}", label));
             }

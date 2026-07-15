@@ -119,7 +119,10 @@ fn modal_active(view: &SessionView) -> bool {
 
 fn dialog_rect(dialog: &Dialog, area: Rect) -> Rect {
     match dialog.kind {
-        DialogKind::Provider | DialogKind::ProviderModel | DialogKind::Model => modal_rect(62, 16, 4, area),
+        DialogKind::Provider
+        | DialogKind::ProviderModel
+        | DialogKind::ConnectProtocol
+        | DialogKind::Model => modal_rect(62, 16, 4, area),
         DialogKind::Agent | DialogKind::Task => modal_rect(60, 15, 4, area),
         DialogKind::SlashHelp => modal_rect(56, 12, 3, area),
         DialogKind::Thinking | DialogKind::ReasoningEffort | DialogKind::Theme => modal_rect(52, 12, 4, area),

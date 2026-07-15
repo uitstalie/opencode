@@ -108,6 +108,22 @@ impl LlmProvider for OpenAICompatProvider {
             merge_options_into(&mut body, &normalize_options(opts));
         }
 
+        // `setCacheKey` is an OpenCode-compatible control option, not an API
+        // field. Resolve it after body options are merged so model options win.
+        let mut headers = self.headers.clone();
+        if let Some(model_cfg) = self.models.get(&options.model) {
+            for (k, v) in &model_cfg.headers {
+                headers.insert(k.clone(), v.clone());
+            }
+        }
+        apply_cache_key(
+            &mut body,
+            &mut headers,
+            self.provider_options.as_ref(),
+            self.models.get(&options.model).and_then(|m| m.options.as_ref()),
+            options.cache_key.as_deref(),
+        );
+
         if let Some(temp) = options.temperature {
             body["temperature"] = serde_json::json!(temp);
         }
@@ -163,14 +179,6 @@ impl LlmProvider for OpenAICompatProvider {
 
         tracing::debug!("POST {} (model={}) body={}", url, options.model, body);
 
-        // Merge provider-level headers with model-level overrides.
-        let mut headers = self.headers.clone();
-        if let Some(model_cfg) = self.models.get(&options.model) {
-            for (k, v) in &model_cfg.headers {
-                headers.insert(k.clone(), v.clone());
-            }
-        }
-
         let response = retry_with_backoff(1, || {
             let client = &self.client;
             let url = &url;
@@ -189,6 +197,12 @@ impl LlmProvider for OpenAICompatProvider {
             }
         })
         .await?;
+
+        tracing::debug!(
+            status = %response.status(),
+            content_type = ?response.headers().get(reqwest::header::CONTENT_TYPE),
+            "OpenAI-compatible response received"
+        );
 
         let chunk_stream = async_stream::stream! {
             // Tracks active tool calls by (streaming index, call id).
@@ -210,14 +224,30 @@ impl LlmProvider for OpenAICompatProvider {
                 let parsed: Value = match serde_json::from_str(&data) {
                     Ok(v) => v,
                     Err(e) => {
-                        tracing::warn!("Failed to parse SSE: {}", e);
+                        tracing::warn!(error = %e, data = %data, "Failed to parse OpenAI-compatible stream event");
                         continue;
                     }
                 };
 
                 let Some(choices) = parsed["choices"].as_array() else {
+                    tracing::debug!("OpenAI-compatible response event has no choices");
                     continue;
                 };
+
+                // Some compatible relays send usage in a final event with
+                // `choices: []`, so do not discard that event.
+                if choices.is_empty()
+                    && let Some(usage) = parse_usage(&parsed)
+                {
+                    tracing::debug!(
+                        total_tokens = usage.total_tokens,
+                        prompt_tokens = usage.prompt_tokens,
+                        "OpenAI-compatible usage event received"
+                    );
+                    finish_emitted = true;
+                    yield Ok(StreamChunk::Finish { usage: Some(usage), reason: None });
+                    continue;
+                }
 
                 for choice in choices {
                     let delta = &choice["delta"];
@@ -269,17 +299,16 @@ impl LlmProvider for OpenAICompatProvider {
                     }
 
                     // Text content
-                    if let Some(content) = delta["content"].as_str()
-                        && !content.is_empty() {
-                            yield Ok(StreamChunk::TextDelta(content.to_string()));
-                        }
+                    if let Some(content) = delta_text(&delta["content"]) {
+                        tracing::trace!(chars = content.len(), "OpenAI-compatible text delta received");
+                        yield Ok(StreamChunk::TextDelta(content));
+                    }
 
                     // Reasoning content (DeepSeek uses reasoning_content, o1 uses reasoning)
                     for key in &["reasoning_content", "reasoning"] {
-                        if let Some(reasoning) = delta[key].as_str()
-                            && !reasoning.is_empty() {
-                                yield Ok(StreamChunk::ReasoningDelta(reasoning.to_string()));
-                            }
+                        if let Some(reasoning) = delta_text(&delta[key]) {
+                            yield Ok(StreamChunk::ReasoningDelta(reasoning));
+                        }
                         }
 
                     // Finish reason
@@ -314,6 +343,7 @@ impl LlmProvider for OpenAICompatProvider {
                         }
                         call_ids.clear();
                         finish_emitted = true;
+                        tracing::debug!(reason = %reason, usage = ?usage, "OpenAI-compatible stream finished");
                         yield Ok(StreamChunk::Finish {
                             usage,
                             reason: Some(reason.to_string()),
@@ -371,6 +401,98 @@ fn serialize_content(content: &MessageContent) -> serde_json::Value {
     }
 }
 
+fn apply_cache_key(
+    body: &mut Value,
+    headers: &mut HashMap<String, String>,
+    provider_options: Option<&Value>,
+    model_options: Option<&Value>,
+    cache_key: Option<&str>,
+) {
+    for key in ["setCacheKey", "cacheKeyField", "cacheKeyHeader", "cacheKeyPlacement"] {
+        body.as_object_mut().map(|object| object.remove(key));
+    }
+
+    let setting = |key: &str| {
+        model_options
+            .and_then(|opts| opts.get(key))
+            .or_else(|| provider_options.and_then(|opts| opts.get(key)))
+    };
+    if !setting("setCacheKey").and_then(Value::as_bool).unwrap_or(false) {
+        return;
+    }
+    let Some(cache_key) = cache_key else {
+        return;
+    };
+
+    let field = setting("cacheKeyField")
+        .and_then(Value::as_str)
+        .unwrap_or("prompt_cache_key");
+    let header = setting("cacheKeyHeader").and_then(Value::as_str);
+    match setting("cacheKeyPlacement").and_then(Value::as_str) {
+        Some("header") => {
+            if let Some(header) = header {
+                headers.insert(header.to_string(), cache_key.to_string());
+            }
+        }
+        Some("both") => {
+            body[field] = serde_json::json!(cache_key);
+            if let Some(header) = header {
+                headers.insert(header.to_string(), cache_key.to_string());
+            }
+        }
+        _ => body[field] = serde_json::json!(cache_key),
+    }
+}
+
+fn delta_text(value: &Value) -> Option<String> {
+    if let Some(text) = value.as_str() {
+        return (!text.is_empty()).then(|| text.to_string());
+    }
+    let parts = value.as_array()?;
+    let text = parts
+        .iter()
+        .filter_map(|part| part.get("text").and_then(Value::as_str))
+        .collect::<String>();
+    (!text.is_empty()).then_some(text)
+}
+
+fn parse_usage(value: &Value) -> Option<Usage> {
+    let usage = value["usage"].as_object()?;
+    let cache_hit = usage
+        .get("prompt_cache_hit_tokens")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            usage
+                .get("prompt_tokens_details")
+                .and_then(Value::as_object)
+                .and_then(|details| details.get("cached_tokens"))
+                .and_then(Value::as_u64)
+        })
+        .unwrap_or(0);
+    let reasoning = usage
+        .get("completion_tokens_details")
+        .and_then(Value::as_object)
+        .and_then(|details| details.get("reasoning_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    Some(Usage {
+        prompt_tokens: usage
+            .get("prompt_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        completion_tokens: usage
+            .get("completion_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        total_tokens: usage
+            .get("total_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        prompt_cache_hit_tokens: cache_hit,
+        reasoning_tokens: reasoning,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,5 +526,88 @@ mod tests {
         let mut target = serde_json::json!({"store": {"k": "v"}});
         merge_options_into(&mut target, &serde_json::json!({"store": false}));
         assert_eq!(target["store"], false);
+    }
+
+    #[test]
+    fn delta_text_accepts_string_and_content_parts() {
+        assert_eq!(
+            delta_text(&serde_json::json!("hello")),
+            Some("hello".to_string())
+        );
+        assert_eq!(
+            delta_text(&serde_json::json!([
+                {"type": "text", "text": "hello"},
+                {"type": "text", "text": " world"}
+            ])),
+            Some("hello world".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_usage_accepts_cache_and_reasoning_details() {
+        let usage = parse_usage(&serde_json::json!({
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 20,
+                "total_tokens": 30,
+                "prompt_tokens_details": {"cached_tokens": 4},
+                "completion_tokens_details": {"reasoning_tokens": 6}
+            }
+        }))
+        .expect("usage should parse");
+        assert_eq!(usage.prompt_cache_hit_tokens, 4);
+        assert_eq!(usage.reasoning_tokens, 6);
+        assert_eq!(usage.total_tokens, 30);
+    }
+
+    #[test]
+    fn parse_usage_accepts_missing_optional_details() {
+        let usage = parse_usage(&serde_json::json!({
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 20,
+                "total_tokens": 30
+            }
+        }))
+        .expect("usage should parse");
+
+        assert_eq!(usage.prompt_cache_hit_tokens, 0);
+        assert_eq!(usage.reasoning_tokens, 0);
+        assert_eq!(usage.total_tokens, 30);
+    }
+
+    #[test]
+    fn cache_key_is_mapped_to_openai_body_field() {
+        let mut body = serde_json::json!({"setCacheKey": true});
+        let mut headers = HashMap::new();
+        let options = serde_json::json!({"setCacheKey": true});
+        apply_cache_key(&mut body, &mut headers, Some(&options), None, Some("session-1"));
+        assert_eq!(body["prompt_cache_key"], "session-1");
+        assert!(body.get("setCacheKey").is_none());
+    }
+
+    #[test]
+    fn cache_key_can_target_header_without_leaking_control_options() {
+        let mut body = serde_json::json!({"setCacheKey": true});
+        let mut headers = HashMap::new();
+        let options = serde_json::json!({
+            "setCacheKey": true,
+            "cacheKeyHeader": "X-Prompt-Cache-Key",
+            "cacheKeyPlacement": "header"
+        });
+        apply_cache_key(&mut body, &mut headers, Some(&options), None, Some("session-1"));
+        assert!(body.get("prompt_cache_key").is_none());
+        assert_eq!(headers.get("X-Prompt-Cache-Key"), Some(&"session-1".to_string()));
+        assert!(body.get("setCacheKey").is_none());
+    }
+
+    #[test]
+    fn model_cache_options_override_provider_options() {
+        let mut body = serde_json::json!({});
+        let mut headers = HashMap::new();
+        let provider = serde_json::json!({"setCacheKey": false});
+        let model = serde_json::json!({"setCacheKey": true, "cacheKeyField": "promptCacheKey"});
+        apply_cache_key(&mut body, &mut headers, Some(&provider), Some(&model), Some("session-1"));
+        assert_eq!(body["promptCacheKey"], "session-1");
     }
 }

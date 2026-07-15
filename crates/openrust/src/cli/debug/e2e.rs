@@ -106,6 +106,7 @@ mod tests {
     #[test]
     fn resolve_run_config_errors_without_model() {
         let err = resolve_run_config(Config {
+            log_level: None,
             model: None,
             theme: None,
             background_model: None,
@@ -130,6 +131,7 @@ mod tests {
     #[test]
     fn create_run_provider_errors_without_api_key() {
         let run_config = resolve_run_config(Config {
+            log_level: None,
             model: Some("missing-key-provider/deepseek-chat".to_string()),
             theme: None,
             background_model: None,
@@ -160,6 +162,7 @@ mod tests {
     fn render_run_system_surfaces_system_prompt_errors() {
         let run_config = E2eRunConfig {
             config: Config {
+                log_level: None,
                 model: None,
                 theme: None,
                 background_model: None,

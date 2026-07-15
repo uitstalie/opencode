@@ -225,6 +225,16 @@
 - 无效 `protocol` → 报错：`unknown protocol 'foo' — must be openai, anthropic, or gemini`
 - 所有内置 provider 已硬编码 `protocol`，不受影响
 
+### TUI 交互增强 + 主题系统 + /connect 升级
+- TUI 架构重构：Layer 系统、key routing、slash-help float 独立抽取
+- 网络栈加固：`build_http_client()` 启用 TCP keep-alive (30s)、HTTP/2 PING (30s/10s)、connect_timeout 15s→8s；HTTP 层 retry_with_backoff(0→1)，三 provider 全量覆盖
+- Provider options：`message_options`（per-message 原始 JSON 注入）+ `normalize_options()`（CamelCase→snake_case）跨 openai_compat/anthropic/gemini
+- LaTeX/Markdown 渲染修复：blockquote `>` 换行重插入、streaming preview `latex_to_unicode`、`\frac` 括号、`\mathbb` A-Z 补齐、link 下划线样式
+- Per-message 灰色背景（`message_bg`）+ 主题化 markdown 色（heading/code/link/blockquote/list_marker）
+- 主题配置化：`ThemeFile`（serde hex colors）、内置 `dark.json`/`light.json`/`hacker.json`、`Config.theme` 字段、`theme::resolve()` 加载、`/theme` 命令 + 对话框切换持久化
+- `/connect` 升级：3-step 向导（provider → base URL → API key）→ model 配置循环（add/edit/delete model，含 context/output limits + reasoning toggle）；`ConnectDraft` 扩展、`ModelDraft`/`ModelEditStep` 新增、`DialogKind::ModelConfigLoop`
+- 依赖更新：55 packages via `cargo update`；277 tests，零 clippy warning
+
 ## 进行中
 - **mode → read_only 迁移**：用户决定彻底删除 `mode` 概念，agent 能力完全由 md 文件定义；工具集控制改由 frontmatter `read_only: true` 布尔实现。8 步计划已定但尚未实现
 - Phase 5 已启动：以最新 `dev-ai-release` 为基线审计 Phase 1 / 2 语义差距，首版矩阵见 `doc/openrust-phase5-alignment.md`
@@ -235,7 +245,6 @@
 - Phase 5：专项审计 Phase 1 / 2 与最新 `dev-ai-release` 的语义差距，决定哪些回补项前置到 Phase 3/4
 - Phase 5A：优先补欢迎界面、agent step limits、read/web/skill failure bounds；Phase 5B 再处理 location/event stream、compaction、prompt transform 架构差距
 - 欢迎界面重构：Home 从“最近会话/方向键菜单”改为更接近 opencode 的居中 logo + prompt 首屏；普通输入直接进入 prompt，Enter 创建会话并提交，`/connect` / `/models` 在 Home 直接打开配置流，不再先创建 session；Home 不再吞方向键或普通输入；零配置目录持续显示缺 provider/model/key 的可见提示；发送路径缺配置时留在界面内提示，不再直接退出；清理旧菜单式 Home 残留方法；`cargo test` 140 passed
-- `/connect` 配置流增强：保留原有命令行形式 `/connect add <provider> <base-url> <model> [wire-model]`，并新增交互式向导入口（`/connect add` 无参数或 Connect 对话框中的 “Add custom provider”）；可逐步输入 provider、base URL、model、wire model、api key，自定义配置不再依赖单行长命令；`cargo test` 141 passed
 - Home 渲染重构：不再复用 Session/Input 主布局并通过拼接区域伪装成首页，而是改为真正独立的 Home 渲染路径；光标定位绑定到真实 Prompt 区，不再手算假位置；窗口缩放按独立布局重新计算；清理旧 Home 伪布局残留；`cargo test` 141 passed
 - Home 交互面板化：Home 模式下的 dialog/question/permission/text_input 不再以小型 centered overlay 浮在首页之上，而是占据 Home 主面板区域渲染，避免继续呈现“首页上悬浮一个主界面弹窗”的混合观感；`cargo test` 141 passed
 

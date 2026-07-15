@@ -507,6 +507,11 @@ impl SessionView {
                 Some(value) => self.begin_provider_switch(value),
                 None => {}
             },
+            DialogKind::ConnectProtocol => {
+                if let Some(value) = dialog.selected_value() {
+                    self.save_connect_protocol(value);
+                }
+            }
             DialogKind::ProviderModel => match dialog.selected_value() {
                 Some("__reasoning__") => self.open_reasoning_dialog(None),
                 Some(value) => self.switch_provider_model(value),
@@ -571,6 +576,7 @@ impl SessionView {
             ProviderConfig {
                 api_key: None,
                 base_url: Some(base_url.clone()),
+                protocol: Some("openai".to_string()),
                 models: std::collections::HashMap::from([(
                     model.clone(),
                     ModelConfig {
@@ -616,15 +622,34 @@ impl SessionView {
         }
         let draft = self.ui.connect_draft.get_or_insert_with(ConnectDraft::default);
         draft.provider = provider.to_string();
+        self.ui.dialog = Some(Dialog::new(
+            DialogKind::ConnectProtocol,
+            "Connect · protocol",
+            "选择 provider 使用的 API 协议。",
+            vec![
+                DialogOption::new("openai", "OpenAI-compatible", "适用于 OpenAI-compatible API。"),
+                DialogOption::new("anthropic", "Anthropic", "适用于 Anthropic Messages API。"),
+                DialogOption::new("gemini", "Gemini", "适用于 Google Gemini API。"),
+            ],
+            0,
+        ));
+        self.status = format!("connect: protocol for {}", provider);
+    }
+
+    fn save_connect_protocol(&mut self, value: &str) {
+        let Some(draft) = self.ui.connect_draft.as_mut() else {
+            self.note("connect wizard state missing".to_string());
+            return;
+        };
+        draft.protocol = value.to_string();
         self.ui.pending_text_input = Some(PendingTextInput {
-            title: format!("Connect · {} base URL", provider),
-            description: "输入 OpenAI-compatible base URL，例如 https://api.deepseek.com/v1 。"
-                .to_string(),
+            title: format!("Connect · {} base URL", draft.provider),
+            description: "输入 provider 的 base URL，例如 https://api.deepseek.com/v1 。".to_string(),
             value: String::new(),
             editor: single_line_textarea("", false),
             submit: SessionView::save_connect_base_url,
         });
-        self.status = format!("connect: base URL for {}", provider);
+        self.status = format!("connect: base URL for {}", draft.provider);
     }
 
     fn save_connect_base_url(&mut self, value: &str) {
@@ -838,6 +863,24 @@ impl SessionView {
         let Some(draft) = self.ui.connect_draft.as_mut() else { return };
         let idx = draft.editing_index.unwrap();
         draft.models[idx].output_limit = v.parse::<u64>().ok();
+        draft.editing_step = ModelEditStep::InputLimit;
+        let cur = draft.models[idx].input_limit.map(|n| n.to_string()).unwrap_or_default();
+        self.ui.pending_text_input = Some(PendingTextInput {
+            title: "model · input limit".to_string(),
+            description: "最大输入 token 数；留空使用 provider 默认值。"
+                .to_string(),
+            value: cur.clone(),
+            editor: single_line_textarea(&cur, false),
+            submit: SessionView::save_model_input,
+        });
+        self.status = "connect: input limit".to_string();
+    }
+
+    fn save_model_input(&mut self, value: &str) {
+        let v = value.trim();
+        let Some(draft) = self.ui.connect_draft.as_mut() else { return };
+        let idx = draft.editing_index.unwrap();
+        draft.models[idx].input_limit = v.parse::<u64>().ok();
         draft.editing_step = ModelEditStep::Reasoning;
         // Show a simple yes/no dialog for reasoning
         let flag = if draft.models[idx].reasoning { "● " } else { "" };
@@ -890,7 +933,7 @@ impl SessionView {
                 name: m.wire_name.clone(),
                 variants: None,
                 limit: if m.context_limit.is_some() || m.output_limit.is_some() {
-                    Some(ModelLimit { context: m.context_limit, output: m.output_limit })
+                    Some(ModelLimit { input: m.input_limit, context: m.context_limit, output: m.output_limit })
                 } else {
                     None
                 },
@@ -909,6 +952,7 @@ impl SessionView {
             ProviderConfig {
                 api_key: None,
                 base_url: Some(draft.base_url.clone()),
+                protocol: Some(draft.protocol.clone()),
                 models,
                 ..Default::default()
             },
