@@ -70,6 +70,7 @@ pub(crate) fn build_http_client() -> reqwest::Client {
     Client::builder()
         .timeout(std::time::Duration::from_secs(300))
         .connect_timeout(std::time::Duration::from_secs(8))
+        .read_timeout(std::time::Duration::from_secs(60))
         .tcp_keepalive(std::time::Duration::from_secs(30))
         .http2_keep_alive_interval(std::time::Duration::from_secs(30))
         .http2_keep_alive_timeout(std::time::Duration::from_secs(10))

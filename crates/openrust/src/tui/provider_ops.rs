@@ -315,10 +315,10 @@ impl SessionView {
                         self.provider_name = provider_name;
                         self.model = model.clone();
                         // Restore per-model reasoning_effort default.
-                        if self.reasoning_effort.is_none() {
-                            if let Some(mc) = resolved.models.get(&model) {
-                                self.reasoning_effort = mc.reasoning_effort.clone();
-                            }
+                        if self.reasoning_effort.is_none()
+                            && let Some(mc) = resolved.models.get(&model)
+                        {
+                            self.reasoning_effort = mc.reasoning_effort.clone();
                         }
                         if let Ok(prompt) = crate::system_prompt::SystemPrompt::from_config(
                             &config,
