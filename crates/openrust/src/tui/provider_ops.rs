@@ -277,6 +277,19 @@ impl SessionView {
             }
         };
         self.persist_session_reasoning();
+
+        // Persist to ModelConfig so the default survives across sessions.
+        if let Some(model) = self.config.model.as_ref() {
+            let (provider_name, model_name, _) = crate::core::config::parse_model_spec(model);
+            if let Some(provider) = self.config.provider.get_mut(provider_name)
+                && let Some(model_cfg) = provider.models.get_mut(model_name)
+            {
+                model_cfg.reasoning_effort = self.reasoning_effort.clone();
+                if let Err(e) = self.config.save_global() {
+                    tracing::warn!("failed to save reasoning_effort to config: {}", e);
+                }
+            }
+        }
         self.note(format!(
             "model thinking effort: {}",
             self.reasoning_effort.as_deref().unwrap_or("off")
@@ -300,7 +313,13 @@ impl SessionView {
                 match provider::create_provider(&resolved) {
                     Some(llm) => {
                         self.provider_name = provider_name;
-                        self.model = model;
+                        self.model = model.clone();
+                        // Restore per-model reasoning_effort default.
+                        if self.reasoning_effort.is_none() {
+                            if let Some(mc) = resolved.models.get(&model) {
+                                self.reasoning_effort = mc.reasoning_effort.clone();
+                            }
+                        }
                         if let Ok(prompt) = crate::system_prompt::SystemPrompt::from_config(
                             &config,
                             &resolved,

@@ -941,6 +941,7 @@ impl SessionView {
                 message_options: None,
                 reasoning_options: reasoning_opts,
                 reasoning_send_effort: if m.reasoning { Some(m.send_reasoning_effort) } else { None },
+                reasoning_effort: None,  // set via /model thinking flow
                 max_tokens_key: None,
                 system_role: None,
                 headers: HashMap::new(),

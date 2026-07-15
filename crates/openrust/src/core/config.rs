@@ -128,6 +128,11 @@ pub struct ModelConfig {
     #[serde(default)]
     pub reasoning_send_effort: Option<bool>,
 
+    /// Default reasoning effort for this model: "low" | "medium" | "high".
+    /// When `None`, reasoning uses the session-level override if set.
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
+
     /// Override the body key for max tokens (default `"max_tokens"`).
     #[serde(default)]
     pub max_tokens_key: Option<String>,
@@ -163,6 +168,9 @@ impl ModelConfig {
         }
         if other.reasoning_send_effort.is_some() {
             self.reasoning_send_effort = other.reasoning_send_effort;
+        }
+        if other.reasoning_effort.is_some() {
+            self.reasoning_effort = other.reasoning_effort;
         }
         if other.max_tokens_key.is_some() {
             self.max_tokens_key = other.max_tokens_key;
