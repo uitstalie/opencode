@@ -68,6 +68,14 @@ pub struct Theme {
     dialog: Color,
     dialog_selected: Color,
     overlay: Color,
+    /// Background for individual message blocks in the session panel.
+    message_bg: Color,
+    /// Markdown element colors.
+    heading: Color,
+    code: Color,
+    link: Color,
+    blockquote: Color,
+    list_marker: Color,
 }
 
 impl Theme {
@@ -90,6 +98,12 @@ impl Theme {
             dialog: Color::Rgb(28, 28, 34),
             dialog_selected: Color::Rgb(160, 180, 205),
             overlay: Color::Rgb(0, 0, 0),
+            message_bg: Color::Rgb(24, 24, 30),
+            heading: Color::Rgb(157, 124, 216),
+            code: Color::Rgb(127, 216, 143),
+            link: Color::Rgb(250, 178, 131),
+            blockquote: Color::Rgb(229, 192, 123),
+            list_marker: Color::Rgb(86, 182, 194),
         }
     }
 
@@ -131,6 +145,10 @@ impl Theme {
 
     pub fn muted_style(&self) -> Style {
         Style::default().fg(self.muted)
+    }
+
+    pub fn message_bg_style(&self) -> Style {
+        Style::default().bg(self.message_bg)
     }
 
     pub fn user_style(&self) -> Style {
@@ -183,6 +201,26 @@ impl Theme {
 
     pub fn diff_delete_style(&self) -> Style {
         Style::default().fg(Color::Rgb(200, 110, 110))
+    }
+
+    pub fn heading_style(&self) -> Style {
+        Style::default().fg(self.heading).add_modifier(Modifier::BOLD)
+    }
+
+    pub fn code_style(&self) -> Style {
+        Style::default().fg(self.code)
+    }
+
+    pub(super) fn link_color(&self) -> Color {
+        self.link
+    }
+
+    pub fn blockquote_style(&self) -> Style {
+        Style::default().fg(self.blockquote)
+    }
+
+    pub fn list_marker_style(&self) -> Style {
+        Style::default().fg(self.list_marker)
     }
 
     pub fn sidebar_dir_style(&self) -> Style {

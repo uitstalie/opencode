@@ -139,17 +139,17 @@ impl<'a> Builder<'a> {
                 }
             }
             Event::Code(text) => {
-                self.push_span(text.to_string(), self.theme.tool_style());
+                self.push_span(text.to_string(), self.theme.code_style());
             }
             Event::InlineMath(text) => {
-                self.push_span(latex::latex_to_unicode(&text), self.theme.tool_style());
+                self.push_span(latex::latex_to_unicode(&text), self.theme.code_style());
             }
             Event::DisplayMath(text) => {
                 self.flush_line();
                 for line in latex::latex_to_unicode(&text).lines() {
                     self.lines.push(Line::from(Span::styled(
                         line.to_string(),
-                        self.theme.tool_style(),
+                        self.theme.code_style(),
                     )));
                 }
                 self.lines.push(Line::from(""));
@@ -158,7 +158,7 @@ impl<'a> Builder<'a> {
                 if self.current.is_empty() && self.quote_depth > 0 {
                     self.current.push(Span::styled(
                         "> ".repeat(self.quote_depth),
-                        self.theme.muted_style(),
+                        self.theme.blockquote_style(),
                     ));
                 }
                 self.current
@@ -192,7 +192,7 @@ impl<'a> Builder<'a> {
             Tag::Heading { level, .. } => {
                 self.flush_line();
                 let hashes = "#".repeat(heading_depth(level));
-                self.push_span(format!("{} ", hashes), self.theme.title_style());
+                self.push_span(format!("{} ", hashes), self.theme.heading_style());
             }
             Tag::BlockQuote(kind) => {
                 self.quote_depth += 1;
@@ -233,7 +233,7 @@ impl<'a> Builder<'a> {
                     }
                     _ => "• ".to_string(),
                 };
-                self.push_span(format!("{}{}", indent, marker), self.theme.muted_style());
+                self.push_span(format!("{}{}", indent, marker), self.theme.list_marker_style());
             }
             Tag::FootnoteDefinition(label) => {
                 self.flush_line();
@@ -357,7 +357,9 @@ impl<'a> Builder<'a> {
             style = style.add_modifier(Modifier::CROSSED_OUT);
         }
         if self.in_link {
-            style = style.add_modifier(Modifier::UNDERLINED);
+            style = style
+                .add_modifier(Modifier::UNDERLINED)
+                .fg(self.theme.link_color());
         }
         style
     }
@@ -366,7 +368,7 @@ impl<'a> Builder<'a> {
         if self.current.is_empty() && self.quote_depth > 0 {
             self.current.push(Span::styled(
                 "> ".repeat(self.quote_depth),
-                self.theme.muted_style(),
+                self.theme.blockquote_style(),
             ));
         }
         self.current.push(Span::styled(text, style));

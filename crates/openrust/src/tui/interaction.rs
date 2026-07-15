@@ -387,7 +387,7 @@ impl SessionView {
 
     pub(super) fn session_render_lines_for_area(&self, region_height: usize, region_width: usize) {
         let all_rows = self.session_render_rows(region_height, region_width);
-        let visible_height = region_height.saturating_sub(2).max(1);
+        let visible_height = region_height.max(1);
 
         let max_scroll = all_rows.len().saturating_sub(visible_height);
         let scroll = self.session_scroll.min(max_scroll);
