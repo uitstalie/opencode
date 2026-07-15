@@ -2,8 +2,9 @@
 
 use super::dialog::{Dialog, DialogKind, DialogOption};
 use super::util::{now_micros, single_line_textarea};
-use super::{ConnectDraft, PendingTextInput, SessionView, ThinkingModeCommand};
-use crate::core::{config::{ModelConfig, ProviderConfig}, vault::Vault};
+use super::{ConnectDraft, ModelDraft, ModelEditStep, PendingTextInput, SessionView, ThinkingModeCommand};
+use crate::core::{config::{ModelConfig, ModelLimit, ProviderConfig}, vault::Vault};
+use std::collections::HashMap;
 
 impl SessionView {
     pub(super) fn open_thinking_dialog(&mut self, mode: ThinkingModeCommand) {
@@ -532,6 +533,30 @@ impl SessionView {
                     self.switch_theme(name);
                 }
             }
+            DialogKind::ModelConfigLoop => {
+                if let Some(value) = dialog.selected_value() {
+                    self.handle_model_config_select(value);
+                }
+            }
+            DialogKind::ReasoningToggle => {
+                let Some(draft) = self.ui.connect_draft.as_mut() else {
+                    return;
+                };
+                // Handle deletion confirmation
+                if let Some(delete_idx) = draft.pending_delete.take() {
+                    if dialog.selected_value() == Some("delete") {
+                        draft.models.remove(delete_idx);
+                        if draft.editing_index == Some(delete_idx) {
+                            draft.editing_index = None;
+                        }
+                    }
+                    self.show_model_config_loop();
+                    return;
+                }
+                // Normal reasoning toggle
+                let on = matches!(dialog.selected_value(), Some("on"));
+                self.save_model_reasoning(on);
+            }
         }
     }
     fn add_provider(&mut self, args: &[String]) {
@@ -569,6 +594,8 @@ impl SessionView {
         }
     }
 
+    // ── connect wizard: 3-step collect → config loop ────────
+
     fn start_connect_wizard(&mut self) {
         self.ui.connect_draft = Some(ConnectDraft::default());
         self.ui.pending_text_input = Some(PendingTextInput {
@@ -576,12 +603,12 @@ impl SessionView {
             description: "输入 provider 名称，例如 deepseek、openai、one_route。".to_string(),
             value: String::new(),
             editor: single_line_textarea("", false),
-            submit: SessionView::save_connect_provider_name,
+            submit: SessionView::save_connect_provider,
         });
         self.status = "connect: provider name".to_string();
     }
 
-    fn save_connect_provider_name(&mut self, value: &str) {
+    fn save_connect_provider(&mut self, value: &str) {
         let provider = value.trim();
         if provider.is_empty() {
             self.note("provider name cannot be empty".to_string());
@@ -612,97 +639,298 @@ impl SessionView {
         };
         draft.base_url = base_url.to_string();
         self.ui.pending_text_input = Some(PendingTextInput {
-            title: format!("Connect · {} model", draft.provider),
-            description: "输入配置中的 model 名称，例如 deepseek-chat。".to_string(),
-            value: String::new(),
-            editor: single_line_textarea("", false),
-            submit: SessionView::save_connect_model,
-        });
-        self.status = format!("connect: model for {}", draft.provider);
-    }
-
-    fn save_connect_model(&mut self, value: &str) {
-        let model = value.trim();
-        if model.is_empty() {
-            self.note("model cannot be empty".to_string());
-            return;
-        }
-        let Some(draft) = self.ui.connect_draft.as_mut() else {
-            self.note("connect wizard state missing".to_string());
-            return;
-        };
-        draft.model = model.to_string();
-        self.ui.pending_text_input = Some(PendingTextInput {
-            title: format!("Connect · {} wire model", draft.provider),
-            description: "输入实际发给 API 的模型名；若与上一步相同可直接回车留空。".to_string(),
-            value: String::new(),
-            editor: single_line_textarea("", false),
-            submit: SessionView::save_connect_wire_model,
-        });
-        self.status = format!("connect: wire model for {}", draft.provider);
-    }
-
-    fn save_connect_wire_model(&mut self, value: &str) {
-        let Some(draft) = self.ui.connect_draft.as_mut() else {
-            self.note("connect wizard state missing".to_string());
-            return;
-        };
-        let wire_model = value.trim();
-        draft.wire_model = if wire_model.is_empty() {
-            None
-        } else {
-            Some(wire_model.to_string())
-        };
-        self.ui.pending_text_input = Some(PendingTextInput {
             title: format!("Connect · {} API key", draft.provider),
             description:
                 "输入 API key；若暂时没有可直接回车跳过，之后再用 /connect key <provider> <api-key>。"
                     .to_string(),
             value: String::new(),
             editor: single_line_textarea("", true),
-            submit: SessionView::save_connect_api_key,
+            submit: SessionView::save_connect_api_key_wizard,
         });
         self.status = format!("connect: API key for {}", draft.provider);
     }
 
-    fn save_connect_api_key(&mut self, value: &str) {
+    fn save_connect_api_key_wizard(&mut self, value: &str) {
+        let Some(draft) = self.ui.connect_draft.as_mut() else {
+            self.note("connect wizard state missing".to_string());
+            return;
+        };
+        draft.api_key = value.trim().to_string();
+        self.show_model_config_loop();
+    }
+
+    // ── model config loop ────────────────────────────────────
+
+    fn show_model_config_loop(&mut self) {
+        let Some(draft) = self.ui.connect_draft.as_ref() else {
+            return;
+        };
+        let provider = &draft.provider;
+        let mut options = Vec::new();
+
+        // List existing models
+        for (i, m) in draft.models.iter().enumerate() {
+            let wire = m.wire_name.as_deref().unwrap_or(&m.name);
+            let info = format!(
+                "{}{} ctx={} out={} reasoning={}",
+                m.name,
+                if wire != m.name {
+                    format!(" → {}", wire)
+                } else {
+                    String::new()
+                },
+                m.context_limit.map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
+                m.output_limit.map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
+                if m.reasoning { "on" } else { "off" },
+            );
+            options.push(                DialogOption::new(
+                format!("edit_{}", i),
+                info,
+                "编辑此 model（回车编辑，再次回车修改，第三下删除）。",
+            ));
+        }
+
+        options.push(DialogOption::new(
+            "__add__",
+            "+ 添加 model",
+            "添加一个新的 model 配置。",
+        ));
+        options.push(DialogOption::new(
+            "__done__",
+            "完成",
+            "保存配置并退出。",
+        ));
+
+        self.ui.dialog = Some(Dialog::new(
+            DialogKind::ModelConfigLoop,
+            format!("{} · models ({})", provider, draft.models.len()),
+            "选择一个 model 编辑或删除。添加新 model 后点击「完成」保存。",
+            options,
+            draft.models.len(), // select the Add button by default if empty
+        ));
+        self.status = "connect: model config loop".to_string();
+    }
+
+    fn handle_model_config_select(&mut self, value: &str) {
+        if value == "__add__" {
+            self.start_model_edit(None);
+            return;
+        }
+        if value == "__done__" {
+            self.finish_connect_wizard();
+            return;
+        }
+        if let Some(idx_str) = value.strip_prefix("edit_")
+            && let Ok(idx) = idx_str.parse::<usize>()
+        {
+                let Some(draft) = self.ui.connect_draft.as_mut() else { return };
+                // Second selection of the same model → offer deletion.
+                if draft.editing_index == Some(idx) && idx < draft.models.len() {
+                    let name = draft.models[idx].name.clone();
+                    draft.pending_delete = Some(idx);
+                    self.ui.dialog = Some(Dialog::new(
+                        DialogKind::ReasoningToggle,
+                        format!("删除 model: {}?", name),
+                        "确认删除此 model？",
+                        vec![
+                            DialogOption::new("delete", format!("是，删除「{}」", name), ""),
+                            DialogOption::new("cancel", "取消", ""),
+                        ],
+                        1,
+                    ));
+                    return;
+                }
+                self.start_model_edit(Some(idx));
+        }
+    }
+
+    // ── model edit sub-flow ──────────────────────────────────
+
+    fn start_model_edit(&mut self, idx: Option<usize>) {
+        let Some(draft) = self.ui.connect_draft.as_mut() else { return };
+        draft.editing_index = idx;
+        draft.editing_step = ModelEditStep::Name;
+
+        let default_name = idx
+            .and_then(|i| draft.models.get(i))
+            .map(|m| m.name.clone())
+            .unwrap_or_default();
+
+        self.ui.pending_text_input = Some(PendingTextInput {
+            title: format!("{} · model name", draft.provider),
+            description: "输入配置中的 model 标识名。"
+                .to_string(),
+            value: default_name.clone(),
+            editor: single_line_textarea(&default_name, false),
+            submit: SessionView::save_model_name,
+        });
+        self.status = "connect: model name".to_string();
+    }
+
+    fn save_model_name(&mut self, value: &str) {
+        let name = value.trim();
+        if name.is_empty() {
+            self.note("model name cannot be empty".to_string());
+            return;
+        }
+        let Some(draft) = self.ui.connect_draft.as_mut() else { return };
+        let idx = draft.editing_index.unwrap_or(draft.models.len());
+        if idx < draft.models.len() {
+            draft.models[idx].name = name.to_string();
+        } else {
+            draft.models.push(ModelDraft {
+                name: name.to_string(),
+                ..Default::default()
+            });
+            draft.editing_index = Some(idx);
+        }
+        draft.editing_step = ModelEditStep::WireName;
+        let cur = draft.models[idx].wire_name.clone().unwrap_or_default();
+        self.ui.pending_text_input = Some(PendingTextInput {
+            title: "model · wire name (optional)".to_string(),
+            description: "实际发给 API 的模型名；留空则与上一步相同。"
+                .to_string(),
+            value: cur.clone(),
+            editor: single_line_textarea(&cur, false),
+            submit: SessionView::save_model_wire,
+        });
+        self.status = "connect: wire name".to_string();
+    }
+
+    fn save_model_wire(&mut self, value: &str) {
+        let v = value.trim();
+        let Some(draft) = self.ui.connect_draft.as_mut() else { return };
+        let idx = draft.editing_index.unwrap();
+        draft.models[idx].wire_name = if v.is_empty() { None } else { Some(v.to_string()) };
+        draft.editing_step = ModelEditStep::ContextLimit;
+        let cur = draft.models[idx].context_limit.map(|n| n.to_string()).unwrap_or_default();
+        self.ui.pending_text_input = Some(PendingTextInput {
+            title: "model · context limit".to_string(),
+            description: "上下文窗口大小 (tokens)；留空使用 provider 默认值。"
+                .to_string(),
+            value: cur.clone(),
+            editor: single_line_textarea(&cur, false),
+            submit: SessionView::save_model_context,
+        });
+        self.status = "connect: context limit".to_string();
+    }
+
+    fn save_model_context(&mut self, value: &str) {
+        let v = value.trim();
+        let Some(draft) = self.ui.connect_draft.as_mut() else { return };
+        let idx = draft.editing_index.unwrap();
+        draft.models[idx].context_limit = v.parse::<u64>().ok();
+        draft.editing_step = ModelEditStep::OutputLimit;
+        let cur = draft.models[idx].output_limit.map(|n| n.to_string()).unwrap_or_default();
+        self.ui.pending_text_input = Some(PendingTextInput {
+            title: "model · output limit".to_string(),
+            description: "最大输出 token 数；留空使用 provider 默认值。"
+                .to_string(),
+            value: cur.clone(),
+            editor: single_line_textarea(&cur, false),
+            submit: SessionView::save_model_output,
+        });
+        self.status = "connect: output limit".to_string();
+    }
+
+    fn save_model_output(&mut self, value: &str) {
+        let v = value.trim();
+        let Some(draft) = self.ui.connect_draft.as_mut() else { return };
+        let idx = draft.editing_index.unwrap();
+        draft.models[idx].output_limit = v.parse::<u64>().ok();
+        draft.editing_step = ModelEditStep::Reasoning;
+        // Show a simple yes/no dialog for reasoning
+        let flag = if draft.models[idx].reasoning { "● " } else { "" };
+        self.ui.dialog = Some(Dialog::new(
+            DialogKind::ReasoningToggle,
+            "model · reasoning",
+            "是否为此 model 启用 thinking / reasoning？",
+            vec![
+                DialogOption::new("on", format!("{}启用 reasoning", flag), "发送 reasoning_effort 参数。"),
+                DialogOption::new("off", format!("{}关闭 reasoning", if !draft.models[idx].reasoning { "● " } else { "" }), "不发送 reasoning 参数。"),
+            ],
+            if draft.models[idx].reasoning { 0 } else { 1 },
+        ));
+        self.status = "connect: reasoning toggle".to_string();
+    }
+
+    fn save_model_reasoning(&mut self, on: bool) {
+        let Some(draft) = self.ui.connect_draft.as_mut() else { return };
+        let idx = draft.editing_index.unwrap();
+        draft.models[idx].reasoning = on;
+        draft.models[idx].send_reasoning_effort = on;
+        draft.editing_step = ModelEditStep::Done;
+        // Back to config loop
+        self.show_model_config_loop();
+    }
+
+    // ── finalize ─────────────────────────────────────────────
+
+    fn finish_connect_wizard(&mut self) {
         let Some(draft) = self.ui.connect_draft.take() else {
             self.note("connect wizard state missing".to_string());
             return;
         };
+        if draft.models.is_empty() {
+            self.note("至少需要一个 model".to_string());
+            self.ui.connect_draft = Some(draft);
+            self.show_model_config_loop();
+            return;
+        }
+
+        let provider = draft.provider.clone();
+        let first_model = draft.models[0].name.clone();
+        let models: HashMap<_, _> = draft.models.iter().map(|m| {
+            let reasoning_opts = if m.reasoning {
+                Some(serde_json::json!({"thinking":{"type":"enabled"}}))
+            } else {
+                None
+            };
+            (m.name.clone(), ModelConfig {
+                name: m.wire_name.clone(),
+                variants: None,
+                limit: if m.context_limit.is_some() || m.output_limit.is_some() {
+                    Some(ModelLimit { context: m.context_limit, output: m.output_limit })
+                } else {
+                    None
+                },
+                options: None,
+                message_options: None,
+                reasoning_options: reasoning_opts,
+                reasoning_send_effort: if m.reasoning { Some(m.send_reasoning_effort) } else { None },
+                max_tokens_key: None,
+                system_role: None,
+                headers: HashMap::new(),
+            })
+        }).collect();
+
         self.config.provider.insert(
-            draft.provider.clone(),
+            provider.clone(),
             ProviderConfig {
                 api_key: None,
                 base_url: Some(draft.base_url.clone()),
-                models: std::collections::HashMap::from([(
-                    draft.model.clone(),
-                    ModelConfig {
-                        name: draft.wire_model.clone(),
-                        ..Default::default()
-                    },
-                )]),
+                models,
                 ..Default::default()
             },
         );
-        self.config.model = Some(format!("{}/{}", draft.provider, draft.model));
+        self.config.model = Some(format!("{}/{}", provider, first_model));
 
         match self.save_global_config() {
             Ok(()) => {
-                let api_key = value.trim();
-                if !api_key.is_empty()
-                    && let Err(err) = Vault::save(&draft.provider, api_key) {
-                        self.reload_config();
-                        self.note(format!(
-                            "provider added: {}, but failed to save API key: {}",
-                            draft.provider, err
-                        ));
-                        return;
-                    }
+                if !draft.api_key.is_empty()
+                    && let Err(err) = Vault::save(&provider, &draft.api_key)
+                {
+                    self.reload_config();
+                    self.note(format!(
+                        "provider added: {}, but failed to save API key: {}",
+                        provider, err
+                    ));
+                    return;
+                }
                 self.reload_config();
                 self.note(format!(
-                    "provider configured: {} · model: {}/{}",
-                    draft.provider, draft.provider, draft.model
+                    "provider configured: {} · {} models",
+                    provider, draft.models.len()
                 ));
             }
             Err(err) => self.note_error(format!("failed to save provider: {}", err)),

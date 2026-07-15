@@ -203,8 +203,35 @@ pub(super) struct SessionRenderLine {
 pub(super) struct ConnectDraft {
     pub(super) provider: String,
     pub(super) base_url: String,
-    pub(super) model: String,
-    pub(super) wire_model: Option<String>,
+    pub(super) api_key: String,
+    pub(super) models: Vec<ModelDraft>,
+    /// Model index being edited (None = main config loop).
+    pub(super) editing_index: Option<usize>,
+    /// Which field of the model is being prompted.
+    pub(super) editing_step: ModelEditStep,
+    /// Model index pending deletion confirmation.
+    pub(super) pending_delete: Option<usize>,
+}
+
+#[derive(Clone, Default)]
+pub(super) struct ModelDraft {
+    pub(super) name: String,
+    pub(super) wire_name: Option<String>,
+    pub(super) context_limit: Option<u64>,
+    pub(super) output_limit: Option<u64>,
+    pub(super) reasoning: bool,
+    pub(super) send_reasoning_effort: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) enum ModelEditStep {
+    #[default]
+    Done,
+    Name,
+    WireName,
+    ContextLimit,
+    OutputLimit,
+    Reasoning,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

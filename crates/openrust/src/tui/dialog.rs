@@ -26,6 +26,8 @@ pub(super) enum DialogKind {
     ReasoningEffort,
     SlashHelp,
     Theme,
+    ReasoningToggle,
+    ModelConfigLoop,
 }
 
 impl Dialog {
