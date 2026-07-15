@@ -286,8 +286,7 @@ impl SessionView {
                     message_index: live_idx,
                 });
                 for line in self.thinking_preview.lines() {
-                    let rendered = super::latex::latex_to_unicode(line);
-                    let line = Line::from(Span::styled(rendered, self.theme.thinking_style()));
+                    let line = Line::from(Span::styled(line.to_string(), self.theme.thinking_style()));
                     all_rows.push(SessionRenderLine {
                         text: Self::flatten_line(&line),
                         line,
@@ -309,8 +308,7 @@ impl SessionView {
                 message_index: live_idx,
             });
             for line in self.assistant_preview.lines() {
-                let rendered = super::latex::latex_to_unicode(line);
-                let line = Line::from(Span::styled(rendered, self.theme.assistant_style()));
+                let line = Line::from(Span::styled(line.to_string(), self.theme.assistant_style()));
                 all_rows.push(SessionRenderLine {
                     text: Self::flatten_line(&line),
                     line,
