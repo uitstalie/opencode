@@ -39,6 +39,7 @@ struct Builder<'a> {
     italic: bool,
     strikethrough: bool,
     link_url: Option<String>,
+    in_link: bool,
     code_lang: Option<String>,
     code_buffer: String,
     in_code_block: bool,
@@ -64,6 +65,7 @@ impl<'a> Builder<'a> {
             italic: false,
             strikethrough: false,
             link_url: None,
+            in_link: false,
             code_lang: None,
             code_buffer: String::new(),
             in_code_block: false,
@@ -257,6 +259,7 @@ impl<'a> Builder<'a> {
             Tag::Strikethrough => self.strikethrough = true,
             Tag::Link { dest_url, .. } => {
                 self.link_url = Some(dest_url.to_string());
+                self.in_link = true;
             }
             Tag::Image { dest_url, .. } => {
                 self.link_url = Some(dest_url.to_string());
@@ -328,6 +331,7 @@ impl<'a> Builder<'a> {
             TagEnd::Strong => self.bold = false,
             TagEnd::Strikethrough => self.strikethrough = false,
             TagEnd::Link => {
+                self.in_link = false;
                 if let Some(url) = self.link_url.take() {
                     self.push_span(format!(" ({})", url), self.theme.muted_style());
                 }
@@ -351,6 +355,9 @@ impl<'a> Builder<'a> {
         }
         if self.strikethrough {
             style = style.add_modifier(Modifier::CROSSED_OUT);
+        }
+        if self.in_link {
+            style = style.add_modifier(Modifier::UNDERLINED);
         }
         style
     }

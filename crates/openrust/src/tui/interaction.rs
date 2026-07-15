@@ -2,7 +2,7 @@ use std::io;
 
 use crossterm::event::{self, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{Terminal, backend::CrosstermBackend};
-use ratatui::{style::Modifier, text::{Line, Span}};
+use ratatui::{style::Style, style::Modifier, text::{Line, Span}};
 
 use super::{SessionRenderLine, SessionView, ThinkingMode, ToolState, display_message_lines};
 
@@ -282,7 +282,8 @@ impl SessionView {
                     tool_message_index: None,
                 });
                 for line in self.thinking_preview.lines() {
-                    let line = Line::from(Span::styled(line.to_string(), self.theme.thinking_style()));
+                    let rendered = super::latex::latex_to_unicode(line);
+                    let line = Line::from(Span::styled(rendered, self.theme.thinking_style()));
                     all_rows.push(SessionRenderLine {
                         text: Self::flatten_line(&line),
                         line,
@@ -301,7 +302,8 @@ impl SessionView {
                 tool_message_index: None,
             });
             for line in self.assistant_preview.lines() {
-                let line = Line::from(Span::styled(line.to_string(), self.theme.assistant_style()));
+                let rendered = super::latex::latex_to_unicode(line);
+                let line = Line::from(Span::styled(rendered, self.theme.assistant_style()));
                 all_rows.push(SessionRenderLine {
                     text: Self::flatten_line(&line),
                     line,
@@ -418,6 +420,15 @@ impl SessionView {
         if width == 0 || line.width() <= width {
             return vec![line.clone()];
         }
+
+        // Detect block-quote prefix ("> ", "> > ", etc.) so we can
+        // re-insert it on every wrapped continuation line.
+        let quote_prefix: Option<(String, Style)> = line
+            .spans
+            .first()
+            .filter(|s| s.content.starts_with('>'))
+            .map(|s| (s.content.to_string(), s.style));
+
         let mut result: Vec<Line<'static>> = Vec::new();
         let mut current_spans: Vec<Span<'static>> = Vec::new();
         let mut current_width = 0usize;
@@ -430,6 +441,12 @@ impl SessionView {
                     current_spans.push(Span::styled(std::mem::take(&mut buf), span_style));
                     result.push(Line::from(std::mem::take(&mut current_spans)));
                     current_width = 0;
+                    // Re-insert block-quote prefix on continuation lines.
+                    if let Some((ref prefix, style)) = quote_prefix {
+                        let pw = unicode_width::UnicodeWidthStr::width(prefix.as_str());
+                        current_spans.push(Span::styled(prefix.clone(), style));
+                        current_width += pw;
+                    }
                 }
                 buf.push(ch);
                 current_width += w;

@@ -65,9 +65,26 @@ impl Parser {
             "frac" | "dfrac" | "tfrac" => {
                 let num = self.read_group();
                 let den = self.read_group();
+                // Parenthesise multi-char numerator / denominator to prevent
+                // ambiguity: \frac{a+b}{c+d} → (a+b)/(c+d) not a+b/c+d.
+                let needs_paren = |s: &str| s.len() > 1 && s.contains(['+', '-', '*', ' ']);
+                let num_needs_paren = needs_paren(&num);
+                let den_needs_paren = needs_paren(&den);
+                if num_needs_paren {
+                    result.push('(');
+                }
                 result.push_str(&num);
+                if num_needs_paren {
+                    result.push(')');
+                }
                 result.push('/');
+                if den_needs_paren {
+                    result.push('(');
+                }
                 result.push_str(&den);
+                if den_needs_paren {
+                    result.push(')');
+                }
             }
             "sqrt" => {
                 if let Some(n) = self.read_optional_bracket() {
@@ -294,8 +311,15 @@ fn sub_char(c: char) -> Option<char> {
 fn to_mathbb(s: &str) -> String {
     s.chars()
         .map(|c| match c {
-            'C' => 'ℂ', 'H' => 'ℍ', 'N' => 'ℕ', 'P' => 'ℙ', 'Q' => 'ℚ',
-            'R' => 'ℝ', 'Z' => 'ℤ',
+            'A' => '\u{1D538}', 'B' => '\u{1D539}', 'C' => '\u{2102}',
+            'D' => '\u{1D53B}', 'E' => '\u{1D53C}', 'F' => '\u{1D53D}',
+            'G' => '\u{1D53E}', 'H' => '\u{210D}', 'I' => '\u{1D540}',
+            'J' => '\u{1D541}', 'K' => '\u{1D542}', 'L' => '\u{1D543}',
+            'M' => '\u{1D544}', 'N' => '\u{2115}', 'O' => '\u{1D546}',
+            'P' => '\u{2119}', 'Q' => '\u{211A}', 'R' => '\u{211D}',
+            'S' => '\u{1D54A}', 'T' => '\u{1D54B}', 'U' => '\u{1D54C}',
+            'V' => '\u{1D54D}', 'W' => '\u{1D54E}', 'X' => '\u{1D54F}',
+            'Y' => '\u{1D550}', 'Z' => '\u{2124}',
             _ => c,
         })
         .collect()
@@ -397,6 +421,8 @@ mod tests {
     fn fractions() {
         assert_eq!(latex_to_unicode(r"\frac{a}{b}"), "a/b");
         assert_eq!(latex_to_unicode(r"\frac{1}{2}"), "1/2");
+        assert_eq!(latex_to_unicode(r"\frac{a+b}{c+d}"), "(a+b)/(c+d)");
+        assert_eq!(latex_to_unicode(r"\frac{x}{y+1}"), "x/(y+1)");
     }
 
     #[test]
@@ -431,6 +457,8 @@ mod tests {
         assert_eq!(latex_to_unicode(r"\mathbb{R}"), "ℝ");
         assert_eq!(latex_to_unicode(r"\mathbb{N}"), "ℕ");
         assert_eq!(latex_to_unicode(r"\mathbb{Z}"), "ℤ");
+        assert_eq!(latex_to_unicode(r"\mathbb{E}"), "𝔼");
+        assert_eq!(latex_to_unicode(r"\mathbb{A}"), "𝔸");
     }
 
     #[test]
