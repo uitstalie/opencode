@@ -30,6 +30,14 @@ impl SessionView {
         self.thinking_start = None;
         self.thought_duration = None;
         self.render(stdout, Some(&self.status))?;
+        tracing::debug!(
+            provider = %self.provider_name,
+            model = %self.model,
+            context_window = self.current_context_window(),
+            input_limit = ?self.config.resolve_input_tokens(),
+            output_limit = ?self.config.resolve_output_tokens(),
+            "starting prompt with model limits"
+        );
         let Some(llm) = &self.llm else {
             self.note_error("LLM not initialized".to_string());
             return Ok(());
@@ -51,6 +59,8 @@ impl SessionView {
             self.current_agent_tools(),
             self.config.presets.clone(),
             self.current_context_window(),
+            self.config.resolve_input_tokens(),
+            self.config.resolve_output_tokens(),
         ));
         while self.prompt_job.is_some() {
             self.pump_prompt_job_for_stdout(stdout)?;
@@ -356,6 +366,8 @@ impl SessionView {
             self.current_agent_tools(),
             self.config.presets.clone(),
             self.current_context_window(),
+            self.config.resolve_input_tokens(),
+            self.config.resolve_output_tokens(),
         ));
         Ok(())
     }

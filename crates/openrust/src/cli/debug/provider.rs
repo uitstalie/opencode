@@ -110,6 +110,7 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
                             system: None,
                             reasoning_effort: reasoning.clone(),
                             tool_choice: None,
+                            cache_key: None,
                         },
                     )
                     .await?;

@@ -799,6 +799,13 @@ mod tests {
 
         assert!(view.ui.pending_text_input.is_some());
         assert!(view.ui.connect_draft.is_some());
+
+        let input = view.ui.pending_text_input.take().unwrap();
+        (input.submit)(&mut view, "custom-provider");
+        assert_eq!(
+            view.ui.dialog.as_ref().map(|dialog| dialog.kind),
+            Some(DialogKind::ConnectProtocol)
+        );
     }
 
     #[test]

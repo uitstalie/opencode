@@ -50,10 +50,13 @@ impl SessionView {
             token::estimate_messages(&self.messages) as u64
         };
         let window = self.current_context_window();
+        let window = window.max(1);
+        let used_display = format_number(used);
+        let window_display = format_number(window);
         let context = format!(
             "context: {} / {} tokens ({:.0}%)",
-            used,
-            window,
+            used_display,
+            window_display,
             used as f64 / window as f64 * 100.0
         );
         let task_count = self
@@ -117,4 +120,16 @@ impl SessionView {
         }
         "Enter 发送 · /exit /q /quit 退出".to_string()
     }
+}
+
+fn format_number(value: u64) -> String {
+    let digits = value.to_string();
+    let mut result = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            result.push(',');
+        }
+        result.push(digit);
+    }
+    result
 }

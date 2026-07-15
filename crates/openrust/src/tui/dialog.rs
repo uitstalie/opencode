@@ -22,6 +22,7 @@ pub(super) enum DialogKind {
     Task,
     Provider,
     ProviderModel,
+    ConnectProtocol,
     Model,
     ReasoningEffort,
     SlashHelp,

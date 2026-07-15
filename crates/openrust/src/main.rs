@@ -37,7 +37,9 @@ enum Command {
 }
 
 fn main() -> anyhow::Result<()> {
-    let _guard = init_logging()?;
+    let cwd = std::env::current_dir()?;
+    let log_level = openrust::core::config::Config::load(&cwd)?.log_level;
+    let _guard = init_logging(log_level.as_deref())?;
 
     let cli = Cli::parse();
 
@@ -52,7 +54,7 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn init_logging() -> anyhow::Result<WorkerGuard> {
+fn init_logging(log_level: Option<&str>) -> anyhow::Result<WorkerGuard> {
     let log_dir = openrust::core::platform::PlatformPaths::detect()
         .data_dir()
         .join("log");
@@ -66,7 +68,7 @@ fn init_logging() -> anyhow::Result<WorkerGuard> {
 
     tracing_subscriber::registry()
         .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
+            tracing_subscriber::EnvFilter::try_new(log_level.unwrap_or("openrust=info"))
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("openrust=info")),
         )
         .with(file_layer)

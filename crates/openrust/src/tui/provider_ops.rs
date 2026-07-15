@@ -213,6 +213,7 @@ impl SessionView {
                             system: None,
                             reasoning_effort: self.reasoning_effort.clone(),
                             tool_choice: None,
+                            cache_key: None,
                         },
                     )
                     .await?;

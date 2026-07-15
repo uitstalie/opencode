@@ -202,9 +202,12 @@ pub(super) struct SessionRenderLine {
 #[derive(Default)]
 pub(super) struct ConnectDraft {
     pub(super) provider: String,
+    pub(super) protocol: String,
     pub(super) base_url: String,
     pub(super) model: String,
     pub(super) wire_model: Option<String>,
+    pub(super) input_limit: Option<u64>,
+    pub(super) output_limit: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

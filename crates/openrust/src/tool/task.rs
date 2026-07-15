@@ -175,6 +175,10 @@ pub async fn run_agent(
                     system: Some(system.to_string()),
                     reasoning_effort: reasoning_effort.map(str::to_string),
                     tool_choice: None,
+                    cache_key: tool_ctx
+                        .session_id
+                        .as_deref()
+                        .map(str::to_string),
                 },
             );
             tokio::pin!(chat);
