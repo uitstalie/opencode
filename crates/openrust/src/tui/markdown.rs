@@ -135,7 +135,7 @@ impl<'a> Builder<'a> {
                 if self.in_code_block {
                     self.code_buffer.push_str(&text);
                 } else {
-                    self.push_span(text.to_string(), self.inline_style());
+                    self.push_span(latex::latex_to_unicode(&text), self.inline_style());
                 }
             }
             Event::Code(text) => {
