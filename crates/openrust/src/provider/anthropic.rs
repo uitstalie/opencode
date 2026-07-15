@@ -16,7 +16,7 @@ use crate::core::provider::{
     ChunkStream, LlmProvider, Message, RequestOptions, StreamChunk, Usage,
 };
 
-use super::{merge_options_into, retry_with_backoff, sse_data_lines};
+use super::{merge_options_into, normalize_options, retry_with_backoff, sse_data_lines};
 
 pub struct AnthropicProvider {
     name: String,
@@ -90,6 +90,19 @@ impl LlmProvider for AnthropicProvider {
         if !system_text.is_empty() {
             body["system"] = serde_json::json!([{"type": "text", "text": system_text}]);
         }
+
+        // Inject per-message options (e.g. cache markers for proxy/relay services).
+        if let Some(msg_opts) = self
+            .models
+            .get(&options.model)
+            .and_then(|c| c.message_options.as_ref())
+            && let Some(messages) = body["messages"].as_array_mut()
+        {
+            for msg in messages {
+                merge_options_into(msg, msg_opts);
+            }
+        }
+
         if !tools.is_empty() {
             body["tools"] = serde_json::json!(
                 tools.iter().map(|t| serde_json::json!({
@@ -133,12 +146,12 @@ impl LlmProvider for AnthropicProvider {
 
         // Deep-merge config options.
         if let Some(ref opts) = self.provider_options {
-            merge_options_into(&mut body, opts);
+            merge_options_into(&mut body, &normalize_options(opts));
         }
         if let Some(model_cfg) = self.models.get(&options.model)
             && let Some(ref opts) = model_cfg.options
         {
-            merge_options_into(&mut body, opts);
+            merge_options_into(&mut body, &normalize_options(opts));
         }
 
         tracing::debug!("POST {} (model={})", url, options.model);

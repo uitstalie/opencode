@@ -103,6 +103,12 @@ pub struct ModelConfig {
     #[serde(default)]
     pub options: Option<serde_json::Value>,
 
+    /// Body fields merged into **every** message object in the `messages`
+    /// array. Use this for per-message markers required by proxy/relay
+    /// services (e.g. `{"cache_control": {"type": "ephemeral"}}`).
+    #[serde(default)]
+    pub message_options: Option<serde_json::Value>,
+
     /// Body fields merged when `reasoning_effort` is set at runtime.
     /// Free-form JSON — covers any provider-specific reasoning activation
     /// fields (e.g. `{"thinking":{"type":"enabled"}}`).
@@ -139,6 +145,9 @@ impl ModelConfig {
         }
         if other.options.is_some() {
             self.options = other.options;
+        }
+        if other.message_options.is_some() {
+            self.message_options = other.message_options;
         }
         if other.reasoning_options.is_some() {
             self.reasoning_options = other.reasoning_options;

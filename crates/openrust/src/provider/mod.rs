@@ -22,6 +22,45 @@ pub(crate) fn merge_options_into(target: &mut Value, source: &Value) {
     }
 }
 
+/// Normalize user-facing option keys to wire-format keys.
+///
+/// Applies:
+/// - CamelCase → snake_case conversion (`promptCacheKey` → `prompt_cache_key`)
+/// - Works recursively on nested objects and arrays.
+///
+/// Users write semantic names in config (`promptCacheKey`, `reasoningEffort`);
+/// this ensures they land as provider-native wire fields after merging.
+pub(crate) fn normalize_options(opts: &Value) -> Value {
+    match opts {
+        Value::Object(map) => {
+            let mut result = serde_json::Map::new();
+            for (k, v) in map {
+                result.insert(camel_to_snake(k), normalize_options(v));
+            }
+            Value::Object(result)
+        }
+        Value::Array(arr) => Value::Array(
+            arr.iter().map(normalize_options).collect(),
+        ),
+        _ => opts.clone(),
+    }
+}
+
+fn camel_to_snake(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() + 4);
+    for (i, c) in s.chars().enumerate() {
+        if c.is_uppercase() {
+            if i > 0 && !result.ends_with('_') {
+                result.push('_');
+            }
+            result.push(c.to_ascii_lowercase());
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 /// Build a shared HTTP client with sane defaults for LLM API calls:
 /// - TCP keep-alive every 30s (prevents NAT/firewall from dropping idle connections)
 /// - HTTP/2 PING every 30s / timeout 10s (keeps H2 connections alive through proxies)

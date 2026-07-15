@@ -16,7 +16,7 @@ use crate::core::provider::{
 };
 use std::collections::HashMap;
 
-use super::{merge_options_into, retry_with_backoff};
+use super::{merge_options_into, normalize_options, retry_with_backoff};
 
 pub struct OpenAICompatProvider {
     name: String,
@@ -60,6 +60,11 @@ impl LlmProvider for OpenAICompatProvider {
     ) -> anyhow::Result<ChunkStream> {
         let url = format!("{}/chat/completions", self.base_url);
 
+        let msg_opts = self
+            .models
+            .get(&options.model)
+            .and_then(|c| c.message_options.as_ref());
+
         let mut body = serde_json::json!({
             "model": options.model,
             "messages": messages.iter().map(|m| {
@@ -79,6 +84,9 @@ impl LlmProvider for OpenAICompatProvider {
                         message["content"] = serde_json::Value::Null;
                     }
                 }
+                if let Some(opts) = msg_opts {
+                    merge_options_into(&mut message, opts);
+                }
                 message
             }).collect::<Vec<_>>(),
             "stream": true,
@@ -90,13 +98,14 @@ impl LlmProvider for OpenAICompatProvider {
         }
 
         // Deep-merge config options (provider-level first, then model-level overrides).
+        // Normalize user-facing keys (CamelCase → snake_case) before merging.
         if let Some(ref opts) = self.provider_options {
-            merge_options_into(&mut body, opts);
+            merge_options_into(&mut body, &normalize_options(opts));
         }
         if let Some(model_cfg) = self.models.get(&options.model)
             && let Some(ref opts) = model_cfg.options
         {
-            merge_options_into(&mut body, opts);
+            merge_options_into(&mut body, &normalize_options(opts));
         }
 
         if let Some(temp) = options.temperature {
