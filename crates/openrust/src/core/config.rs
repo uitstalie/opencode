@@ -511,6 +511,9 @@ impl Config {
         if other.background_model.is_some() {
             self.background_model = other.background_model;
         }
+        if other.theme.is_some() {
+            self.theme = other.theme;
+        }
         for (name, incoming) in other.provider {
             self.provider
                 .entry(name)
