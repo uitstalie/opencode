@@ -2,6 +2,7 @@ pub mod anthropic;
 pub mod gemini;
 pub mod openai_compat;
 
+use reqwest::Client;
 use serde_json::Value;
 use std::future::Future;
 
@@ -19,6 +20,22 @@ pub(crate) fn merge_options_into(target: &mut Value, source: &Value) {
             }
         }
     }
+}
+
+/// Build a shared HTTP client with sane defaults for LLM API calls:
+/// - TCP keep-alive every 30s (prevents NAT/firewall from dropping idle connections)
+/// - HTTP/2 PING every 30s / timeout 10s (keeps H2 connections alive through proxies)
+/// - 8s connect timeout (fail fast on DNS/TCP issues)
+/// - 300s total timeout (LLM streaming can take minutes)
+pub(crate) fn build_http_client() -> reqwest::Client {
+    Client::builder()
+        .timeout(std::time::Duration::from_secs(300))
+        .connect_timeout(std::time::Duration::from_secs(8))
+        .tcp_keepalive(std::time::Duration::from_secs(30))
+        .http2_keep_alive_interval(std::time::Duration::from_secs(30))
+        .http2_keep_alive_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_else(|_| Client::new())
 }
 
 pub(crate) async fn retry_with_backoff<F, Fut>(

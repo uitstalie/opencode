@@ -37,11 +37,7 @@ impl AnthropicProvider {
         provider_options: Option<Value>,
         headers: HashMap<String, String>,
     ) -> Self {
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(300))
-            .connect_timeout(std::time::Duration::from_secs(15))
-            .build()
-            .unwrap_or_else(|_| Client::new());
+        let client = super::build_http_client();
         Self {
             name,
             api_key,
@@ -154,7 +150,7 @@ impl LlmProvider for AnthropicProvider {
             }
         }
 
-        let response = retry_with_backoff(0, || {
+        let response = retry_with_backoff(1, || {
             let client = &self.client;
             let url = &url;
             let api_key = &self.api_key;
