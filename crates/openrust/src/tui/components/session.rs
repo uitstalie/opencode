@@ -48,32 +48,48 @@ impl<'a> SessionPanel<'a> {
                 break;
             }
 
-            let block_area = Rect { x: area.x, y, width: area.width, height: visible_h };
+            // Trailing empty line → transparent gap between blocks.
+            let has_trailing_gap =
+                block_end > block_start && rows[block_end - 1].text.is_empty();
+            let content_vis = if has_trailing_gap && visible_h > 1 {
+                visible_h - 1
+            } else {
+                visible_h
+            };
 
-            let lines: Vec<Line<'static>> = (block_start..block_start + visible_h as usize)
-                .map(|ri| {
-                    let row = &rows[ri];
-                    let abs_index = ri + scroll_offset;
-                    if view.render.selection.is_some_and(|(start, end)| {
-                        let (from, to) = if start <= end { (start, end) } else { (end, start) };
-                        abs_index >= from && abs_index <= to
-                    }) {
-                        Line::from(vec![Span::styled(
-                            row.text.clone(),
-                            view.theme
-                                .dialog_selected_style()
-                                .add_modifier(Modifier::BOLD),
-                        )])
-                    } else {
-                        row.line.clone()
-                    }
-                })
-                .collect();
+            if content_vis > 0 {
+                let block_area = Rect {
+                    x: area.x,
+                    y,
+                    width: area.width,
+                    height: content_vis,
+                };
 
-            let msg = Paragraph::new(lines)
-                .style(view.theme.message_bg_style())
-                .wrap(Wrap { trim: false });
-            frame.render_widget(msg, block_area);
+                let lines: Vec<Line<'static>> = (block_start..block_start + content_vis as usize)
+                    .map(|ri| {
+                        let row = &rows[ri];
+                        let abs_index = ri + scroll_offset;
+                        if view.render.selection.is_some_and(|(start, end)| {
+                            let (from, to) = if start <= end { (start, end) } else { (end, start) };
+                            abs_index >= from && abs_index <= to
+                        }) {
+                            Line::from(vec![Span::styled(
+                                row.text.clone(),
+                                view.theme
+                                    .dialog_selected_style()
+                                    .add_modifier(Modifier::BOLD),
+                            )])
+                        } else {
+                            row.line.clone()
+                        }
+                    })
+                    .collect();
+
+                let msg = Paragraph::new(lines)
+                    .style(view.theme.message_bg_style())
+                    .wrap(Wrap { trim: false });
+                frame.render_widget(msg, block_area);
+            }
 
             y += visible_h;
         }
