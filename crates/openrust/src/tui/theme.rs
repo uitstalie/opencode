@@ -162,11 +162,17 @@ pub fn builtin_light() -> ThemeFile {
     serde_json::from_str(include_str!("themes/light.json")).unwrap()
 }
 
-/// Look up a built-in theme by name ("dark" or "light").
+/// Built-in "hacker" theme — green phosphor on dark background.
+pub fn builtin_hacker() -> ThemeFile {
+    serde_json::from_str(include_str!("themes/hacker.json")).unwrap()
+}
+
+/// Look up a built-in theme by name ("dark", "light", or "hacker").
 pub fn builtin(name: &str) -> Option<ThemeFile> {
     match name {
         "dark" => Some(builtin_dark()),
         "light" => Some(builtin_light()),
+        "hacker" => Some(builtin_hacker()),
         _ => None,
     }
 }
