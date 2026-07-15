@@ -74,6 +74,7 @@ pub(crate) fn build_http_client() -> reqwest::Client {
         .tcp_keepalive(std::time::Duration::from_secs(30))
         .http2_keep_alive_interval(std::time::Duration::from_secs(30))
         .http2_keep_alive_timeout(std::time::Duration::from_secs(10))
+        .pool_max_idle_per_host(0)
         .build()
         .unwrap_or_else(|_| Client::new())
 }
