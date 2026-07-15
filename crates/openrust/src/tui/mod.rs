@@ -46,6 +46,7 @@ mod session_ops;
 mod session_render;
 mod sidebar;
 mod templates;
+pub(super) mod theme;
 mod types;
 mod util;
 mod view;
@@ -180,6 +181,7 @@ impl SessionView {
                 Err(e) => tracing::error!(err = %e, "cleanup_old_sessions failed"),
             }
         }
+        let theme = theme::resolve(config.theme.as_ref());
         Self {
             provider_name,
             model,
@@ -203,7 +205,7 @@ impl SessionView {
             status,
             ai_running: false,
             cache: CacheStats { hits: 0, total: 0, prompt_count: 0 },
-            theme: Theme::dark(),
+            theme,
             thinking_mode: ThinkingMode::Show,
             reasoning_effort: None,
             ui: DialogState {

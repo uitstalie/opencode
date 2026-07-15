@@ -107,6 +107,7 @@ mod tests {
     fn resolve_run_config_errors_without_model() {
         let err = resolve_run_config(Config {
             model: None,
+            theme: None,
             background_model: None,
             provider: HashMap::from([(
                 "deepseek".to_string(),
@@ -130,6 +131,7 @@ mod tests {
     fn create_run_provider_errors_without_api_key() {
         let run_config = resolve_run_config(Config {
             model: Some("missing-key-provider/deepseek-chat".to_string()),
+            theme: None,
             background_model: None,
             provider: HashMap::from([(
                 "missing-key-provider".to_string(),
@@ -159,6 +161,7 @@ mod tests {
         let run_config = E2eRunConfig {
             config: Config {
                 model: None,
+                theme: None,
                 background_model: None,
                 provider: HashMap::new(),
                 presets: HashMap::new(),

@@ -35,6 +35,11 @@ pub struct Config {
     /// no_internet/none) or define new ones; values are tool-name lists.
     #[serde(default)]
     pub presets: HashMap<String, Vec<String>>,
+
+    /// Theme configuration. Can be a string (built-in name like "dark" or
+    /// "light") or an inline object with hex color fields.
+    #[serde(default)]
+    pub theme: Option<serde_json::Value>,
 }
 
 /// Per-provider configuration
@@ -862,6 +867,7 @@ mod tests {
     fn provider_deep_merge_preserves_models_from_both_layers() {
         let mut global = Config {
             model: None,
+            theme: None,
             background_model: None,
             provider: HashMap::from([(
                 "shared".to_string(),
@@ -878,6 +884,7 @@ mod tests {
 
         let project = Config {
             model: Some("shared/project-model".to_string()),
+            theme: None,
             background_model: None,
             provider: HashMap::from([(
                 "shared".to_string(),
@@ -947,6 +954,7 @@ mod tests {
     fn provider_api_key_falls_back_to_config_value() {
         let config = Config {
             model: Some("config-only-provider/deepseek-v4-pro".to_string()),
+            theme: None,
             background_model: None,
             provider: HashMap::from([(
                 "config-only-provider".to_string(),

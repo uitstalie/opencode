@@ -51,31 +51,29 @@ impl DisplayMessage {
 
 #[derive(Clone, Debug)]
 pub struct Theme {
-    background: Color,
-    panel: Color,
-    sidebar_bg: Color,
-    footer_bg: Color,
-    border: Color,
-    active_border: Color,
-    text: Color,
-    muted: Color,
-    user: Color,
-    assistant: Color,
-    success: Color,
-    warning: Color,
-    thinking: Color,
-    tool: Color,
-    dialog: Color,
-    dialog_selected: Color,
-    overlay: Color,
-    /// Background for individual message blocks in the session panel.
-    message_bg: Color,
-    /// Markdown element colors.
-    heading: Color,
-    code: Color,
-    link: Color,
-    blockquote: Color,
-    list_marker: Color,
+    pub(super) background: Color,
+    pub(super) panel: Color,
+    pub(super) sidebar_bg: Color,
+    pub(super) footer_bg: Color,
+    pub(super) border: Color,
+    pub(super) active_border: Color,
+    pub(super) text: Color,
+    pub(super) muted: Color,
+    pub(super) user: Color,
+    pub(super) assistant: Color,
+    pub(super) success: Color,
+    pub(super) warning: Color,
+    pub(super) thinking: Color,
+    pub(super) tool: Color,
+    pub(super) dialog: Color,
+    pub(super) dialog_selected: Color,
+    pub(super) overlay: Color,
+    pub(super) message_bg: Color,
+    pub(super) heading: Color,
+    pub(super) code: Color,
+    pub(super) link: Color,
+    pub(super) blockquote: Color,
+    pub(super) list_marker: Color,
 }
 
 impl Theme {
@@ -104,6 +102,28 @@ impl Theme {
             link: Color::Rgb(250, 178, 131),
             blockquote: Color::Rgb(229, 192, 123),
             list_marker: Color::Rgb(86, 182, 194),
+        }
+    }
+
+    /// Construct from individual color values (used by theme loader).
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_colors(
+        background: Color, panel: Color, sidebar_bg: Color, footer_bg: Color,
+        border: Color, active_border: Color,
+        text: Color, muted: Color, user: Color, assistant: Color,
+        success: Color, warning: Color, thinking: Color, tool: Color,
+        dialog: Color, dialog_selected: Color, overlay: Color,
+        message_bg: Color, heading: Color, code: Color, link: Color,
+        blockquote: Color, list_marker: Color,
+    ) -> Self {
+        Self {
+            background, panel, sidebar_bg, footer_bg,
+            border, active_border,
+            text, muted, user, assistant,
+            success, warning, thinking, tool,
+            dialog, dialog_selected, overlay,
+            message_bg, heading, code, link,
+            blockquote, list_marker,
         }
     }
 

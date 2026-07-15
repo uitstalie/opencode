@@ -320,6 +320,7 @@ mod tests {
     fn from_config_uses_explicit_config_model() {
         let config = Config {
             model: Some("deepseek/deepseek-v4-pro".to_string()),
+            theme: None,
             background_model: None,
             provider: std::collections::HashMap::from([(
                 "deepseek".to_string(),
