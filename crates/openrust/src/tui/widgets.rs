@@ -59,15 +59,18 @@ impl SessionView {
             window_display,
             used as f64 / window as f64 * 100.0
         );
-        let task_count = self
-            .store
-            .as_ref()
-            .and_then(|store| store.list_tasks(&self.session_id).ok())
-            .map(|tasks| {
-                let done = tasks.iter().filter(|t| t.status == "completed").count();
-                format!("tasks: {}/{}", done, tasks.len())
-            })
-            .unwrap_or_else(|| "tasks: 0".to_string());
+        let task_count = if self.view_mode == ViewMode::Home {
+            "tasks: 0".to_string()
+        } else {
+            self.store
+                .as_ref()
+                .and_then(|store| store.list_tasks(&self.session_id).ok())
+                .map(|tasks| {
+                    let done = tasks.iter().filter(|t| t.status == "completed").count();
+                    format!("tasks: {}/{}", done, tasks.len())
+                })
+                .unwrap_or_else(|| "tasks: 0".to_string())
+        };
         Line::from(vec![
             Span::styled(
                 "OpenRust",
