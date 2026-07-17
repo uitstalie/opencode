@@ -202,6 +202,11 @@ fn builtin_skills() -> Vec<SkillEntry> {
             description: BUILTIN_CREATE_SKILLS_DESC.to_string(),
             path: PathBuf::from("builtin/create-skills"),
         },
+        SkillEntry {
+            name: "project-onboarding".to_string(),
+            description: BUILTIN_PROJECT_ONBOARDING_DESC.to_string(),
+            path: PathBuf::from("builtin/project-onboarding"),
+        },
     ]
 }
 
@@ -209,6 +214,7 @@ fn builtin_skill_body(name: &str) -> Option<&'static str> {
     match name {
         "create-agent" => Some(BUILTIN_CREATE_AGENT_BODY),
         "create-skills" => Some(BUILTIN_CREATE_SKILLS_BODY),
+        "project-onboarding" => Some(BUILTIN_PROJECT_ONBOARDING_BODY),
         _ => None,
     }
 }
@@ -388,6 +394,59 @@ Principles:
 2. Create the directory: `mkdir -p .openrust/skills/<skill-name>` (or global equivalent).
 3. Write the `SKILL.md` file with frontmatter and body.
 4. The skill name should be lowercase-hyphenated (e.g. `deploy-checklist`, `code-review`).
+"#;
+
+const BUILTIN_PROJECT_ONBOARDING_DESC: &str =
+    "Project onboarding: check AGENTS.md/.openrust docs, scaffold memory, recommend rules. Use when onboarding, migrating, or project docs are missing.";
+
+const BUILTIN_PROJECT_ONBOARDING_BODY: &str = r#"# project-onboarding
+
+Guide the user through project initialization: check existing docs, investigate the codebase, report findings, and scaffold missing files.
+
+## Phase 1: Check
+
+Inspect project root. Report status for each:
+
+| Item | Priority |
+|------|----------|
+| `AGENTS.md` | required |
+| `.openrust/config.json` or `.openrust/config.jsonc` | required |
+| `.openrust/memory/progress.md`, `.openrust/memory/TODO.md` | required |
+| `.openrust/memory/tech.md`, `.openrust/memory/conclusion.md` | recommended |
+| `.openrust/rules/`, `.openrust/agents/`, `.openrust/skills/` | optional |
+
+Detect tech stack from root markers: Rust (`Cargo.toml`, workspaces), Node (`package.json`), TypeScript (`tsconfig.json`), Python (`pyproject.toml`), etc.
+
+## Phase 2: Investigate
+
+Read highest-value sources first: `README*`, root manifests, lockfile, build/lint/test config, CI, existing `AGENTS.md`, `.cursor/rules/`, `CLAUDE.md`. Trust executable config over prose.
+
+Extract: exact dev commands, required command order, workspace boundaries, framework quirks, test quirks, conventions that differ from defaults.
+
+## Phase 3: Report & Recommend
+
+Report all findings concisely:
+- Missing required files (checklist format)
+- Detected tech stack
+- Recommended rules or agents to add
+
+## Phase 4: Scaffold
+
+Ask user to confirm before writing each file. **Never overwrite existing files.**
+
+- `AGENTS.md`: repo-specific guidance only — dev commands, architecture, quirks, conventions, test gotchas. Exclude generic advice.
+- `.openrust/config.json` or `.openrust/config.jsonc`: minimal project config if needed.
+- `.openrust/memory/progress.md`: current phase and recent milestones.
+- `.openrust/memory/TODO.md`: immediate tasks (high/medium/low).
+- `.openrust/memory/tech.md`: stack summary + key commands (if warranted).
+- `.openrust/memory/conclusion.md`: stable design decisions (if any).
+
+## Constraints
+
+- Check first, report, then ask before writing.
+- Memory: prefer empty over speculative.
+- Only ask questions the repo cannot answer.
+- If a user focus was provided, incorporate it into the onboarding scope.
 "#;
 
 /// Find the frontmatter block delimited by `---` lines.
@@ -579,6 +638,7 @@ mod tests {
         let names: Vec<_> = builtin_skills().into_iter().map(|s| s.name).collect();
         assert!(names.contains(&"create-agent".to_string()));
         assert!(names.contains(&"create-skills".to_string()));
+        assert!(names.contains(&"project-onboarding".to_string()));
     }
 
     #[tokio::test]
@@ -613,6 +673,7 @@ mod tests {
         let names = list_skill_names(&ctx);
         assert!(names.contains(&"create-agent".to_string()));
         assert!(names.contains(&"create-skills".to_string()));
+        assert!(names.contains(&"project-onboarding".to_string()));
     }
 
     #[tokio::test]
