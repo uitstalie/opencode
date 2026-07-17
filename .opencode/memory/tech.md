@@ -26,7 +26,7 @@
 - 内置 provider 完整定义：`builtin_providers()` 返回 `HashMap<String, ProviderConfig>`（含 base_url + protocol + models + reasoning 字段 + context limits），`Config::load()` 用 `entry().or_insert()` 填充（内置是 fallback 层）；用户写同名 provider 时完全替换内置定义，非逐字段 merge #architecture #decision #confirmed
 - SystemPrompt `render()` 纯函数化：`shell_kind` + `skills` 在构造时解析缓存，`render()` 不再访问任何外部状态——保证同一 `SystemPrompt` 实例多次渲染结果完全一致，维护 prompt 前缀稳定性（保护 prefix caching） #architecture #decision #confirmed
 - thinking effort 链入：模型选择完成后检测该模型的 `reasoning_options`/`reasoning_send_effort` 字段，仅当模型支持 reasoning 时自动弹出 thinking effort 对话框；引导流程为 provider → API key → model → thinking effort（reasoning 模型才弹） #decision #confirmed
-- config.json 中保存的 provider 定义会覆盖内置——更新内置定义后需手动清理 config.json（当前设计，不需要版本号机制）：内置 provider 是 fallback 层，用户 config.json 中已有的同名定义不会被自动更新 #decision #confirmed
+- ~~config.json 中保存的 provider 定义会覆盖内置——更新内置定义后需手动清理 config.json~~（已被 #52 取代：save 不再固化内置，无需手动清理） #superseded
 - zhipuai-coding-plan base_url 为 `https://open.bigmodel.cn/api/coding/paas/v4`（不是通用 `/api/paas/v4`）：coding plan 专用端点 #decision #confirmed
 - retry 从 provider 移到调用方：provider 只做单次请求（`retry_with_backoff(0)`），worker + run_agent 负责重试 + 倒计时推送——provider 不关心重试策略，调用方控制退避和 UI 反馈 #architecture #decision #confirmed
 - `SlashResult` 枚举：`handle_slash_command` 从返回 `bool` 改为返回 `SlashResult`（NotHandled/Handled/Prompt），支持 command-as-prompt 模式——`/init` 返回 `Prompt(template)` 注入模板为用户消息让模型执行，而非 UI 动作 #architecture #decision #confirmed
@@ -43,4 +43,10 @@
 - `/theme` 对话框用独立 `DialogKind::Theme`，切换后通过 `save_global()` 持久化到 `config.theme`——不与 provider/model 对话框复用，避免状态混淆 #decision #confirmed
 - Model 配置循环用独立的 `DialogKind::ModelConfigLoop`（非复用 `ProviderModel`），避免与现有 provider 切换流的状态机歧义 #decision #confirmed
 - HTTP 层 retry 重新启用（`max_retries=1`，此前为 0）：连接错误在 HTTP 层重试一次后再上抛给 worker 层——减少 worker 层无谓的重试开销，provider 负责瞬时故障，worker 负责策略级重试 #architecture #decision #confirmed
-- `build_http_client()` 统一网络配置：TCP keep-alive 30s、HTTP/2 PING 30s 间隔 10s 超时、连接超时 15s→8s——所有 provider 共享同一客户端配置，减少连接断开导致的流中断 #architecture #decision #confirmed
+- `build_http_client()` 统一网络配置：TCP keep-alive 30s、HTTP/2 PING 30s 间隔 10s 超时、连接超时 15s→8s、read_timeout 60s——所有 provider 共享同一客户端配置，减少连接断开导致的流中断 #architecture #decision #confirmed
+- reqwest 连接池脏连接根因：SSE 流提前退出（`[DONE]`）→ body 未完全消费 → 连接被放回池子但处于半关闭状态 → 下一个请求复用坏连接 → `send().await` 永久挂起。修复：`pool_max_idle_per_host(0)` 禁用连接池复用，每次请求用新连接——根因是 reqwest 连接池不验证回收连接的可用性 #issue #confirmed
+- `read_timeout(60s)` 检测 SSE 流停滞：connect_timeout 只覆盖建连阶段，全局超时（300s）太慢，服务器静默断开（TCP 连接未关闭但无数据流）时两者都无法捕获——read_timeout 作为流级停滞检测补充这一缺口 #decision #confirmed
+- models.dev 动态目录（对齐 dev-ai-release ModelsDev）：`core/models_dev.rs` 拉取 `models.dev/api.json` → 缓存 `~/.cache/openrust/models.json`（TTL 5min，原子写），TUI 启动时 stale 则后台刷新；优先级 用户 config > 动态目录 > 静态内置（内置仅作离线/首启兜底）；env `OPENRUST_MODELS_URL`/`OPENRUST_DISABLE_MODELS_FETCH`/`OPENRUST_MODELS_PATH`；npm→protocol 白名单映射（bedrock/openrouter 跳过），过滤非 text-output 与 deprecated 模型 #architecture #decision #confirmed
+- `Config.user_providers`（serde skip）记录用户真实定义的 provider，`save_to_file` 的 provider 节只写该集合——修复 save 把合并态（内置+动态 153 个 provider）固化进全局 config 的 bug；`/connect` insert 点同步入集合；历史固化条目在下次 save 自动清除 #issue #confirmed
+- `ModelConfig.image_input: Option<bool>` 纯配置驱动图像能力，`supports_images` 无启发式回退（`None` 即 false）；models.dev `modalities.input` 含 image 时置 true——纠正了启发式误判（deepseek 全系实为 text-only） #decision #confirmed
+- API key 迁移与擦除解耦：`migrate_api_keys` 对所有含明文 key 的 provider 都 strip 源文件（此前 vault 已有 key 时 migrate 跳过且不 strip，导致明文永久残留） #issue #confirmed
