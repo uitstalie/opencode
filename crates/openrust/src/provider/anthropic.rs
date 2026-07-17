@@ -317,6 +317,13 @@ impl LlmProvider for AnthropicProvider {
         self.models.keys().cloned().collect()
     }
 
+    fn supports_images(&self, model: &str) -> bool {
+        self.models
+            .get(model)
+            .and_then(|c| c.image_input)
+            .unwrap_or(false)
+    }
+
     fn name(&self) -> &str {
         &self.name
     }

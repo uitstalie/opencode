@@ -119,6 +119,7 @@ mod tests {
                 },
             )]),
             presets: HashMap::new(),
+            user_providers: Default::default(),
         })
         .unwrap_err();
 
@@ -144,6 +145,7 @@ mod tests {
                 },
             )]),
             presets: HashMap::new(),
+            user_providers: Default::default(),
         })
         .unwrap();
 
@@ -168,6 +170,7 @@ mod tests {
                 background_model: None,
                 provider: HashMap::new(),
                 presets: HashMap::new(),
+            user_providers: Default::default(),
             },
             provider_name: "deepseek".to_string(),
             resolved: crate::core::config::ResolvedProvider {

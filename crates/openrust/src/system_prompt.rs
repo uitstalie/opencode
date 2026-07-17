@@ -339,6 +339,7 @@ mod tests {
                 },
             )]),
             presets: std::collections::HashMap::new(),
+            user_providers: Default::default(),
         };
         let provider = ResolvedProvider {
             name: "deepseek".to_string(),

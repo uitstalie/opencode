@@ -44,6 +44,13 @@ pub struct Config {
     /// "light") or an inline object with hex color fields.
     #[serde(default)]
     pub theme: Option<serde_json::Value>,
+
+    /// Providers that came from user config files (or explicit /connect
+    /// edits), recorded before static builtins and the models.dev catalog
+    /// are overlaid. `save_to_file` writes only these back — merged-in
+    /// builtins/catalog entries must never be persisted as user config.
+    #[serde(skip)]
+    pub user_providers: std::collections::HashSet<String>,
 }
 
 /// Per-provider configuration
@@ -141,6 +148,11 @@ pub struct ModelConfig {
     #[serde(default)]
     pub system_role: Option<String>,
 
+    /// Whether the model accepts image input. `None` = unknown, falls back
+    /// to the name-based heuristic in `provider::model_supports_images`.
+    #[serde(default)]
+    pub image_input: Option<bool>,
+
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub headers: HashMap<String, String>,
 }
@@ -178,6 +190,9 @@ impl ModelConfig {
         if other.system_role.is_some() {
             self.system_role = other.system_role;
         }
+        if other.image_input.is_some() {
+            self.image_input = other.image_input;
+        }
         for (k, v) in other.headers {
             self.headers.insert(k, v);
         }
@@ -209,40 +224,27 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
     let mut map: HashMap<String, ProviderConfig> = HashMap::new();
 
     // ── DeepSeek ──────────────────────────────────────
+    // Offline fallback snapshot of models.dev `deepseek` (2026-07).
+    // All models are text-only; deepseek-chat is non-reasoning.
     let thinking_on = serde_json::json!({"thinking": {"type": "enabled"}});
+    let ds_model = |name: &str, reasoning: bool| ModelConfig {
+        name: Some(name.into()),
+        limit: Some(ModelLimit { input: None, context: Some(1_000_000), output: Some(384_000) }),
+        reasoning_options: reasoning.then(|| thinking_on.clone()),
+        reasoning_send_effort: reasoning.then_some(false),
+        image_input: Some(false),
+        ..Default::default()
+    };
     map.insert(
         "deepseek".into(),
         ProviderConfig {
             base_url: Some("https://api.deepseek.com/v1".into()),
             protocol: Some("openai".into()),
             models: [
-                (
-                    "deepseek-chat".into(),
-                    ModelConfig {
-                        name: Some("deepseek-chat".into()),
-                        limit: Some(ModelLimit { input: None, context: Some(64_000), output: Some(8_192) }),
-                        reasoning_options: Some(thinking_on.clone()),
-                        ..Default::default()
-                    },
-                ),
-                (
-                    "deepseek-reasoner".into(),
-                    ModelConfig {
-                        name: Some("deepseek-reasoner".into()),
-                        limit: Some(ModelLimit { input: None, context: Some(64_000), output: Some(32_768) }),
-                        reasoning_options: Some(thinking_on.clone()),
-                        ..Default::default()
-                    },
-                ),
-                (
-                    "deepseek-v4-pro".into(),
-                    ModelConfig {
-                        name: Some("deepseek-v4-pro".into()),
-                        limit: Some(ModelLimit { input: None, context: Some(128_000), output: Some(8_192) }),
-                        reasoning_options: Some(thinking_on),
-                        ..Default::default()
-                    },
-                ),
+                ("deepseek-chat".into(), ds_model("deepseek-chat", false)),
+                ("deepseek-reasoner".into(), ds_model("deepseek-reasoner", true)),
+                ("deepseek-v4-pro".into(), ds_model("deepseek-v4-pro", true)),
+                ("deepseek-v4-flash".into(), ds_model("deepseek-v4-flash", true)),
             ]
             .into_iter()
             .collect(),
@@ -251,33 +253,24 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
     );
 
     // ── GLM (Zhipu AI) ────────────────────────────────
+    // Fallback snapshot of models.dev `zhipuai`. glm-4-plus is EOL (removed).
     let glm_thinking = serde_json::json!({"thinking": {"type": "enabled", "clear_thinking": false}});
+    let glm_model = |name: &str| ModelConfig {
+        name: Some(name.into()),
+        limit: Some(ModelLimit { input: None, context: Some(204_800), output: Some(131_072) }),
+        reasoning_options: Some(glm_thinking.clone()),
+        reasoning_send_effort: Some(false),
+        image_input: Some(false),
+        ..Default::default()
+    };
     map.insert(
         "glm".into(),
         ProviderConfig {
             base_url: Some("https://open.bigmodel.cn/api/paas/v4".into()),
             protocol: Some("openai".into()),
             models: [
-                (
-                    "glm-4.6".into(),
-                    ModelConfig {
-                        name: Some("glm-4.6".into()),
-                        limit: Some(ModelLimit { input: None, context: Some(128_000), output: Some(16_384) }),
-                        reasoning_options: Some(glm_thinking.clone()),
-                        reasoning_send_effort: Some(false),
-                        ..Default::default()
-                    },
-                ),
-                (
-                    "glm-4-plus".into(),
-                    ModelConfig {
-                        name: Some("glm-4-plus".into()),
-                        limit: Some(ModelLimit { input: None, context: Some(128_000), output: Some(4_096) }),
-                        reasoning_options: Some(glm_thinking),
-                        reasoning_send_effort: Some(false),
-                        ..Default::default()
-                    },
-                ),
+                ("glm-4.6".into(), glm_model("glm-4.6")),
+                ("glm-4.7".into(), glm_model("glm-4.7")),
             ]
             .into_iter()
             .collect(),
@@ -287,52 +280,57 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
 
     // ── Zhipu AI Coding Plan ──────────────────────────
     let coding_thinking = serde_json::json!({"thinking": {"type": "enabled"}});
+    let coding_model = |name: &str, ctx: u64, send_effort: bool| ModelConfig {
+        name: Some(name.into()),
+        limit: Some(ModelLimit { input: None, context: Some(ctx), output: Some(131_072) }),
+        reasoning_options: Some(coding_thinking.clone()),
+        reasoning_send_effort: Some(send_effort),
+        image_input: Some(false),
+        ..Default::default()
+    };
     map.insert(
         "zhipuai-coding-plan".into(),
         ProviderConfig {
             base_url: Some("https://open.bigmodel.cn/api/coding/paas/v4".into()),
             protocol: Some("openai".into()),
             models: [
-                (
-                    "glm-5.2".into(),
-                    ModelConfig {
-                        name: Some("glm-5.2".into()),
-                        limit: Some(ModelLimit { input: None, context: Some(1_000_000), output: Some(128_000) }),
-                        reasoning_options: Some(coding_thinking.clone()),
-                        reasoning_send_effort: Some(true),
-                        ..Default::default()
-                    },
-                ),
-                (
-                    "glm-5.1".into(),
-                    ModelConfig {
-                        name: Some("glm-5.1".into()),
-                        limit: Some(ModelLimit { input: None, context: Some(1_000_000), output: Some(128_000) }),
-                        reasoning_options: Some(coding_thinking.clone()),
-                        reasoning_send_effort: Some(true),
-                        ..Default::default()
-                    },
-                ),
-                (
-                    "glm-5-turbo".into(),
-                    ModelConfig {
-                        name: Some("glm-5-turbo".into()),
-                        limit: Some(ModelLimit { input: None, context: Some(200_000), output: Some(128_000) }),
-                        reasoning_options: Some(coding_thinking.clone()),
-                        reasoning_send_effort: Some(false),
-                        ..Default::default()
-                    },
-                ),
-                (
-                    "glm-4.7".into(),
-                    ModelConfig {
-                        name: Some("glm-4.7".into()),
-                        limit: Some(ModelLimit { input: None, context: Some(128_000), output: Some(16_384) }),
-                        reasoning_options: Some(coding_thinking),
-                        reasoning_send_effort: Some(false),
-                        ..Default::default()
-                    },
-                ),
+                ("glm-5.2".into(), coding_model("glm-5.2", 1_000_000, true)),
+                ("glm-5.1".into(), coding_model("glm-5.1", 200_000, true)),
+                ("glm-5-turbo".into(), coding_model("glm-5-turbo", 200_000, false)),
+                ("glm-4.7".into(), coding_model("glm-4.7", 204_800, false)),
+            ]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        },
+    );
+
+    // ── Kimi For Coding ─────────────────────────────
+    // Offline fallback snapshot of models.dev `kimi-for-coding` (2026-07):
+    // Anthropic protocol (`@ai-sdk/anthropic`) at api.kimi.com/coding/v1.
+    // Thinking is forced on server-side; budget matches the TS transform:
+    // min(16_000, output / 2 - 1) = 16_000. No effort variants (variants() → {}).
+    let kimi_thinking = serde_json::json!({"thinking": {"type": "enabled", "budget_tokens": 16_000}});
+    let kimi_model = |key: &str, ctx: u64, out: u64, image: bool| ModelConfig {
+        name: Some(key.into()),
+        limit: Some(ModelLimit { input: None, context: Some(ctx), output: Some(out) }),
+        reasoning_options: Some(kimi_thinking.clone()),
+        reasoning_send_effort: Some(false),
+        image_input: Some(image),
+        ..Default::default()
+    };
+    map.insert(
+        "kimi-for-coding".into(),
+        ProviderConfig {
+            base_url: Some("https://api.kimi.com/coding/v1".into()),
+            protocol: Some("anthropic".into()),
+            models: [
+                ("k2p6".into(), kimi_model("k2p6", 262_144, 32_768, true)),
+                ("k2p5".into(), kimi_model("k2p5", 262_144, 32_768, true)),
+                ("k2p7".into(), kimi_model("k2p7", 262_144, 32_768, true)),
+                ("k3".into(), kimi_model("k3", 1_048_576, 131_072, true)),
+                ("kimi-k2-thinking".into(), kimi_model("kimi-k2-thinking", 262_144, 32_768, false)),
+                ("kimi-for-coding-highspeed".into(), kimi_model("kimi-for-coding-highspeed", 262_144, 32_768, true)),
             ]
             .into_iter()
             .collect(),
@@ -346,6 +344,8 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
         limit: Some(ModelLimit { input: None, context: Some(ctx), output: Some(out) }),
         max_tokens_key: Some("max_completion_tokens".into()),
         system_role: Some("developer".into()),
+        reasoning_send_effort: Some(true),
+        image_input: Some(true),
         ..Default::default()
     };
     map.insert(
@@ -359,6 +359,7 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
                     ModelConfig {
                         name: Some("gpt-4o".into()),
                         limit: Some(ModelLimit { input: None, context: Some(128_000), output: Some(16_384) }),
+                        image_input: Some(true),
                         ..Default::default()
                     },
                 ),
@@ -367,11 +368,11 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
                     ModelConfig {
                         name: Some("gpt-4o-mini".into()),
                         limit: Some(ModelLimit { input: None, context: Some(128_000), output: Some(16_384) }),
+                        image_input: Some(true),
                         ..Default::default()
                     },
                 ),
                 ("o1".into(), oai_reasoning("o1", 200_000, 100_000)),
-                ("o1-mini".into(), oai_reasoning("o1-mini", 128_000, 65_536)),
             ]
             .into_iter()
             .collect(),
@@ -380,28 +381,26 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
     );
 
     // ── Anthropic ─────────────────────────────────────
+    // Fallback snapshot of models.dev `anthropic` (2026-07). All current
+    // Claude models are reasoning + vision models; thinking budget follows
+    // the transform rule min(16_000, output / 2 - 1).
+    let claude_thinking = serde_json::json!({"thinking": {"type": "enabled", "budget_tokens": 16_000}});
+    let claude_model = |name: &str, ctx: u64, out: u64| ModelConfig {
+        name: Some(name.into()),
+        limit: Some(ModelLimit { input: None, context: Some(ctx), output: Some(out) }),
+        reasoning_options: Some(claude_thinking.clone()),
+        reasoning_send_effort: Some(false),
+        image_input: Some(true),
+        ..Default::default()
+    };
     map.insert(
         "anthropic".into(),
         ProviderConfig {
             base_url: Some("https://api.anthropic.com".into()),
             protocol: Some("anthropic".into()),
             models: [
-                (
-                    "claude-sonnet-4-5-20250514".into(),
-                    ModelConfig {
-                        name: Some("claude-sonnet-4-5-20250514".into()),
-                        limit: Some(ModelLimit { input: None, context: Some(200_000), output: Some(16_384) }),
-                        ..Default::default()
-                    },
-                ),
-                (
-                    "claude-haiku-4-5-20251001".into(),
-                    ModelConfig {
-                        name: Some("claude-haiku-4-5-20251001".into()),
-                        limit: Some(ModelLimit { input: None, context: Some(200_000), output: Some(8_192) }),
-                        ..Default::default()
-                    },
-                ),
+                ("claude-sonnet-4-5".into(), claude_model("claude-sonnet-4-5", 1_000_000, 64_000)),
+                ("claude-haiku-4-5-20251001".into(), claude_model("claude-haiku-4-5-20251001", 200_000, 64_000)),
             ]
             .into_iter()
             .collect(),
@@ -410,28 +409,23 @@ fn builtin_providers() -> HashMap<String, ProviderConfig> {
     );
 
     // ── Gemini ────────────────────────────────────────
+    let gemini_model = |name: &str| ModelConfig {
+        name: Some(name.into()),
+        limit: Some(ModelLimit { input: None, context: Some(1_048_576), output: Some(65_536) }),
+        // gemini.rs injects thinkingConfig on the default path when effort
+        // is set; this flag only gates the /model thinking dialog.
+        reasoning_send_effort: Some(true),
+        image_input: Some(true),
+        ..Default::default()
+    };
     map.insert(
         "gemini".into(),
         ProviderConfig {
             base_url: Some("https://generativelanguage.googleapis.com/v1beta".into()),
             protocol: Some("gemini".into()),
             models: [
-                (
-                    "gemini-2.5-pro".into(),
-                    ModelConfig {
-                        name: Some("gemini-2.5-pro".into()),
-                        limit: Some(ModelLimit { input: None, context: Some(1_048_576), output: Some(65_536) }),
-                        ..Default::default()
-                    },
-                ),
-                (
-                    "gemini-2.5-flash".into(),
-                    ModelConfig {
-                        name: Some("gemini-2.5-flash".into()),
-                        limit: Some(ModelLimit { input: None, context: Some(1_048_576), output: Some(65_536) }),
-                        ..Default::default()
-                    },
-                ),
+                ("gemini-2.5-pro".into(), gemini_model("gemini-2.5-pro")),
+                ("gemini-2.5-flash".into(), gemini_model("gemini-2.5-flash")),
             ]
             .into_iter()
             .collect(),
@@ -474,10 +468,23 @@ impl Config {
             }
         }
 
-        // Fill in built-in providers for any name not already configured.
-        // User-defined providers completely replace built-ins of the same name.
+        // Fill in built-in providers for any name not already configured,
+        // then overlay the cached models.dev catalog. Priority:
+        // user config > models.dev dynamic catalog > static builtins.
+        // Static builtins remain as the offline/first-launch fallback.
+        // `user_providers` records what the user actually defined so that
+        // save_to_file never persists merged-in entries.
+        config.user_providers = config.provider.keys().cloned().collect();
+        let user_defined = config.user_providers.clone();
         for (name, provider) in builtin_providers() {
             config.provider.entry(name).or_insert(provider);
+        }
+        if let Some(catalog) = crate::core::models_dev::load_cached() {
+            crate::core::models_dev::apply_catalog(
+                &mut config.provider,
+                &user_defined,
+                &catalog,
+            );
         }
 
         Ok(config)
@@ -505,9 +512,13 @@ impl Config {
         for provider in &migrated {
             println!("🔐 Migrated API key for '{}' to encrypted vault.", provider);
         }
-        // Strip migrated keys from the source file
+        // Strip plaintext keys from the source file for ALL providers that
+        // had one — not just newly migrated ones. When the vault already
+        // holds a key, migrate_from_config skips it, but the plaintext must
+        // still be removed from disk.
         if let Some(path) = source_path {
-            strip_api_keys_from_file(path, &migrated);
+            let owners: Vec<String> = to_migrate.into_keys().collect();
+            strip_api_keys_from_file(path, &owners);
         }
     }
 
@@ -700,6 +711,12 @@ impl Config {
     /// Save config to a file, preserving unknown top-level fields from the
     /// existing file. Only `model`, `provider`, and `presets` are written;
     /// any other keys present on disk are kept verbatim.
+    ///
+    /// The `provider` section is filtered to `user_providers` only: entries
+    /// merged in from static builtins or the models.dev catalog must not be
+    /// persisted (they would become frozen user config and shadow future
+    /// builtin/catalog updates). This also prunes historically frozen entries
+    /// on the next save.
     pub fn save_to_file(&self, path: &Path) -> anyhow::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -714,7 +731,10 @@ impl Config {
             serde_json::Value::Object(Default::default())
         };
 
-        let serialized = serde_json::to_value(self)?;
+        let mut serialized = serde_json::to_value(self)?;
+        if let Some(providers) = serialized.get_mut("provider").and_then(|p| p.as_object_mut()) {
+            providers.retain(|name, _| self.user_providers.contains(name));
+        }
         if let (Some(raw_obj), Some(ser_obj)) = (raw.as_object_mut(), serialized.as_object()) {
             for (key, value) in ser_obj {
                 raw_obj.insert(key.clone(), value.clone());
@@ -759,6 +779,7 @@ pub fn default_context_window(model: &str) -> u64 {
     if lower.contains("claude-3") || lower.contains("claude-4") || lower.contains("sonnet") || lower.contains("opus") { return 200_000 }
     if lower.contains("deepseek-v3") || lower.contains("deepseek-v4") { return 128_000 }
     if lower.contains("deepseek-r1") || lower.contains("deepseek-reasoner") { return 128_000 }
+    if lower.contains("kimi") || lower.contains("k2p") { return 262_144 }
     if lower.contains("gemini-2") { return 1_000_000 }
     if lower.contains("gemini") { return 32_000 }
     if lower.contains("qwen") { return 32_000 }
@@ -904,6 +925,44 @@ mod tests {
     }
 
     #[test]
+    fn builtin_kimi_for_coding_matches_dev_ai_release() {
+        let providers = builtin_providers();
+        let kimi = providers
+            .get("kimi-for-coding")
+            .expect("kimi-for-coding builtin missing");
+        assert_eq!(kimi.base_url.as_deref(), Some("https://api.kimi.com/coding/v1"));
+        assert_eq!(kimi.protocol.as_deref(), Some("anthropic"));
+
+        // (model, context, output, image_input)
+        let expected = [
+            ("k2p5", 262_144, 32_768, true),
+            ("k2p6", 262_144, 32_768, true),
+            ("k2p7", 262_144, 32_768, true),
+            ("k3", 1_048_576, 131_072, true),
+            ("kimi-k2-thinking", 262_144, 32_768, false),
+            ("kimi-for-coding-highspeed", 262_144, 32_768, true),
+        ];
+        assert_eq!(kimi.models.len(), expected.len());
+        for (key, ctx, out, image) in expected {
+            let model = kimi.models.get(key).unwrap_or_else(|| panic!("model {key} missing"));
+            assert_eq!(model.name.as_deref(), Some(key));
+            let limit = model.limit.as_ref().expect("limit missing");
+            assert_eq!(limit.context, Some(ctx));
+            assert_eq!(limit.output, Some(out));
+            assert_eq!(model.image_input, Some(image));
+            assert_eq!(
+                model.reasoning_options.as_ref().and_then(|v| v.pointer("/thinking/type")).and_then(|v| v.as_str()),
+                Some("enabled")
+            );
+            assert_eq!(
+                model.reasoning_options.as_ref().and_then(|v| v.pointer("/thinking/budget_tokens")).and_then(|v| v.as_u64()),
+                Some(16_000)
+            );
+            assert_eq!(model.reasoning_send_effort, Some(false));
+        }
+    }
+
+    #[test]
     fn model_limits_resolve_context_and_output_tokens() {
         let config = Config {
             model: Some("custom/model".to_string()),
@@ -961,6 +1020,7 @@ mod tests {
                 },
             )]),
             presets: HashMap::new(),
+            user_providers: Default::default(),
         };
 
         let project = Config {
@@ -979,6 +1039,7 @@ mod tests {
                 },
             )]),
             presets: HashMap::new(),
+            user_providers: Default::default(),
         };
 
         global.merge(project);
@@ -1033,6 +1094,37 @@ mod tests {
     }
 
     #[test]
+    fn save_never_persists_builtin_or_catalog_providers() {
+        let dir = tempdir().unwrap();
+        let openrust_dir = dir.path().join(".openrust");
+        fs::create_dir_all(&openrust_dir).unwrap();
+        let project_path = openrust_dir.join("config.json");
+
+        // User config defines one provider; load merges in static builtins.
+        fs::write(
+            &project_path,
+            r#"{ "model": "mine/model", "provider": { "mine": { "base_url": "https://example/v1", "models": {"model": {}} } } }"#,
+        )
+        .unwrap();
+        let config = Config::load(dir.path()).unwrap();
+        // Sanity: builtins are merged into the runtime view.
+        assert!(config.provider.contains_key("deepseek"));
+        assert!(config.provider.contains_key("kimi-for-coding"));
+
+        let save_path = dir.path().join("saved.json");
+        config.save_to_file(&save_path).unwrap();
+
+        let saved: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&save_path).unwrap()).unwrap();
+        let providers = saved["provider"].as_object().unwrap();
+        // User-defined provider survives; merged-in builtins are pruned.
+        assert!(providers.contains_key("mine"));
+        for builtin in ["deepseek", "kimi-for-coding", "glm", "openai", "anthropic", "gemini"] {
+            assert!(!providers.contains_key(builtin), "builtin {builtin} leaked into saved config");
+        }
+    }
+
+    #[test]
     fn provider_api_key_falls_back_to_config_value() {
         let config = Config {
             log_level: None,
@@ -1048,6 +1140,7 @@ mod tests {
                 },
             )]),
             presets: HashMap::new(),
+            user_providers: Default::default(),
         };
 
         let provider = config.get_provider("config-only-provider").unwrap();

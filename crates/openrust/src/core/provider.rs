@@ -264,24 +264,11 @@ pub trait LlmProvider: Send + Sync {
     fn name(&self) -> &str;
 
     /// Whether this provider/model supports image input.
+    /// Driven by `ModelConfig.image_input`; defaults to false when unset.
     fn supports_images(&self, model: &str) -> bool {
-        model_supports_images(model)
+        let _ = model;
+        false
     }
-}
-
-/// Heuristic: detect whether a model name suggests image/vision support.
-pub fn model_supports_images(model: &str) -> bool {
-    let lower = model.to_lowercase();
-    lower.contains("gpt-4o")
-        || lower.contains("gpt-4-turbo")
-        || lower.contains("gpt-4-vision")
-        || lower.contains("claude-3")
-        || lower.contains("claude-3.5")
-        || lower.contains("claude-4")
-        || lower.contains("gemini")
-        || lower.contains("deepseek-v4")
-        || lower.contains("deepseek-chat")
-        || lower.contains("deepseek-reasoner")
 }
 
 // ── Factory ────────────────────────────────────────

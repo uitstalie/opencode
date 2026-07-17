@@ -571,6 +571,7 @@ impl SessionView {
             return;
         };
         let wire = args.get(4).cloned().unwrap_or_else(|| model.clone());
+        self.config.user_providers.insert(provider.clone());
         self.config.provider.insert(
             provider.clone(),
             ProviderConfig {
@@ -944,10 +945,12 @@ impl SessionView {
                 reasoning_effort: None,  // set via /model thinking flow
                 max_tokens_key: None,
                 system_role: None,
+                image_input: None,
                 headers: HashMap::new(),
             })
         }).collect();
 
+        self.config.user_providers.insert(provider.clone());
         self.config.provider.insert(
             provider.clone(),
             ProviderConfig {

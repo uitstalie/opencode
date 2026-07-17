@@ -65,6 +65,12 @@ pub fn run(script: Option<PathBuf>, prompt: Option<String>) -> anyhow::Result<()
     let cwd = std::env::current_dir()?;
     let config = Config::load(&cwd)?;
 
+    // Refresh the models.dev catalog in the background when the cache is
+    // stale. This session keeps using the current cache; the fresh catalog
+    // takes effect on next launch. Failures fall back to stale cache or
+    // static builtins.
+    crate::core::models_dev::spawn_refresh_if_stale();
+
     // Validate config at startup — show clear errors before TUI initializes.
     let vault = crate::core::vault::Vault::load();
     for error in config.validate(&vault) {
