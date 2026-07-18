@@ -316,6 +316,10 @@ fn permission_widget(view: &SessionView, permission: &PendingPermission) -> Para
     } else {
         theme.dialog_selected_style().add_modifier(Modifier::BOLD)
     };
+    // Arrow marker on the focused option so the selection reads even where
+    // the highlight style is subtle; spaces keep both options aligned.
+    let allow_marker = if permission.allow { "› " } else { "  " };
+    let deny_marker = if permission.allow { "  " } else { "› " };
     let lines = vec![
         Line::from(Span::styled(
             format!("{}: {}", permission.tool, permission.detail),
@@ -323,8 +327,9 @@ fn permission_widget(view: &SessionView, permission: &PendingPermission) -> Para
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled("  [A] Allow  ", allow_style),
-            Span::styled("  [D] Deny  ", deny_style),
+            Span::styled(format!("  {allow_marker}[A] Allow"), allow_style),
+            Span::styled("      ", theme.dialog_style()),
+            Span::styled(format!("{deny_marker}[D] Deny"), deny_style),
         ]),
         Line::from(""),
         Line::from(Span::styled(
