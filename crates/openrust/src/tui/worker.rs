@@ -600,8 +600,9 @@ fn is_retriable_error(err: &anyhow::Error) -> bool {
 fn short_error(err: &anyhow::Error) -> String {
     let msg = err.to_string();
     let first_line = msg.lines().next().unwrap_or(&msg);
-    if first_line.len() > 50 {
-        format!("{}…", &first_line[..47])
+    if first_line.chars().count() > 50 {
+        let truncated: String = first_line.chars().take(47).collect();
+        format!("{truncated}…")
     } else {
         first_line.to_string()
     }
