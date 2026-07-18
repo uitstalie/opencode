@@ -181,7 +181,6 @@ fn parse_line(line: &str) -> Option<MemoryEntry> {
 
 /// Format an entry as a single line.
 fn format_entry(content: &str, tags: &[String]) -> String {
-    let date = today();
     let tag_str = if tags.is_empty() {
         String::new()
     } else {
@@ -193,7 +192,26 @@ fn format_entry(content: &str, tags: &[String]) -> String {
                 .join(" ")
         )
     };
+    // Skip the date prefix when content already carries one — callers
+    // sometimes include it, and `[date] [date]` is never intended.
+    if has_date_prefix(content) {
+        return format!("- {content}{tag_str}");
+    }
+    let date = today();
     format!("- [{date}] {content}{tag_str}")
+}
+
+/// True when content starts with a `[YYYY-MM-DD]` date prefix.
+fn has_date_prefix(content: &str) -> bool {
+    let b = content.as_bytes();
+    b.len() >= 12
+        && b[0] == b'['
+        && b[1..5].iter().all(|c| c.is_ascii_digit())
+        && b[5] == b'-'
+        && b[6..8].iter().all(|c| c.is_ascii_digit())
+        && b[8] == b'-'
+        && b[9..11].iter().all(|c| c.is_ascii_digit())
+        && b[11] == b']'
 }
 
 // ── Write ──────────────────────────────────────────
