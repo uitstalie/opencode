@@ -45,6 +45,11 @@ pub struct Config {
     #[serde(default)]
     pub theme: Option<serde_json::Value>,
 
+    /// Default websearch engine: "auto" (bing → duckduckgo fallback),
+    /// "bing", or "duckduckgo". The tool's `engine` parameter overrides it.
+    #[serde(default)]
+    pub search_engine: Option<String>,
+
     /// Providers that came from user config files (or explicit /connect
     /// edits), recorded before static builtins and the models.dev catalog
     /// are overlaid. `save_to_file` writes only these back — merged-in
@@ -1008,6 +1013,7 @@ mod tests {
             log_level: None,
             model: None,
             theme: None,
+            search_engine: None,
             background_model: None,
             provider: HashMap::from([(
                 "shared".to_string(),
@@ -1027,6 +1033,7 @@ mod tests {
             log_level: None,
             model: Some("shared/project-model".to_string()),
             theme: None,
+            search_engine: None,
             background_model: None,
             provider: HashMap::from([(
                 "shared".to_string(),
@@ -1130,6 +1137,7 @@ mod tests {
             log_level: None,
             model: Some("config-only-provider/deepseek-v4-pro".to_string()),
             theme: None,
+            search_engine: None,
             background_model: None,
             provider: HashMap::from([(
                 "config-only-provider".to_string(),

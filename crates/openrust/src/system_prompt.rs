@@ -322,6 +322,7 @@ mod tests {
             log_level: None,
             model: Some("deepseek/deepseek-v4-pro".to_string()),
             theme: None,
+            search_engine: None,
             background_model: None,
             provider: std::collections::HashMap::from([(
                 "deepseek".to_string(),

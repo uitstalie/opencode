@@ -109,6 +109,7 @@ mod tests {
             log_level: None,
             model: None,
             theme: None,
+            search_engine: None,
             background_model: None,
             provider: HashMap::from([(
                 "deepseek".to_string(),
@@ -135,6 +136,7 @@ mod tests {
             log_level: None,
             model: Some("missing-key-provider/deepseek-chat".to_string()),
             theme: None,
+            search_engine: None,
             background_model: None,
             provider: HashMap::from([(
                 "missing-key-provider".to_string(),
@@ -167,6 +169,7 @@ mod tests {
                 log_level: None,
                 model: None,
                 theme: None,
+                search_engine: None,
                 background_model: None,
                 provider: HashMap::new(),
                 presets: HashMap::new(),
