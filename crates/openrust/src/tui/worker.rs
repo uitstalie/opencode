@@ -106,7 +106,6 @@ pub(super) fn spawn_prompt_worker(
     tool_spec: String,
     presets: std::collections::HashMap<String, Vec<String>>,
     context_window: u64,
-    input_tokens: Option<u64>,
     output_tokens: Option<u32>,
 ) -> PromptJob {
     let (tx, rx) = mpsc::channel();
@@ -272,20 +271,9 @@ pub(super) fn spawn_prompt_worker(
                     }
                 }
 
-                // Trim history to fit within context window before calling LLM.
-                // Always keep the first 2 messages (system/user pair) and last 4.
-                if context_window > 0 {
-                    compaction::trim_history(
-                        &mut history,
-                        input_tokens.unwrap_or(context_window),
-                        if input_tokens.is_some() {
-                            0
-                        } else {
-                            output_tokens.map(u64::from).unwrap_or(24_000)
-                        },
-                        6,
-                    );
-                }
+                // History is compacted only via the token-based auto-compaction
+                // above (real usage near the context window) or an explicit
+                // user-invoked compact. Never silently drop messages here.
 
                 // Retryable + abortable LLM call: on retriable errors, show
                 // countdown via RetryStatus so the user sees what's happening.

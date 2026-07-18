@@ -59,7 +59,6 @@ impl SessionView {
             self.current_agent_tools(),
             self.config.presets.clone(),
             self.current_context_window(),
-            self.config.resolve_input_tokens(),
             self.config.resolve_output_tokens(),
         ));
         while self.prompt_job.is_some() {
@@ -366,7 +365,6 @@ impl SessionView {
             self.current_agent_tools(),
             self.config.presets.clone(),
             self.current_context_window(),
-            self.config.resolve_input_tokens(),
             self.config.resolve_output_tokens(),
         ));
         Ok(())
