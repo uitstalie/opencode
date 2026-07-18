@@ -4,7 +4,6 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::Modifier,
     text::{Line, Span},
     widgets::{Paragraph, Wrap},
 };
@@ -75,9 +74,7 @@ impl<'a> SessionPanel<'a> {
                         }) {
                             Line::from(vec![Span::styled(
                                 row.text.clone(),
-                                view.theme
-                                    .dialog_selected_style()
-                                    .add_modifier(Modifier::BOLD),
+                                view.theme.selection_style(),
                             )])
                         } else {
                             row.line.clone()

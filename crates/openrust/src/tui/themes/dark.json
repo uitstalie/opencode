@@ -22,5 +22,9 @@
   "code": "#7FD88F",
   "link": "#FAB283",
   "blockquote": "#E5C07B",
-  "list_marker": "#56B6C2"
+  "list_marker": "#56B6C2",
+  "diff_delete": "#C86E6E",
+  "selection": "#A0B4CD",
+  "selection_bg": "#1C1C22",
+  "syntect_theme": "base16-ocean.dark"
 }

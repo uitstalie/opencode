@@ -243,23 +243,55 @@ impl SessionView {
     }
 
     fn session_render_rows(&self, _region_height: usize, region_width: usize) -> Vec<SessionRenderLine> {
+        let content_width = region_width.saturating_sub(2).max(1);
+        let theme_version = self.render.theme_version.get();
         let mut all_rows = Vec::new();
 
-        for (message_index, message) in self.display.iter().enumerate() {
-            for line in display_message_lines(message, &self.theme) {
-                all_rows.push(SessionRenderLine {
-                    text: Self::flatten_line(&line),
-                    line,
-                    tool_message_index: if message.role == "tool" {
-                        Some(message_index)
-                    } else {
-                        None
-                    },
-                    message_index,
+        // History messages: cached per message. Rebuilt only when the wrap
+        // width, theme, or collapsed flag changes — markdown/syntect/latex
+        // rendering no longer runs 30×/s for the whole transcript.
+        {
+            let mut cache = self.render.message_cache.borrow_mut();
+            for (message_index, message) in self.display.iter().enumerate() {
+                let stale = cache.get(&message_index).is_none_or(|e| {
+                    e.width != content_width
+                        || e.theme_version != theme_version
+                        || e.collapsed != message.collapsed
                 });
+                if stale {
+                    let rows = display_message_lines(message, &self.theme)
+                        .into_iter()
+                        .flat_map(|line| Self::wrap_line_by_width(&line, content_width))
+                        .map(|line| SessionRenderLine {
+                            text: Self::flatten_line(&line),
+                            tool_message_index: if message.role == "tool" {
+                                Some(message_index)
+                            } else {
+                                None
+                            },
+                            message_index,
+                            line,
+                        })
+                        .collect();
+                    cache.insert(
+                        message_index,
+                        super::MessageCacheEntry {
+                            width: content_width,
+                            theme_version,
+                            collapsed: message.collapsed,
+                            rows,
+                        },
+                    );
+                }
+                if let Some(entry) = cache.get(&message_index) {
+                    all_rows.extend(entry.rows.iter().cloned());
+                }
             }
         }
 
+        // Live region (streaming preview + pending tool cards): rebuilt
+        // every frame — small and time-sensitive (spinner/elapsed).
+        let mut live_rows = Vec::new();
         let mut live_idx = self.display.len();
 
         if self.ai_running && !self.thinking_preview.trim().is_empty()
@@ -279,7 +311,7 @@ impl SessionView {
                         Span::styled(format!(": {dur}"), self.theme.muted_style()),
                     ]
                 };
-                all_rows.push(SessionRenderLine {
+                live_rows.push(SessionRenderLine {
                     line: Line::from(header_spans),
                     text: "thinking".to_string(),
                     tool_message_index: None,
@@ -288,7 +320,7 @@ impl SessionView {
                 for line in self.thinking_preview.lines() {
                     let rendered = super::latex::latex_to_unicode(line);
                     let line = Line::from(Span::styled(rendered, self.theme.thinking_style()));
-                    all_rows.push(SessionRenderLine {
+                    live_rows.push(SessionRenderLine {
                         text: Self::flatten_line(&line),
                         line,
                         tool_message_index: None,
@@ -299,7 +331,7 @@ impl SessionView {
             }
 
         if self.ai_running && !self.assistant_preview.trim().is_empty() {
-            all_rows.push(SessionRenderLine {
+            live_rows.push(SessionRenderLine {
                 line: Line::from(vec![Span::styled(
                     "assistant".to_string(),
                     self.theme.assistant_style().add_modifier(Modifier::BOLD),
@@ -311,7 +343,7 @@ impl SessionView {
             for line in self.assistant_preview.lines() {
                 let rendered = super::latex::latex_to_unicode(line);
                 let line = Line::from(Span::styled(rendered, self.theme.assistant_style()));
-                all_rows.push(SessionRenderLine {
+                live_rows.push(SessionRenderLine {
                     text: Self::flatten_line(&line),
                     line,
                     tool_message_index: None,
@@ -330,7 +362,7 @@ impl SessionView {
             };
             let elapsed = format_elapsed(tool.started_at);
             let tool_msg_idx = live_idx + tool_idx;
-            all_rows.push(SessionRenderLine {
+            live_rows.push(SessionRenderLine {
                 line: Line::from(Span::styled(
                     "tool".to_string(),
                     self.theme.tool_style().add_modifier(Modifier::BOLD),
@@ -353,13 +385,13 @@ impl SessionView {
             }
             spans.push(Span::styled(format!("  [{label} · {elapsed}]"), self.theme.muted_style()));
             let text = spans.iter().map(|s| s.content.as_ref()).collect::<Vec<_>>().join("");
-            all_rows.push(SessionRenderLine {
+            live_rows.push(SessionRenderLine {
                 line: Line::from(spans),
                 text,
                 tool_message_index: None,
                 message_index: tool_msg_idx,
             });
-            all_rows.push(SessionRenderLine {
+            live_rows.push(SessionRenderLine {
                 line: Line::from(""),
                 text: String::new(),
                 tool_message_index: None,
@@ -367,8 +399,8 @@ impl SessionView {
             });
         }
 
-        if all_rows.is_empty() {
-            all_rows.push(SessionRenderLine {
+        if all_rows.is_empty() && live_rows.is_empty() {
+            live_rows.push(SessionRenderLine {
                 line: Line::from(Span::styled(
                     "No messages yet. Type in the input window and press Enter.".to_string(),
                     self.theme.muted_style(),
@@ -379,25 +411,22 @@ impl SessionView {
             });
         }
 
-        let content_width = region_width.saturating_sub(2).max(1);
-        let all_rows: Vec<SessionRenderLine> = all_rows
-            .into_iter()
-            .flat_map(|row| {
-                let msg_idx = row.message_index;
-                let tool_idx = row.tool_message_index;
-                Self::wrap_line_by_width(&row.line, content_width)
-                    .into_iter()
-                    .map(move |line| {
-                        let text = Self::flatten_line(&line);
-                        SessionRenderLine {
-                            line,
-                            text,
-                            tool_message_index: tool_idx,
-                            message_index: msg_idx,
-                        }
-                    })
-            })
-            .collect();
+        // Wrap live rows at the same width, then append behind history.
+        all_rows.extend(live_rows.into_iter().flat_map(|row| {
+            let msg_idx = row.message_index;
+            let tool_idx = row.tool_message_index;
+            Self::wrap_line_by_width(&row.line, content_width)
+                .into_iter()
+                .map(move |line| {
+                    let text = Self::flatten_line(&line);
+                    SessionRenderLine {
+                        line,
+                        text,
+                        tool_message_index: tool_idx,
+                        message_index: msg_idx,
+                    }
+                })
+        }));
 
         all_rows
     }

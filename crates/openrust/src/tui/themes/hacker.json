@@ -22,5 +22,9 @@
   "code": "#33BB99",
   "link": "#FFBB33",
   "blockquote": "#33CC66",
-  "list_marker": "#33CC66"
+  "list_marker": "#33CC66",
+  "diff_delete": "#FF5555",
+  "selection": "#0A0D0A",
+  "selection_bg": "#33FF33",
+  "syntect_theme": "Solarized (dark)"
 }

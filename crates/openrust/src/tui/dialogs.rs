@@ -449,6 +449,11 @@ impl SessionView {
             && let Some(t) = tf.to_theme()
         {
             self.theme = t;
+            // Invalidate the per-message render cache: colors and the
+            // syntect palette change with the theme.
+            self.render
+                .theme_version
+                .set(self.render.theme_version.get() + 1);
             self.note(format!("theme: {}", name));
             // Persist to config
             self.config.theme = Some(serde_json::Value::String(name.to_string()));

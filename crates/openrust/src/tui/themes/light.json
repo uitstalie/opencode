@@ -22,5 +22,9 @@
   "code": "#3D8A40",
   "link": "#C8671A",
   "blockquote": "#8B7500",
-  "list_marker": "#1A6B7A"
+  "list_marker": "#1A6B7A",
+  "diff_delete": "#C03030",
+  "selection": "#1A1A22",
+  "selection_bg": "#C8D8F0",
+  "syntect_theme": "InspiredGitHub"
 }

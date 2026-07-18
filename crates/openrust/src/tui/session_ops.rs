@@ -27,6 +27,7 @@ impl SessionView {
         self.session_id = format!("session-{}", now_micros());
         self.messages.clear();
         self.display.clear();
+        self.render.message_cache.borrow_mut().clear();
         self.session_scroll = 0;
         self.view_mode = ViewMode::Session;
         self.reload_agents();
@@ -476,6 +477,7 @@ impl SessionView {
             })
             .map(|message| render::DisplayMessage::new(&message.role, &message.content))
             .collect();
+        self.render.message_cache.borrow_mut().clear();
         self.note(format!("session: switched to {}", id));
     }
 

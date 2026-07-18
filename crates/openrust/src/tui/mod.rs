@@ -250,6 +250,8 @@ impl SessionView {
                 area_height: Cell::new(24),
                 dialog_area: Cell::new(None),
                 input_area: Cell::new(ratatui::layout::Rect::ZERO),
+                message_cache: RefCell::new(std::collections::HashMap::new()),
+                theme_version: Cell::new(0),
             },
         }
     }

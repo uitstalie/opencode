@@ -351,6 +351,20 @@ pub(super) struct RenderState {
     pub(super) dialog_area: Cell<Option<ratatui::layout::Rect>>,
     /// Last input area rect from layout — used by SlashHelp Float layer.
     pub(super) input_area: Cell<ratatui::layout::Rect>,
+    /// Per-message rendered+wrapped rows, keyed by display index.
+    /// History messages are immutable except `collapsed`, so rows are
+    /// cached and only rebuilt on width/theme/collapsed change.
+    pub(super) message_cache: RefCell<std::collections::HashMap<usize, MessageCacheEntry>>,
+    /// Bumped on theme switch to invalidate `message_cache`.
+    pub(super) theme_version: Cell<u64>,
+}
+
+/// Cached render of one history `DisplayMessage`.
+pub(super) struct MessageCacheEntry {
+    pub(super) width: usize,
+    pub(super) theme_version: u64,
+    pub(super) collapsed: bool,
+    pub(super) rows: Vec<SessionRenderLine>,
 }
 
 pub(super) struct DialogState {

@@ -287,7 +287,8 @@ impl<'a> Builder<'a> {
             }
             TagEnd::CodeBlock => {
                 let code = std::mem::take(&mut self.code_buffer);
-                let highlighted = highlight_code(&code, self.code_lang.as_deref());
+                let highlighted =
+                    highlight_code(&code, self.code_lang.as_deref(), self.theme.syntect_theme());
                 for line in highlighted {
                     let mut spans = vec![Span::styled("│ ", self.theme.muted_style())];
                     spans.extend(line.spans);
