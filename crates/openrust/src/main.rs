@@ -74,5 +74,39 @@ fn init_logging(log_level: Option<&str>) -> anyhow::Result<WorkerGuard> {
         .with(file_layer)
         .init();
 
+    install_panic_hook(&log_dir);
+
     Ok(guard)
+}
+
+/// Route panics (any thread) into the log file in addition to stderr, so a
+/// crashed TUI session still leaves a trace. The record goes through tracing
+/// and is also appended synchronously as a fallback in case the non-blocking
+/// writer does not flush before teardown.
+fn install_panic_hook(log_dir: &std::path::Path) {
+    let log_dir = log_dir.to_path_buf();
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        tracing::error!("panic: {info}\n{backtrace}");
+
+        // Append to the file the rolling appender is currently writing
+        // (newest openrust.log.*), falling back to the unsuffixed name.
+        let latest = std::fs::read_dir(&log_dir)
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with("openrust.log."))
+            .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
+        let path = latest
+            .map(|e| e.path())
+            .unwrap_or_else(|| log_dir.join("openrust.log"));
+        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            use std::io::Write;
+            let _ = writeln!(file, "ERROR panic: {info}\n{backtrace}");
+        }
+
+        default_hook(info);
+    }));
 }
