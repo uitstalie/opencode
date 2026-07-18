@@ -24,7 +24,8 @@ impl<'a> Toast<'a> {
             return;
         };
         let toast_area = super::super::layout::toast_rect(area);
-        let widget = Paragraph::new(toast.as_str())
+        let text = crate::tui::util::strip_terminal_controls(toast.as_str()).into_owned();
+        let widget = Paragraph::new(text)
             .style(view.theme.system_style())
             .block(
                 Block::default()

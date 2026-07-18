@@ -85,7 +85,7 @@ impl SessionView {
             Span::raw("  |  "),
             Span::styled(running, self.theme.running_style(self.ai_running)),
             Span::raw("  |  "),
-            Span::raw(self.status.clone()),
+            Span::raw(super::util::strip_terminal_controls(&self.status).into_owned()),
         ])
     }
 

@@ -86,3 +86,55 @@ pub(super) fn read_line_span(result: &str) -> Option<(usize, usize)> {
 pub(super) fn home_input_hint() -> &'static str {
     "输入消息后 Enter 开始 · /connect 配置 provider · /models 选择模型 · Esc 退出"
 }
+
+/// Strip ANSI escape sequences and C0/C1 control characters from text before
+/// it reaches the render pipeline. Tool output and provider errors may carry
+/// color codes, `\r` progress rewrites, or cursor-move sequences; written
+/// raw into a buffer cell they are interpreted by the real terminal and
+/// corrupt the whole frame (rows shifted, leading columns eaten).
+///
+/// Keeps `\n` and `\t`. Borrows when the text is already clean.
+pub(super) fn strip_terminal_controls(text: &str) -> std::borrow::Cow<'_, str> {
+    let dirty = text
+        .chars()
+        .any(|c| c == '\x1b' || (c.is_control() && c != '\n' && c != '\t'));
+    if !dirty {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            match chars.peek() {
+                // CSI: ESC [ params… final byte in @..=~
+                Some('[') => {
+                    chars.next();
+                    for c in chars.by_ref() {
+                        if ('@'..='~').contains(&c) {
+                            break;
+                        }
+                    }
+                }
+                // OSC: ESC ] … terminated by BEL or ST (ESC \)
+                Some(']') => {
+                    chars.next();
+                    let mut prev_esc = false;
+                    for c in chars.by_ref() {
+                        if c == '\x07' || (prev_esc && c == '\\') {
+                            break;
+                        }
+                        prev_esc = c == '\x1b';
+                    }
+                }
+                // Lone ESC or other sequence: drop the ESC only.
+                _ => {}
+            }
+            continue;
+        }
+        if c.is_control() && c != '\n' && c != '\t' {
+            continue;
+        }
+        out.push(c);
+    }
+    std::borrow::Cow::Owned(out)
+}

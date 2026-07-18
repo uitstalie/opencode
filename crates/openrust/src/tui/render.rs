@@ -58,6 +58,14 @@ impl DisplayMessage {
 
 pub(super) fn display_message_lines(message: &DisplayMessage, theme: &Theme) -> Vec<Line<'static>> {
     let role = message.role();
+    // Strip terminal control sequences at the pipeline entry: tool output and
+    // provider errors may carry ANSI/CR bytes that would otherwise be
+    // interpreted by the real terminal and corrupt the frame.
+    let content = super::util::strip_terminal_controls(message.content());
+    let meta = message
+        .meta
+        .as_deref()
+        .map(|m| super::util::strip_terminal_controls(m));
     let role_style = match role {
         "user" => theme.user_style(),
         "assistant" => theme.assistant_style(),
@@ -65,7 +73,7 @@ pub(super) fn display_message_lines(message: &DisplayMessage, theme: &Theme) -> 
         "tool" => theme.tool_style(),
         _ => theme.system_style(),
     };
-    let header_spans = if let Some(ref meta) = message.meta {
+    let header_spans = if let Some(ref meta) = meta {
         vec![
             Span::styled(role.to_string(), role_style.add_modifier(Modifier::BOLD)),
             Span::styled(format!(": {meta}"), theme.muted_style()),
@@ -79,7 +87,7 @@ pub(super) fn display_message_lines(message: &DisplayMessage, theme: &Theme) -> 
     let mut lines = vec![Line::from(header_spans)];
 
     if message.collapsed {
-        let first_line = message.content().lines().next().unwrap_or("");
+        let first_line = content.lines().next().unwrap_or("");
         lines.push(Line::from(vec![
             Span::from(format!("▶ {}", first_line)),
             Span::styled("  [click to expand]", theme.muted_style()),
@@ -89,11 +97,10 @@ pub(super) fn display_message_lines(message: &DisplayMessage, theme: &Theme) -> 
     }
 
     if role == "assistant" {
-        lines.extend(super::markdown::render_markdown(message.content(), theme));
+        lines.extend(super::markdown::render_markdown(&content, theme));
     } else {
         lines.extend(
-            message
-                .content()
+            content
                 .lines()
                 .map(|line| Line::from(line.to_string())),
         );

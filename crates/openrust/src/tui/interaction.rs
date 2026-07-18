@@ -319,7 +319,8 @@ impl SessionView {
                 });
                 for line in self.thinking_preview.lines() {
                     let rendered = super::latex::latex_to_unicode(line);
-                    let line = Line::from(Span::styled(rendered, self.theme.thinking_style()));
+                    let rendered = super::util::strip_terminal_controls(&rendered);
+                    let line = Line::from(Span::styled(rendered.into_owned(), self.theme.thinking_style()));
                     live_rows.push(SessionRenderLine {
                         text: Self::flatten_line(&line),
                         line,
@@ -342,7 +343,8 @@ impl SessionView {
             });
             for line in self.assistant_preview.lines() {
                 let rendered = super::latex::latex_to_unicode(line);
-                let line = Line::from(Span::styled(rendered, self.theme.assistant_style()));
+                let rendered = super::util::strip_terminal_controls(&rendered);
+                let line = Line::from(Span::styled(rendered.into_owned(), self.theme.assistant_text_style()));
                 live_rows.push(SessionRenderLine {
                     text: Self::flatten_line(&line),
                     line,
@@ -376,10 +378,12 @@ impl SessionView {
                 Span::styled(tool.name.clone(), self.theme.tool_style()),
             ];
             if !tool.input.is_empty() {
-                let input = if tool.input.len() > 120 {
-                    format!("  {}", &tool.input[..117])
+                let tool_input = super::util::strip_terminal_controls(&tool.input);
+                let input = if tool_input.chars().count() > 120 {
+                    let truncated: String = tool_input.chars().take(117).collect();
+                    format!("  {truncated}…")
                 } else {
-                    format!("  {}", tool.input)
+                    format!("  {}", tool_input)
                 };
                 spans.push(Span::styled(input, self.theme.muted_style()));
             }
