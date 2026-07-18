@@ -1,6 +1,6 @@
 # Project Progress
 
-> 最后更新：2026-07-11
+> 最后更新：2026-07-17
 
 ## Rust 重写里程碑（openrust）
 - Phase 0 / 0.9 / 1A–1D / 1 收尾 / 2 全部完成：CLI + Provider + 14 工具 + 会话/权限/system prompt + 最小 TUI + 真实 tool loop + task 子 agent + 权限弹窗 + 富渲染（markdown/syntect/diff/sidebar）
@@ -234,6 +234,22 @@
 - 主题配置化：`ThemeFile`（serde hex colors）、内置 `dark.json`/`light.json`/`hacker.json`、`Config.theme` 字段、`theme::resolve()` 加载、`/theme` 命令 + 对话框切换持久化
 - `/connect` 升级：3-step 向导（provider → base URL → API key）→ model 配置循环（add/edit/delete model，含 context/output limits + reasoning toggle）；`ConnectDraft` 扩展、`ModelDraft`/`ModelEditStep` 新增、`DialogKind::ModelConfigLoop`
 - 依赖更新：55 packages via `cargo update`；277 tests，零 clippy warning
+
+### HTTP 连接池脏连接修复（commit `7bd646f11`）
+- reqwest 连接池复用半关闭连接导致 tool call 后续消息永久挂起，`pool_max_idle_per_host(0)` 禁用连接池复用
+- 同时新增 `read_timeout(60s)` 检测 SSE 流停滞（服务器静默断开）
+
+### models.dev 动态目录 + kimi-for-coding 内置 provider（commits `51a87f2b4` / `99a162be0`）
+- `core/models_dev.rs`：拉取 models.dev api.json → 缓存 `~/.cache/openrust/models.json`（5min TTL 原子写），TUI 启动 stale 则后台刷新；153 providers 经 `debug config show` 验证
+- 静态内置全量刷新到 models.dev 值（deepseek 1M ctx、glm-4.7 替换 glm-4-plus、claude-sonnet-4-5 等），内置仅作离线/首启兜底
+- kimi-for-coding 内置：anthropic 协议、`https://api.kimi.com/coding/v1`、6 模型（k2p5/k2p6/k2p7/k3/kimi-k2-thinking/kimi-for-coding-highspeed）
+- 顺带修复：`save_to_file` 只持久化 `Config.user_providers`（不再冻结 153 个合并 provider 进全局 config）；`migrate_api_keys` vault 已有 key 时也 strip 明文；删除遗留 `crates/openrust/openrust.json`（含游离明文 key）
+
+### TUI 渲染优化 B/A/C：theme 联动 + 渲染缓存 + render.rs 瘦身（commit `f2aa46b39`，已 push + 二进制已替换）
+- **B. Theme 归位 + 全联动**：Theme struct 从 render.rs 迁入 `theme.rs`（新增 diff_delete/selection/selection_bg/syntect_theme 4 字段）；三主题 JSON 补齐新字段；syntect 代码块配色跟随 `/theme` 切换（dark→base16-ocean.dark、light→InspiredGitHub、hacker→Solarized (dark)），light 主题下代码不再不可读；selection 高亮脱离 dialog_selected_style
+- **A. 渲染缓存**：`RenderState.message_cache` 按 index 缓存历史消息渲染+wrap 结果，width/theme_version/collapsed 三元失效；稳态渲染从 O(全历史×30fps) 降到 O(live 区域)，长会话滚动不再重复跑 markdown/syntect/latex
+- **C. render.rs 瘦身**：301→103 行，只留 DisplayMessage + re-export，7 个引用文件零改动
+- `cargo test` 300 passed、clippy 零警告；commit 已推送 `origin/rust`，release 二进制已备份替换（`~/.local/share/openrust/bin/openrust`，旧版 .bak）
 
 ## 进行中
 - **mode → read_only 迁移**：用户决定彻底删除 `mode` 概念，agent 能力完全由 md 文件定义；工具集控制改由 frontmatter `read_only: true` 布尔实现。8 步计划已定但尚未实现

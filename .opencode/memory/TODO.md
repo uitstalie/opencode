@@ -24,8 +24,11 @@
 - [ ] **mode → read_only 迁移（8 步）**：①还原 agent.rs 临时 mode 变更 → ②删除 AgentInfo.mode 字段 → ③添加 read_only: bool + frontmatter 解析（默认 false）→ ④重写 tools_for_mode→tools_for(read_only, is_subagent)：read_only=true 过滤 WRITE_TOOLS → ⑤更新 worker.rs/task.rs 调用方 → ⑥general/explore 设 hidden=true（修复 Tab 误切）→ ⑦更新 frontmatter 解析测试 + tools_for/visible_agents 测试 → ⑧cargo test + cargo clippy
 - [x] **状态栏重构**（commit `55d6e915d`）：model/thinking/agent 移到输入框下方独立 info 行；status 行保留 context/cache/tasks/running
 
+- [ ] **`/init` 后续备注不读取 + skills 被注入而非调用**：`/init` 第一阶段后注入的后续指令（Phase 2 备注）未被模型读取/执行；skills 应通过 `skill` 工具调用，但当前表现为直接注入 system prompt。需排查 `/init` command-as-prompt 模板注入后的 tool loop 行为
+- [ ] **TUI 渲染优化人工验证**（二进制已替换待重启）：长会话滚动流畅度（稳态渲染缓存）、`/theme` 切 light/hacker 看代码块配色与可读性、鼠标选择高亮色、首次启动后台拉取 models.dev 写 `~/.cache/openrust/models.json`
 ## 中优先级
 - [ ] 清理 `doc/` 设计文档中标记的 TODO/待接入点
+- [ ] **TUI 渲染遗留可选项**（B/A/C 未纳入，按价值决定）：style 方法的布尔语义参数收拢、latex 转换结果缓存、mod.rs/dialogs.rs 状态分组
 
 ## 测试
 - [ ] **Permission Scope 测试用例**（`doc/permission-scope-design.md` Phase 4）：为 scope 匹配逻辑新增测试用例

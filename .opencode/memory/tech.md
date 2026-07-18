@@ -50,3 +50,5 @@
 - `Config.user_providers`（serde skip）记录用户真实定义的 provider，`save_to_file` 的 provider 节只写该集合——修复 save 把合并态（内置+动态 153 个 provider）固化进全局 config 的 bug；`/connect` insert 点同步入集合；历史固化条目在下次 save 自动清除 #issue #confirmed
 - `ModelConfig.image_input: Option<bool>` 纯配置驱动图像能力，`supports_images` 无启发式回退（`None` 即 false）；models.dev `modalities.input` 含 image 时置 true——纠正了启发式误判（deepseek 全系实为 text-only） #decision #confirmed
 - API key 迁移与擦除解耦：`migrate_api_keys` 对所有含明文 key 的 provider 都 strip 源文件（此前 vault 已有 key 时 migrate 跳过且不 strip，导致明文永久残留） #issue #confirmed
+- TUI 渲染缓存按消息 index 缓存渲染+wrap 结果，`width/theme_version/collapsed` 三元失效（新建/切换 session 清缓存、`/theme` 切换递增 theme_version、collapsed toggle 由 key 自动失配）；live 区（流式 preview + tool spinner）保持每帧重建——稳态渲染从 O(全历史×30fps) 降到 O(live 区域)，历史消息不重复跑 markdown/syntect/latex #architecture #decision #confirmed
+- syntect 内置主题的 key 大小写敏感且含空格/大写（`InspiredGitHub`、`Solarized (dark)`），不是 kebab-case——主题名不匹配时 fallback 静默映射回 dark，会掩盖错误配置导致测试假失败；主题 JSON 中的 syntect_theme 字段必须用精确 key #issue #confirmed
