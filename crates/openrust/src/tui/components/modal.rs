@@ -177,6 +177,47 @@ fn render_dialog_panel(view: &SessionView, frame: &mut Frame, area: Rect, dialog
 fn question_widget(view: &SessionView, q: &PendingQuestion) -> Paragraph<'static> {
     let theme = &view.theme;
     let item = q.item();
+    let title = if item.header.is_empty() {
+        format!(" Question {}/{} ", q.current + 1, q.items.len())
+    } else {
+        format!(" {} ({}/{}) ", item.header, q.current + 1, q.items.len())
+    };
+
+    // Confirm sub-page: review the chosen options (incl. custom text).
+    // Only Enter here submits; Esc/← returns to the selection page.
+    if q.confirming {
+        let mut lines = vec![
+            Line::from(Span::styled(item.question.clone(), theme.muted_style())),
+            Line::from(""),
+            Line::from(Span::styled(
+                "已选答案:".to_string(),
+                theme.title_style(),
+            )),
+        ];
+        for part in q.answer_parts() {
+            lines.push(Line::from(Span::styled(
+                format!("  • {part}"),
+                theme.dialog_selected_style(),
+            )));
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Enter 提交答案 · Esc/← 返回修改",
+            theme.muted_style(),
+        )));
+        return Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .title(title)
+                    .title_alignment(ratatui::layout::Alignment::Center)
+                    .title_style(theme.title_style())
+                    .borders(Borders::ALL)
+                    .border_style(theme.dialog_border_style()),
+            )
+            .style(theme.dialog_style())
+            .wrap(Wrap { trim: false });
+    }
+
     let mut lines = vec![
         Line::from(Span::styled(item.question.clone(), theme.muted_style())),
         Line::from(""),
@@ -220,6 +261,19 @@ fn question_widget(view: &SessionView, q: &PendingQuestion) -> Paragraph<'static
         format!("{}✎ Type your own answer", custom_marker),
         custom_style,
     )));
+    if item.multiple {
+        let done_selected = q.selected == q.done_index() && q.typing.is_none();
+        let done_marker = if done_selected { "› " } else { "  " };
+        let done_style = if done_selected {
+            theme.dialog_selected_style().add_modifier(Modifier::BOLD)
+        } else {
+            theme.dialog_style()
+        };
+        lines.push(Line::from(Span::styled(
+            format!("{}✓ Done (确认选择)", done_marker),
+            done_style,
+        )));
+    }
     if let Some(buffer) = &q.typing {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
@@ -228,18 +282,15 @@ fn question_widget(view: &SessionView, q: &PendingQuestion) -> Paragraph<'static
         )));
     }
     lines.push(Line::from(""));
-    let hint = if item.multiple {
-        "↑/↓ 选择 · Space 多选 · Enter 确认 · Esc 取消"
+    let hint = if q.typing.is_some() {
+        "Enter 确认输入 · Esc 返回选项"
+    } else if item.multiple {
+        "↑/↓ 移动 · Enter/Space 勾选 · Done 行确认 · Esc 取消"
     } else {
-        "↑/↓ 选择 · Enter 确认 · Esc 取消"
+        "↑/↓ 移动 · Enter 选择 · Esc 取消"
     };
     lines.push(Line::from(Span::styled(hint, theme.muted_style())));
 
-    let title = if item.header.is_empty() {
-        format!(" Question {}/{} ", q.current + 1, q.items.len())
-    } else {
-        format!(" {} ({}/{}) ", item.header, q.current + 1, q.items.len())
-    };
     Paragraph::new(lines)
         .block(
             Block::default()

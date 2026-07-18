@@ -26,6 +26,23 @@ pub(super) struct PendingQuestion {
     pub(super) picked: Vec<usize>,
     pub(super) answers: Vec<String>,
     pub(super) typing: Option<String>,
+    /// Confirm sub-page: shows the chosen options (incl. custom text); only
+    /// Enter on this page submits the answer.
+    pub(super) confirming: bool,
+    /// Custom text awaiting confirmation on the confirm page.
+    pub(super) custom_answer: Option<String>,
+}
+
+/// Result of pressing Enter on the selection page.
+pub(super) enum SelectEnter {
+    /// Multi-select toggled an option; stay on the page.
+    Toggled,
+    /// Switched to custom-answer typing.
+    Typing,
+    /// Moved to the confirm page.
+    Confirm,
+    /// Multi-select Done pressed with nothing picked.
+    EmptyPicks,
 }
 
 impl PendingQuestion {
@@ -85,6 +102,8 @@ impl PendingQuestion {
             picked: Vec::new(),
             answers: Vec::new(),
             typing: None,
+            confirming: false,
+            custom_answer: None,
         })
     }
 
@@ -93,11 +112,16 @@ impl PendingQuestion {
     }
 
     pub(super) fn row_count(&self) -> usize {
-        self.item().options.len() + 1
+        // Multi-select adds a trailing "Done" row below the custom-answer row.
+        self.item().options.len() + if self.item().multiple { 2 } else { 1 }
     }
 
     pub(super) fn custom_index(&self) -> usize {
         self.item().options.len()
+    }
+
+    pub(super) fn done_index(&self) -> usize {
+        self.item().options.len() + 1
     }
 
     pub(super) fn next(&mut self) {
@@ -132,42 +156,70 @@ impl PendingQuestion {
         self.selected = 0;
         self.picked.clear();
         self.typing = None;
+        self.confirming = false;
+        self.custom_answer = None;
         self.current >= self.items.len()
     }
 
-    pub(super) fn confirm(&mut self) -> Option<Vec<String>> {
+    /// Enter on the selection page: toggle (multi), pick-and-confirm
+    /// (single), open custom typing, or open the confirm page via Done.
+    pub(super) fn selecting_enter(&mut self) -> SelectEnter {
         if self.selected == self.custom_index() {
             self.typing = Some(String::new());
-            return None;
+            return SelectEnter::Typing;
+        }
+        if self.item().multiple {
+            if self.selected == self.done_index() {
+                if self.picked.is_empty() {
+                    return SelectEnter::EmptyPicks;
+                }
+                self.confirming = true;
+                return SelectEnter::Confirm;
+            }
+            self.toggle_pick();
+            return SelectEnter::Toggled;
+        }
+        self.confirming = true;
+        SelectEnter::Confirm
+    }
+
+    /// The chosen parts shown on the confirm page (labels or custom text).
+    pub(super) fn answer_parts(&self) -> Vec<String> {
+        if let Some(text) = &self.custom_answer {
+            return vec![text.clone()];
         }
         let item = self.item();
-        let answer = if item.multiple {
-            if self.picked.is_empty() {
-                item.options[self.selected].0.clone()
-            } else {
-                let mut picks = self.picked.clone();
-                picks.sort_unstable();
-                picks
-                    .iter()
-                    .map(|&index| item.options[index].0.clone())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            }
-        } else {
-            item.options[self.selected].0.clone()
-        };
+        if !item.multiple {
+            return vec![item.options[self.selected].0.clone()];
+        }
+        let mut picks = self.picked.clone();
+        picks.sort_unstable();
+        picks
+            .iter()
+            .map(|&index| item.options[index].0.clone())
+            .collect()
+    }
+
+    /// Custom typing finished: stash the text and open the confirm page.
+    pub(super) fn begin_confirm_custom(&mut self) {
+        self.custom_answer = Some(self.typing.take().unwrap_or_default());
+        self.confirming = true;
+    }
+
+    /// Enter on the confirm page: the only path that submits an answer.
+    pub(super) fn confirm_submit(&mut self) -> Option<Vec<String>> {
+        let answer = self.answer_parts().join(", ");
+        self.custom_answer = None;
         if self.record(answer) {
             return Some(std::mem::take(&mut self.answers));
         }
         None
     }
 
-    pub(super) fn commit_custom(&mut self) -> Option<Vec<String>> {
-        let text = self.typing.take().unwrap_or_default();
-        if self.record(text) {
-            return Some(std::mem::take(&mut self.answers));
-        }
-        None
+    /// Leave the confirm page back to the selection page.
+    pub(super) fn confirm_back(&mut self) {
+        self.confirming = false;
+        self.custom_answer = None;
     }
 }
 

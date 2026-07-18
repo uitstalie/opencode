@@ -148,21 +148,34 @@ impl SessionView {
             None,
             Cancel,
             Done(Vec<String>),
+            Note(String),
         }
         let outcome = {
             let Some(q) = self.ui.pending_question.as_mut() else {
                 return;
             };
-            if q.typing.is_some() {
+            if q.confirming {
+                match key.code {
+                    KeyCode::Enter => match q.confirm_submit() {
+                        Some(answers) => Outcome::Done(answers),
+                        None => Outcome::None,
+                    },
+                    KeyCode::Esc | KeyCode::Backspace | KeyCode::Left => {
+                        q.confirm_back();
+                        Outcome::None
+                    }
+                    _ => Outcome::None,
+                }
+            } else if q.typing.is_some() {
                 match key.code {
                     KeyCode::Esc => {
                         q.typing = None;
                         Outcome::None
                     }
-                    KeyCode::Enter => match q.commit_custom() {
-                        Some(answers) => Outcome::Done(answers),
-                        None => Outcome::None,
-                    },
+                    KeyCode::Enter => {
+                        q.begin_confirm_custom();
+                        Outcome::None
+                    }
                     KeyCode::Backspace => {
                         if let Some(buffer) = q.typing.as_mut() {
                             buffer.pop();
@@ -192,9 +205,13 @@ impl SessionView {
                         q.toggle_pick();
                         Outcome::None
                     }
-                    KeyCode::Enter => match q.confirm() {
-                        Some(answers) => Outcome::Done(answers),
-                        None => Outcome::None,
+                    KeyCode::Enter => match q.selecting_enter() {
+                        super::SelectEnter::Toggled
+                        | super::SelectEnter::Typing
+                        | super::SelectEnter::Confirm => Outcome::None,
+                        super::SelectEnter::EmptyPicks => {
+                            Outcome::Note("请先勾选至少一项，再进入 Done 确认".to_string())
+                        }
                     },
                     _ => Outcome::None,
                 }
@@ -213,6 +230,9 @@ impl SessionView {
                     let _ = q.responder.send(answers);
                 }
                 self.status = "answer sent".to_string();
+            }
+            Outcome::Note(message) => {
+                self.status = message;
             }
         }
     }
