@@ -347,7 +347,10 @@ impl<'a> Builder<'a> {
     }
 
     fn inline_style(&self) -> Style {
-        let mut style = Style::default();
+        // Body text keeps the assistant body color so the streaming →
+        // rendered transition does not shift the text color; emphasis
+        // elements (links, code, quotes) keep their own accents.
+        let mut style = self.theme.assistant_text_style();
         if self.bold {
             style = style.add_modifier(Modifier::BOLD);
         }

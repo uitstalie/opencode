@@ -24,6 +24,10 @@ pub struct Theme {
     pub(super) muted: Color,
     pub(super) user: Color,
     pub(super) assistant: Color,
+    /// Body-text color for assistant messages (streaming preview and
+    /// rendered markdown share it, so finishing a stream does not shift the
+    /// text color). Distinct from the brighter `assistant` header color.
+    pub(super) assistant_text: Color,
     pub(super) success: Color,
     pub(super) warning: Color,
     pub(super) thinking: Color,
@@ -59,6 +63,7 @@ impl Theme {
             muted: Color::Rgb(130, 130, 140),
             user: Color::Rgb(204, 174, 100),
             assistant: Color::Rgb(110, 185, 165),
+            assistant_text: Color::Rgb(157, 201, 188),
             success: Color::Rgb(95, 170, 105),
             warning: Color::Rgb(205, 175, 85),
             thinking: Color::Rgb(155, 125, 200),
@@ -129,6 +134,10 @@ impl Theme {
 
     pub fn assistant_style(&self) -> Style {
         Style::default().fg(self.assistant)
+    }
+
+    pub fn assistant_text_style(&self) -> Style {
+        Style::default().fg(self.assistant_text)
     }
 
     pub fn thinking_style(&self) -> Style {
@@ -247,6 +256,9 @@ pub struct ThemeFile {
     pub user: String,
     #[serde(default)]
     pub assistant: String,
+    /// Assistant body-text color (empty = inherit `assistant`).
+    #[serde(default)]
+    pub assistant_text: String,
     #[serde(default)]
     pub success: String,
     #[serde(default)]
@@ -313,7 +325,7 @@ impl ThemeFile {
         merge_field!(
             self, other,
             background, panel, sidebar_bg, footer_bg, border, active_border,
-            text, muted, user, assistant, success, warning, thinking, tool,
+            text, muted, user, assistant, assistant_text, success, warning, thinking, tool,
             dialog, dialog_selected, overlay, message_bg,
             heading, code, link, blockquote, list_marker,
             diff_delete, selection, selection_bg, syntect_theme
@@ -333,6 +345,11 @@ impl ThemeFile {
             muted: parse_hex(&self.muted)?,
             user: parse_hex(&self.user)?,
             assistant: parse_hex(&self.assistant)?,
+            assistant_text: if self.assistant_text.is_empty() {
+                parse_hex(&self.assistant)?
+            } else {
+                parse_hex(&self.assistant_text)?
+            },
             success: parse_hex(&self.success)?,
             warning: parse_hex(&self.warning)?,
             thinking: parse_hex(&self.thinking)?,
@@ -372,7 +389,7 @@ impl From<&Theme> for ThemeFile {
         fields!(
             t,
             background, panel, sidebar_bg, footer_bg, border, active_border,
-            text, muted, user, assistant, success, warning, thinking, tool,
+            text, muted, user, assistant, assistant_text, success, warning, thinking, tool,
             dialog, dialog_selected, overlay, message_bg,
             heading, code, link, blockquote, list_marker,
             diff_delete, selection, selection_bg

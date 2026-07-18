@@ -10,6 +10,7 @@
   "muted": "#82828C",
   "user": "#CCAE64",
   "assistant": "#6EB9A5",
+  "assistant_text": "#9DC9BC",
   "success": "#5FAA69",
   "warning": "#CDAF55",
   "thinking": "#9B7DC8",
