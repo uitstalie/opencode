@@ -159,6 +159,10 @@ pub(super) fn spawn_prompt_worker(
                 abort: Some(Arc::clone(&abort)),
                 progress_tx: Some(progress_tx),
                 presets: presets.clone(),
+                // Wire the undo store so write/edit return undo hashes and
+                // undo_edit can restore blobs (previously None in the TUI
+                // worker, silently disabling the whole undo chain).
+                undo_store: Some(Arc::new(crate::tool::UndoStore::new())),
                 ..ToolContext::new(std::path::PathBuf::new())
             };
 
