@@ -1,6 +1,5 @@
 use std::io;
 use std::sync::Arc;
-use std::time::Duration;
 
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -130,26 +129,7 @@ impl SessionView {
     }
 
     pub(super) fn pump_prompt_job_for_stdout(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
-        let Some(job) = &self.prompt_job else {
-            return Ok(());
-        };
-
-        let mut events = Vec::new();
-        loop {
-            match job.receiver.try_recv() {
-                Ok(event) => events.push(event),
-                Err(std::sync::mpsc::TryRecvError::Empty) => {
-                    std::thread::sleep(Duration::from_millis(10));
-                    break;
-                }
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
-            }
-        }
-
-        let mut latest_progress: Option<String> = None;
-        while let Ok(msg) = job.progress_rx.try_recv() {
-            latest_progress = Some(msg);
-        }
+        let (events, latest_progress) = self.drain_prompt_events();
 
         let mut finished = false;
         let mut needs_render = false;
@@ -180,35 +160,8 @@ impl SessionView {
                     needs_render = true;
                 }
                 super::PromptEvent::ToolBatch { assistant, tool_calls, results } => {
-                    if let Some(start) = self.thinking_start.take() {
-                        self.thought_duration = Some(start.elapsed());
-                    }
-                    self.persist_message_detail(
-                        "assistant",
-                        &assistant,
-                        None,
-                        None,
-                        Some(serde_json::json!(tool_calls)),
-                    );
-                    self.messages.push(super::Message {
-                        role: "assistant".to_string(),
-                        content: super::MessageContent::text(assistant.clone()),
-                        name: None,
-                        tool_call_id: None,
-                        tool_calls: Some(serde_json::from_value(serde_json::json!(tool_calls)).unwrap_or_default()),
-                    });
-                    if self.thinking_mode == ThinkingMode::Show && !self.thinking_preview.trim().is_empty() {
-                        let meta = self.thought_duration
-                            .map(super::interaction::format_duration)
-                            .unwrap_or_default();
-                        self.display.push(render::DisplayMessage::new_with_meta("thought", &self.thinking_preview, meta));
-                    }
-                    self.thinking_preview.clear();
-                    self.thinking_start = None;
-                    self.thought_duration = None;
-                    if !assistant.is_empty() {
-                        self.display.push(render::DisplayMessage::new("assistant", &assistant));
-                    }
+                    self.handle_thinking_preview(self.thinking_mode == ThinkingMode::Show);
+                    self.save_assistant_message(&assistant, Some(&tool_calls));
                     self.assistant_preview.clear();
                     for item in &results {
                         self.persist_message_detail(
@@ -238,29 +191,10 @@ impl SessionView {
                     needs_render = true;
                 }
                 super::PromptEvent::Finish { prompt_tokens, cache_hit_tokens } => {
-                    if let Some(start) = self.thinking_start.take() {
-                        self.thought_duration = Some(start.elapsed());
-                    }
-                    if self.thinking_mode == ThinkingMode::Show && !self.thinking_preview.trim().is_empty() {
-                        let meta = self.thought_duration
-                            .map(super::interaction::format_duration)
-                            .unwrap_or_default();
-                        self.display.push(render::DisplayMessage::new_with_meta("thought", &self.thinking_preview, meta));
-                    }
-                    self.thinking_preview.clear();
-                    self.thinking_start = None;
-                    self.thought_duration = None;
+                    self.handle_thinking_preview(self.thinking_mode == ThinkingMode::Show);
                     let assistant = self.assistant_preview.trim().to_string();
                     if !assistant.is_empty() {
-                        self.messages.push(super::Message {
-                            role: "assistant".to_string(),
-                            content: super::MessageContent::text(assistant.clone()),
-                            name: None,
-                            tool_call_id: None,
-                            tool_calls: None,
-                        });
-                        self.persist_message("assistant", &assistant);
-                        self.display.push(render::DisplayMessage::new("assistant", &assistant));
+                        self.save_assistant_message(&assistant, None);
                     }
                     self.cache.prompt_count = self.cache.prompt_count.saturating_add(1);
                     self.cache.total = prompt_tokens as usize;

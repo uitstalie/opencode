@@ -494,11 +494,10 @@ impl SessionView {
         ));
     }
 
-    fn pump_prompt_job(
-        &mut self,
-    ) -> anyhow::Result<bool> {
+    /// Drain events from the prompt job receiver.
+    fn drain_prompt_events(&self) -> (Vec<PromptEvent>, Option<String>) {
         let Some(job) = &self.prompt_job else {
-            return Ok(false);
+            return (Vec::new(), None);
         };
 
         let mut events = Vec::new();
@@ -510,11 +509,83 @@ impl SessionView {
             }
         }
 
-        // Drain sub-agent progress messages (live status from run_agent).
         let mut latest_progress: Option<String> = None;
         while let Ok(msg) = job.progress_rx.try_recv() {
             latest_progress = Some(msg);
         }
+
+        (events, latest_progress)
+    }
+
+    /// Handle thinking preview state changes.
+    fn handle_thinking_preview(&mut self, show_thought: bool) {
+        if let Some(start) = self.thinking_start.take() {
+            self.thought_duration = Some(start.elapsed());
+        }
+        if show_thought && !self.thinking_preview.trim().is_empty() {
+            let meta = self.thought_duration
+                .map(interaction::format_duration)
+                .unwrap_or_default();
+            self.display.push(render::DisplayMessage::new_with_meta(
+                "thought",
+                &self.thinking_preview,
+                meta,
+            ));
+        }
+        self.thinking_preview.clear();
+        self.thinking_start = None;
+        self.thought_duration = None;
+    }
+
+    /// Save assistant message to history and display.
+    fn save_assistant_message(&mut self, assistant: &str, tool_calls: Option<&[serde_json::Value]>) {
+        if assistant.is_empty() {
+            return;
+        }
+        let tool_calls_value = tool_calls.map(|tc| serde_json::json!(tc));
+        self.persist_message_detail("assistant", assistant, None, None, tool_calls_value);
+        self.messages.push(Message {
+            role: "assistant".to_string(),
+            content: MessageContent::text(assistant.to_string()),
+            name: None,
+            tool_call_id: None,
+            tool_calls: tool_calls.map(|tc| {
+                serde_json::from_value(serde_json::json!(tc)).unwrap_or_default()
+            }),
+        });
+        self.display.push(render::DisplayMessage::new("assistant", assistant));
+    }
+
+    /// Save tool result to history and display.
+    fn save_tool_result(&mut self, name: &str, id: &str, args: &str, result: &str) {
+        self.persist_message_detail("tool", result, Some(name.to_string()), Some(id.to_string()), None);
+        self.messages.push(Message {
+            role: "tool".to_string(),
+            content: MessageContent::text(result.to_string()),
+            name: Some(name.to_string()),
+            tool_call_id: Some(id.to_string()),
+            tool_calls: None,
+        });
+        let display_text = match (name, &self.last_diff) {
+            ("edit" | "write", Some((_, before, after))) => {
+                format!("{}:\n{}", name, diff::unified_diff(before, after))
+            }
+            _ => {
+                let input = types::tool_display_input(name, args);
+                if input.is_empty() {
+                    format!("{}:\n{}", name, result)
+                } else {
+                    format!("{} · {}:\n{}", name, input, result)
+                }
+            }
+        };
+        self.display.push(render::DisplayMessage::new_collapsed("tool", &display_text));
+    }
+
+    fn pump_prompt_job(
+        &mut self,
+    ) -> anyhow::Result<bool> {
+        let (events, latest_progress) = self.drain_prompt_events();
 
         let mut needs_render = false;
         for event in events {
@@ -564,97 +635,21 @@ impl SessionView {
                     results,
                 } => {
                     self.pending_tool_calls.clear();
-                    if let Some(start) = self.thinking_start.take() {
-                        self.thought_duration = Some(start.elapsed());
-                    }
-                    self.persist_message_detail(
-                        "assistant",
-                        &assistant,
-                        None,
-                        None,
-                        Some(serde_json::json!(tool_calls)),
-                    );
-                    self.messages.push(Message {
-                        role: "assistant".to_string(),
-                        content: MessageContent::text(assistant.clone()),
-                        name: None,
-                        tool_call_id: None,
-                        tool_calls: Some(serde_json::from_value(serde_json::json!(tool_calls)).unwrap_or_default()),
-                    });
-                    if self.thinking_mode == ThinkingMode::Show && !self.thinking_preview.trim().is_empty() {
-                        let meta = self.thought_duration
-                            .map(interaction::format_duration)
-                            .unwrap_or_default();
-                        self.display.push(render::DisplayMessage::new_with_meta("thought", &self.thinking_preview, meta));
-                    }
-                    self.thinking_preview.clear();
-                    self.thought_duration = None;
-                    if !assistant.is_empty() {
-                        self.display.push(render::DisplayMessage::new("assistant", &assistant));
-                    }
+                    self.handle_thinking_preview(self.thinking_mode == ThinkingMode::Show);
+                    self.save_assistant_message(&assistant, Some(&tool_calls));
                     self.assistant_preview.clear();
                     for item in &results {
                         self.capture_diff(&item.name, &item.args);
-                        self.persist_message_detail(
-                            "tool",
-                            &item.result,
-                            Some(item.name.clone()),
-                            Some(item.id.clone()),
-                            None,
-                        );
-                        self.messages.push(Message {
-                            role: "tool".to_string(),
-                            content: MessageContent::text(item.result.clone()),
-                            name: Some(item.name.clone()),
-                            tool_call_id: Some(item.id.clone()),
-                            tool_calls: None,
-                        });
-                        let display_text = match (item.name.as_str(), &self.last_diff) {
-                            ("edit" | "write", Some((_, before, after))) => {
-                                format!("{}:\n{}", item.name, diff::unified_diff(before, after))
-                            }
-                            _ => {
-                                let input = types::tool_display_input(&item.name, &item.args);
-                                if input.is_empty() {
-                                    format!("{}:\n{}", item.name, item.result)
-                                } else {
-                                    format!("{} · {}:\n{}", item.name, input, item.result)
-                                }
-                            }
-                        };
-                        self.display.push(render::DisplayMessage::new_collapsed(
-                            "tool",
-                            &display_text,
-                        ));
+                        self.save_tool_result(&item.name, &item.id, &item.args, &item.result);
                     }
                     self.status = format!("tool results: {} tools", results.len());
                     needs_render = true;
                 }
                 PromptEvent::Finish { prompt_tokens, cache_hit_tokens } => {
-                    if let Some(start) = self.thinking_start.take() {
-                        self.thought_duration = Some(start.elapsed());
-                    }
-                    if self.thinking_mode == ThinkingMode::Show && !self.thinking_preview.trim().is_empty() {
-                        let meta = self.thought_duration
-                            .map(interaction::format_duration)
-                            .unwrap_or_default();
-                        self.display.push(render::DisplayMessage::new_with_meta("thought", &self.thinking_preview, meta));
-                    }
-                    self.thinking_preview.clear();
-                    self.thinking_start = None;
-                    self.thought_duration = None;
+                    self.handle_thinking_preview(self.thinking_mode == ThinkingMode::Show);
                     let assistant = self.assistant_preview.trim().to_string();
                     if !assistant.is_empty() {
-                        self.messages.push(Message {
-                            role: "assistant".to_string(),
-                            content: MessageContent::text(assistant.clone()),
-                            name: None,
-                            tool_call_id: None,
-                            tool_calls: None,
-                        });
-                        self.persist_message("assistant", &assistant);
-                        self.display
-                            .push(render::DisplayMessage::new("assistant", &assistant));
+                        self.save_assistant_message(&assistant, None);
                     }
                     self.cache.prompt_count = self.cache.prompt_count.saturating_add(1);
                     self.cache.total = prompt_tokens as usize;
@@ -682,33 +677,10 @@ impl SessionView {
                 PromptEvent::Aborted => {
                     // Salvage whatever assistant text streamed so far, drop the
                     // queued prompts, then return to ready.
-                    if let Some(start) = self.thinking_start.take() {
-                        self.thought_duration = Some(start.elapsed());
-                    }
-                    if self.thinking_mode == ThinkingMode::Show
-                        && !self.thinking_preview.trim().is_empty()
-                    {
-                        let meta = self.thought_duration
-                            .map(interaction::format_duration)
-                            .unwrap_or_default();
-                        self.display
-                            .push(render::DisplayMessage::new_with_meta("thought", &self.thinking_preview, meta));
-                    }
-                    self.thinking_preview.clear();
-                    self.thinking_start = None;
-                    self.thought_duration = None;
+                    self.handle_thinking_preview(self.thinking_mode == ThinkingMode::Show);
                     let assistant = self.assistant_preview.trim().to_string();
                     if !assistant.is_empty() {
-                        self.messages.push(Message {
-                            role: "assistant".to_string(),
-                            content: MessageContent::text(assistant.clone()),
-                            name: None,
-                            tool_call_id: None,
-                            tool_calls: None,
-                        });
-                        self.persist_message("assistant", &assistant);
-                        self.display
-                            .push(render::DisplayMessage::new("assistant", &assistant));
+                        self.save_assistant_message(&assistant, None);
                     }
                     self.pending_tool_calls.clear();
                     self.ai_running = false;
