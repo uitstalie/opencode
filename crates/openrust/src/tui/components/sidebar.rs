@@ -50,11 +50,7 @@ impl<'a> SidebarPanel<'a> {
 
     fn render_todo(&self, frame: &mut Frame, area: Rect) {
         let view = self.view;
-        let tasks: Vec<_> = view
-            .store
-            .as_ref()
-            .and_then(|s| s.list_tasks(&view.session_id).ok())
-            .unwrap_or_default();
+        let tasks = view.cached_tasks.borrow();
         if tasks.is_empty() {
             return;
         }

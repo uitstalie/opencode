@@ -183,16 +183,11 @@ impl SessionView {
     }
 
     fn build_session_base_layers(&self, area: Rect) -> Vec<Layer> {
-        let task_count = self
-            .store
-            .as_ref()
-            .and_then(|s| s.task_count(&self.session_id).ok())
-            .unwrap_or(0);
         let layout = super::layout::session_layout(
             area,
             self.sidebar_visible,
             self.sidebar.is_some(),
-            task_count,
+            self.task_count.get(),
         );
         self.render.input_area.set(layout.input);
         vec![

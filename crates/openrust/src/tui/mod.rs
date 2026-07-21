@@ -153,6 +153,10 @@ struct SessionView {
     thinking_start: Option<Instant>,
     thought_duration: Option<Duration>,
     render: RenderState,
+    /// Cached task count (updated on todowrite events, avoids per-frame SQLite queries).
+    task_count: std::cell::Cell<usize>,
+    /// Cached task list for the TODO panel (updated on todowrite events).
+    cached_tasks: std::cell::RefCell<Vec<crate::core::session::TaskSummary>>,
 }
 
 impl SessionView {
@@ -189,6 +193,12 @@ impl SessionView {
                 Err(e) => tracing::error!(err = %e, "cleanup_old_sessions failed"),
             }
         }
+        // Load initial task list for TODO panel
+        let initial_tasks = store
+            .as_ref()
+            .and_then(|s| s.list_tasks(&session_id).ok())
+            .unwrap_or_default();
+        let initial_task_count = initial_tasks.len();
         let theme = theme::resolve(config.theme.as_ref());
         Self {
             provider_name,
@@ -253,6 +263,8 @@ impl SessionView {
                 message_cache: RefCell::new(std::collections::HashMap::new()),
                 theme_version: Cell::new(0),
             },
+            task_count: std::cell::Cell::new(initial_task_count),
+            cached_tasks: std::cell::RefCell::new(initial_tasks),
         }
     }
 
@@ -638,6 +650,16 @@ impl SessionView {
                     self.handle_thinking_preview(self.thinking_mode == ThinkingMode::Show);
                     self.save_assistant_message(&assistant, Some(&tool_calls));
                     self.assistant_preview.clear();
+                    // Update task count when todowrite was called
+                    let todo_changed = results.iter().any(|item| item.name == "todowrite");
+                    if todo_changed {
+                        if let Some(store) = &self.store {
+                            if let Ok(tasks) = store.list_tasks(&self.session_id) {
+                                self.task_count.set(tasks.len());
+                                *self.cached_tasks.borrow_mut() = tasks;
+                            }
+                        }
+                    }
                     for item in &results {
                         self.capture_diff(&item.name, &item.args);
                         self.save_tool_result(&item.name, &item.id, &item.args, &item.result);
