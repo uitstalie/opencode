@@ -199,6 +199,7 @@ impl LlmProvider for GeminiProvider {
 
         let chunk_stream = async_stream::stream! {
             let mut finish_emitted = false;
+            let mut tool_idx: usize = 0;
 
             for await result in sse_data_lines(response) {
                 let data = match result {
@@ -213,8 +214,6 @@ impl LlmProvider for GeminiProvider {
                     Ok(v) => v,
                     Err(_) => continue,
                 };
-
-                let mut tool_idx: usize = 0;
 
                 if let Some(candidates) = parsed["candidates"].as_array() {
                     for candidate in candidates {

@@ -96,11 +96,6 @@ fn exists_in_path(command: &str) -> bool {
     })
 }
 
-pub fn shell_binary_path(kind: ShellKind) -> PathBuf {
-    let (bin, _) = shell_command(kind);
-    PathBuf::from(bin)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

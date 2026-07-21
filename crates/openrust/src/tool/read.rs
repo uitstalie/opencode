@@ -64,15 +64,15 @@ impl Tool for ReadTool {
             Err(e) => return ToolResult::error(format!("Cannot resolve path: {}", e)),
         };
 
+        if is_image_path(&canonical) {
+            return read_image(&canonical);
+        }
+
         if is_binary_path(&canonical) {
             return ToolResult::error(format!(
                 "Cannot read binary file: {} (image/binary/archive). Use external tools for these formats.",
                 canonical.display()
             ));
-        }
-
-        if is_image_path(&canonical) {
-            return read_image(&canonical);
         }
 
         if Path::new(&canonical).is_dir() {

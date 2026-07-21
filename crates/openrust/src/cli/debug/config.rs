@@ -51,7 +51,16 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
             let mut raw: serde_json::Value = if global_path.exists() {
                 let content = std::fs::read_to_string(&global_path)?;
                 let stripped = crate::core::config::strip_jsonc_comments(&content);
-                serde_json::from_str(&stripped).unwrap_or(serde_json::json!({}))
+                match serde_json::from_str(&stripped) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        anyhow::bail!(
+                            "Failed to parse global config at {}: {}. Fix the file manually or delete it.",
+                            global_path.display(),
+                            e
+                        );
+                    }
+                }
             } else {
                 serde_json::json!({})
             };
@@ -121,12 +130,14 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
                 return Ok(());
             }
 
-            // Save
+            // Save atomically: write to temp file, then rename
             if let Some(parent) = global_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
             let json = serde_json::to_string_pretty(&raw)?;
-            std::fs::write(&global_path, json)?;
+            let temp_path = global_path.with_extension("tmp");
+            std::fs::write(&temp_path, &json)?;
+            std::fs::rename(&temp_path, &global_path)?;
             println!("Saved to {}", global_path.display());
             Ok(())
         }

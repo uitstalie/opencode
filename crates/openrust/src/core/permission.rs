@@ -5,6 +5,12 @@
 //!   `Ask` per invocation. No config override possible.
 //! - **Normal** commands go through scope-based path evaluation. Future config
 //!   rules will add allow/deny/ask for specific command patterns.
+//!
+//! **Known limitation**: The shell tokenizer does not handle command
+//! substitution (`$(...)` or backticks), subshells, variable indirection
+//! (`$CMD`), or glob expansion. Commands using these features may bypass
+//! dangerous-command detection. This is a documented limitation of the
+//! hand-rolled tokenizer approach.
 
 use std::path::Path;
 

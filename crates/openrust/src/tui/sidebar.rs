@@ -19,10 +19,23 @@ const SKIP_DIRS: &[&str] = &[
     ".cache",
 ];
 
+fn is_in_skip_dir(path: &Path) -> bool {
+    for component in path.components() {
+        if let std::path::Component::Normal(name) = component {
+            if let Some(name_str) = name.to_str() {
+                if SKIP_DIRS.contains(&name_str) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 pub struct FileTree {
     root: PathBuf,
     entries: Vec<TreeEntry>,
-    events: Option<Receiver<()>>,
+    events: Option<Receiver<PathBuf>>,
     // Held to keep the watcher alive; dropping it stops notifications.
     _watcher: Option<notify::RecommendedWatcher>,
 }
@@ -36,9 +49,13 @@ struct TreeEntry {
 impl FileTree {
     pub fn new(root: PathBuf) -> Self {
         let (events, watcher) = {
-            let (tx, rx) = channel::<()>();
-            let watcher = notify::recommended_watcher(move |_res| {
-                let _ = tx.send(());
+            let (tx, rx) = channel::<PathBuf>();
+            let watcher = notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+                if let Ok(event) = res {
+                    for path in event.paths {
+                        let _ = tx.send(path);
+                    }
+                }
             })
             .ok()
             .and_then(|mut watcher| {
@@ -63,8 +80,10 @@ impl FileTree {
             return false;
         };
         let mut dirty = false;
-        while events.try_recv().is_ok() {
-            dirty = true;
+        while let Ok(path) = events.try_recv() {
+            if !is_in_skip_dir(&path) {
+                dirty = true;
+            }
         }
         if dirty {
             self.rescan();

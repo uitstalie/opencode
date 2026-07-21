@@ -12,11 +12,11 @@ pub enum Cmd {
     },
     /// Show which providers have encrypted keys
     Status,
-    /// Encrypt a provider's API key
+    /// Encrypt a provider's API key (reads from stdin if --api-key not provided)
     Set {
         provider: String,
         #[arg(long)]
-        api_key: String,
+        api_key: Option<String>,
     },
 }
 
@@ -71,7 +71,19 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
             Ok(())
         }
         Cmd::Set { provider, api_key } => {
-            crate::core::vault::Vault::save(&provider, &api_key)?;
+            let key = match api_key {
+                Some(k) => k,
+                None => {
+                    println!("Enter API key for '{}':", provider);
+                    let mut input = String::new();
+                    std::io::stdin().read_line(&mut input)?;
+                    input.trim().to_string()
+                }
+            };
+            if key.is_empty() {
+                anyhow::bail!("API key cannot be empty");
+            }
+            crate::core::vault::Vault::save(&provider, &key)?;
             println!("🔐 Saved encrypted API key for '{}'.", provider);
             Ok(())
         }

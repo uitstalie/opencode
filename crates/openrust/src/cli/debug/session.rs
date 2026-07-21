@@ -16,8 +16,12 @@ pub enum Cmd {
         /// Session id
         id: String,
     },
-    /// Delete all sessions (irreversible)
-    DeleteAll,
+    /// Delete all sessions (irreversible, requires --force)
+    DeleteAll {
+        /// Skip confirmation prompt
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 pub fn run(cmd: Cmd) -> anyhow::Result<()> {
@@ -59,9 +63,18 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
             println!("Deleted session {}.", id);
             Ok(())
         }
-        Cmd::DeleteAll => {
+        Cmd::DeleteAll { force } => {
             let sessions = store.list_sessions()?;
             let count = sessions.len();
+            if count == 0 {
+                println!("No sessions to delete.");
+                return Ok(());
+            }
+            if !force {
+                println!("This will permanently delete {} session(s).", count);
+                println!("Run with --force to confirm.");
+                return Ok(());
+            }
             for session in &sessions {
                 store.delete_session(&session.id)?;
             }

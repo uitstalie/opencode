@@ -119,11 +119,6 @@ impl ToolParams {
         self.raw[key].as_str()
     }
 
-    /// Optional u64 parameter (with default).
-    pub fn opt_u64(&self, key: &str) -> Option<u64> {
-        self.raw[key].as_u64()
-    }
-
     /// Optional u64 with default value.
     pub fn u64_or(&self, key: &str, default: u64) -> u64 {
         self.raw[key].as_u64().unwrap_or(default)
@@ -245,11 +240,6 @@ impl ToolContext {
 }
 
 // ── Project scope ──────────────────────────────────
-
-/// Check whether a path is within the tool context's project scope.
-pub fn is_within_project(path: &str, ctx: &ToolContext) -> bool {
-    crate::core::paths::is_within_project(path, ctx.project_root())
-}
 
 pub fn resolve_path(ctx: &ToolContext, path: &str) -> PathBuf {
     let candidate = std::path::Path::new(path);

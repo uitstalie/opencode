@@ -548,6 +548,9 @@ impl Config {
         if other.theme.is_some() {
             self.theme = other.theme;
         }
+        if other.search_engine.is_some() {
+            self.search_engine = other.search_engine;
+        }
         for (name, incoming) in other.provider {
             self.provider
                 .entry(name)

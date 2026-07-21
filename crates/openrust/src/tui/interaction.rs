@@ -148,7 +148,7 @@ impl SessionView {
         Ok(false)
     }
 
-    fn handle_session_mouse_down(&mut self, column: u16, row: u16) -> anyhow::Result<bool> {
+    fn handle_session_mouse_down(&mut self, _column: u16, row: u16) -> anyhow::Result<bool> {
         if !self.session_area_contains(row) {
             return Ok(false);
         }
@@ -157,9 +157,6 @@ impl SessionView {
         };
         self.render.mouse_down_row = Some(index);
         self.render.selection = Some((index, index));
-        if self.is_tool_row(index) {
-            let _ = column;
-        }
         Ok(true)
     }
 
