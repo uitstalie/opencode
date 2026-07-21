@@ -196,3 +196,35 @@ impl Vault {
         // Windows: ACL-based, skipped for now
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vault_get_returns_none_for_missing_provider() {
+        let vault = Vault {
+            keys: HashMap::new(),
+        };
+        assert!(vault.get("nonexistent").is_none());
+    }
+
+    #[test]
+    fn vault_get_returns_stored_key() {
+        let mut keys = HashMap::new();
+        keys.insert("test-provider".to_string(), "secret-key-123".to_string());
+        let vault = Vault { keys };
+        assert_eq!(vault.get("test-provider"), Some("secret-key-123"));
+    }
+
+    #[test]
+    fn vault_keys_are_stored_separately() {
+        let mut keys = HashMap::new();
+        keys.insert("provider-a".to_string(), "key-a".to_string());
+        keys.insert("provider-b".to_string(), "key-b".to_string());
+        let vault = Vault { keys };
+        assert_eq!(vault.get("provider-a"), Some("key-a"));
+        assert_eq!(vault.get("provider-b"), Some("key-b"));
+        assert!(vault.get("provider-c").is_none());
+    }
+}

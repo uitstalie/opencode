@@ -323,3 +323,69 @@ pub fn create_provider(cfg: &ResolvedProvider) -> Option<Box<dyn LlmProvider>> {
             .map(|p| Box::new(p) as Box<dyn LlmProvider>),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_config(protocol: Option<&str>) -> ResolvedProvider {
+        ResolvedProvider {
+            name: "test".to_string(),
+            api_key: Some("test-key".to_string()),
+            base_url: Some("https://api.test.com".to_string()),
+            protocol: protocol.map(|s| s.to_string()),
+            models: std::collections::HashMap::new(),
+            options: None,
+            headers: std::collections::HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn detect_protocol_openai() {
+        let cfg = make_config(Some("openai"));
+        assert_eq!(detect_protocol(&cfg), Some("openai"));
+    }
+
+    #[test]
+    fn detect_protocol_anthropic() {
+        let cfg = make_config(Some("anthropic"));
+        assert_eq!(detect_protocol(&cfg), Some("anthropic"));
+    }
+
+    #[test]
+    fn detect_protocol_gemini() {
+        let cfg = make_config(Some("gemini"));
+        assert_eq!(detect_protocol(&cfg), Some("gemini"));
+    }
+
+    #[test]
+    fn detect_protocol_google_alias() {
+        let cfg = make_config(Some("google"));
+        assert_eq!(detect_protocol(&cfg), Some("gemini"));
+    }
+
+    #[test]
+    fn detect_protocol_unknown_returns_none() {
+        let cfg = make_config(Some("unknown"));
+        assert_eq!(detect_protocol(&cfg), None);
+    }
+
+    #[test]
+    fn detect_protocol_missing_returns_none() {
+        let cfg = make_config(None);
+        assert_eq!(detect_protocol(&cfg), None);
+    }
+
+    #[test]
+    fn create_provider_returns_none_without_api_key() {
+        let mut cfg = make_config(Some("openai"));
+        cfg.api_key = None;
+        assert!(create_provider(&cfg).is_none());
+    }
+
+    #[test]
+    fn create_provider_returns_none_for_unknown_protocol() {
+        let cfg = make_config(Some("unknown-protocol"));
+        assert!(create_provider(&cfg).is_none());
+    }
+}

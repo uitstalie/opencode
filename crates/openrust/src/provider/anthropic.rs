@@ -7,7 +7,6 @@
 //! - Streaming: message_start → content_block_start/delta/stop → message_delta → message_stop
 
 use async_trait::async_trait;
-use reqwest::Client;
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -19,13 +18,7 @@ use crate::core::provider::{
 use super::{merge_options_into, normalize_options, retry_with_backoff, sse_data_lines};
 
 pub struct AnthropicProvider {
-    name: String,
-    api_key: String,
-    base_url: String,
-    client: Client,
-    models: HashMap<String, ModelConfig>,
-    provider_options: Option<Value>,
-    headers: HashMap<String, String>,
+    base: super::ProviderBase,
 }
 
 impl AnthropicProvider {
@@ -37,15 +30,8 @@ impl AnthropicProvider {
         provider_options: Option<Value>,
         headers: HashMap<String, String>,
     ) -> Self {
-        let client = super::build_http_client();
         Self {
-            name,
-            api_key,
-            base_url: base_url.trim_end_matches('/').to_string(),
-            client,
-            models,
-            provider_options,
-            headers,
+            base: super::ProviderBase::new(name, api_key, base_url, models, provider_options, headers),
         }
     }
 }
@@ -58,7 +44,7 @@ impl LlmProvider for AnthropicProvider {
         tools: Vec<crate::core::provider::ToolDef>,
         options: RequestOptions,
     ) -> anyhow::Result<ChunkStream> {
-        let url = format!("{}/messages", self.base_url);
+        let url = format!("{}/messages", self.base.base_url);
 
         // Split system messages from conversation messages and transform to Anthropic format.
         let mut system_text = String::new();
@@ -92,8 +78,7 @@ impl LlmProvider for AnthropicProvider {
         }
 
         // Inject per-message options (e.g. cache markers for proxy/relay services).
-        if let Some(msg_opts) = self
-            .models
+        if let Some(msg_opts) = self.base.models
             .get(&options.model)
             .and_then(|c| c.message_options.as_ref())
             && let Some(messages) = body["messages"].as_array_mut()
@@ -124,8 +109,7 @@ impl LlmProvider for AnthropicProvider {
 
         // Reasoning: `reasoning_options` from model config overrides the
         // built-in effort→budget mapping.
-        let reasoning_opts = self
-            .models
+        let reasoning_opts = self.base.models
             .get(&options.model)
             .and_then(|c| c.reasoning_options.as_ref());
         if options.reasoning_effort.is_some() {
@@ -145,10 +129,10 @@ impl LlmProvider for AnthropicProvider {
         }
 
         // Deep-merge config options.
-        if let Some(ref opts) = self.provider_options {
+        if let Some(ref opts) = self.base.provider_options {
             merge_options_into(&mut body, &normalize_options(opts));
         }
-        if let Some(model_cfg) = self.models.get(&options.model)
+        if let Some(model_cfg) = self.base.models.get(&options.model)
             && let Some(ref opts) = model_cfg.options
         {
             merge_options_into(&mut body, &normalize_options(opts));
@@ -156,17 +140,17 @@ impl LlmProvider for AnthropicProvider {
 
         tracing::debug!("POST {} (model={})", url, options.model);
 
-        let mut headers = self.headers.clone();
-        if let Some(model_cfg) = self.models.get(&options.model) {
+        let mut headers = self.base.headers.clone();
+        if let Some(model_cfg) = self.base.models.get(&options.model) {
             for (k, v) in &model_cfg.headers {
                 headers.insert(k.clone(), v.clone());
             }
         }
 
         let response = retry_with_backoff(1, || {
-            let client = &self.client;
+            let client = &self.base.client;
             let url = &url;
-            let api_key = &self.api_key;
+            let api_key = &self.base.api_key;
             let body = &body;
             let headers = &headers;
             async move {
@@ -315,18 +299,18 @@ impl LlmProvider for AnthropicProvider {
     }
 
     fn list_models(&self) -> Vec<String> {
-        self.models.keys().cloned().collect()
+        self.base.models.keys().cloned().collect()
     }
 
     fn supports_images(&self, model: &str) -> bool {
-        self.models
+        self.base.models
             .get(model)
             .and_then(|c| c.image_input)
             .unwrap_or(false)
     }
 
     fn name(&self) -> &str {
-        &self.name
+        &self.base.name
     }
 }
 
@@ -427,4 +411,97 @@ pub fn create(cfg: &ResolvedProvider) -> Option<AnthropicProvider> {
         cfg.options.clone(),
         cfg.headers.clone(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::provider::{MessageContent, ToolCall, ToolCallFunction};
+
+    fn make_message(role: &str, content: &str) -> Message {
+        Message {
+            role: role.to_string(),
+            content: MessageContent::text(content),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        }
+    }
+
+    #[test]
+    fn lower_messages_user_text() {
+        let msg = make_message("user", "hello");
+        let result = lower_messages(&[&msg]);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["role"], "user");
+        assert_eq!(result[0]["content"][0]["type"], "text");
+        assert_eq!(result[0]["content"][0]["text"], "hello");
+    }
+
+    #[test]
+    fn lower_messages_assistant_text() {
+        let msg = make_message("assistant", "hi there");
+        let result = lower_messages(&[&msg]);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["role"], "assistant");
+        assert_eq!(result[0]["content"][0]["type"], "text");
+        assert_eq!(result[0]["content"][0]["text"], "hi there");
+    }
+
+    #[test]
+    fn lower_messages_tool_result_flushed_as_user() {
+        let tool_msg = Message {
+            role: "tool".to_string(),
+            content: MessageContent::text("result"),
+            name: None,
+            tool_call_id: Some("call-123".to_string()),
+            tool_calls: None,
+        };
+        let user_msg = make_message("user", "next");
+        let result = lower_messages(&[&tool_msg, &user_msg]);
+        assert_eq!(result.len(), 2);
+        // First message should be the flushed tool results as user
+        assert_eq!(result[0]["role"], "user");
+        assert_eq!(result[0]["content"][0]["type"], "tool_result");
+        assert_eq!(result[0]["content"][0]["tool_use_id"], "call-123");
+        // Second is the actual user message
+        assert_eq!(result[1]["role"], "user");
+    }
+
+    #[test]
+    fn lower_messages_assistant_with_tool_calls() {
+        let msg = Message {
+            role: "assistant".to_string(),
+            content: MessageContent::text(""),
+            name: None,
+            tool_call_id: None,
+            tool_calls: Some(vec![ToolCall {
+                id: "call-1".to_string(),
+                kind: "function".to_string(),
+                function: ToolCallFunction {
+                    name: "read".to_string(),
+                    arguments: r#"{"path":"test.rs"}"#.to_string(),
+                },
+            }]),
+        };
+        let result = lower_messages(&[&msg]);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["role"], "assistant");
+        assert_eq!(result[0]["content"][0]["type"], "tool_use");
+        assert_eq!(result[0]["content"][0]["id"], "call-1");
+        assert_eq!(result[0]["content"][0]["name"], "read");
+    }
+
+    #[test]
+    fn lower_messages_empty_assistant_not_emitted() {
+        let msg = Message {
+            role: "assistant".to_string(),
+            content: MessageContent::text(""),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        };
+        let result = lower_messages(&[&msg]);
+        assert!(result.is_empty());
+    }
 }

@@ -7,7 +7,6 @@
 //! - Any custom OpenAI-compatible endpoint
 
 use async_trait::async_trait;
-use reqwest::Client;
 use serde_json::Value;
 
 use crate::core::config::{ModelConfig, ResolvedProvider};
@@ -19,13 +18,7 @@ use std::collections::HashMap;
 use super::{merge_options_into, normalize_options, retry_with_backoff};
 
 pub struct OpenAICompatProvider {
-    name: String,
-    api_key: String,
-    base_url: String,
-    client: Client,
-    models: HashMap<String, ModelConfig>,
-    provider_options: Option<Value>,
-    headers: HashMap<String, String>,
+    base: super::ProviderBase,
 }
 
 impl OpenAICompatProvider {
@@ -37,15 +30,8 @@ impl OpenAICompatProvider {
         provider_options: Option<Value>,
         headers: HashMap<String, String>,
     ) -> Self {
-        let client = super::build_http_client();
         Self {
-            name,
-            api_key,
-            base_url: base_url.trim_end_matches('/').to_string(),
-            client,
-            models,
-            provider_options,
-            headers,
+            base: super::ProviderBase::new(name, api_key, base_url, models, provider_options, headers),
         }
     }
 }
@@ -58,10 +44,9 @@ impl LlmProvider for OpenAICompatProvider {
         tools: Vec<crate::core::provider::ToolDef>,
         options: RequestOptions,
     ) -> anyhow::Result<ChunkStream> {
-        let url = format!("{}/chat/completions", self.base_url);
+        let url = format!("{}/chat/completions", self.base.base_url);
 
-        let msg_opts = self
-            .models
+        let msg_opts = self.base.models
             .get(&options.model)
             .and_then(|c| c.message_options.as_ref());
 
@@ -99,10 +84,10 @@ impl LlmProvider for OpenAICompatProvider {
 
         // Deep-merge config options (provider-level first, then model-level overrides).
         // Normalize user-facing keys (CamelCase → snake_case) before merging.
-        if let Some(ref opts) = self.provider_options {
+        if let Some(ref opts) = self.base.provider_options {
             merge_options_into(&mut body, &normalize_options(opts));
         }
-        if let Some(model_cfg) = self.models.get(&options.model)
+        if let Some(model_cfg) = self.base.models.get(&options.model)
             && let Some(ref opts) = model_cfg.options
         {
             merge_options_into(&mut body, &normalize_options(opts));
@@ -110,8 +95,8 @@ impl LlmProvider for OpenAICompatProvider {
 
         // `setCacheKey` is an OpenCode-compatible control option, not an API
         // field. Resolve it after body options are merged so model options win.
-        let mut headers = self.headers.clone();
-        if let Some(model_cfg) = self.models.get(&options.model) {
+        let mut headers = self.base.headers.clone();
+        if let Some(model_cfg) = self.base.models.get(&options.model) {
             for (k, v) in &model_cfg.headers {
                 headers.insert(k.clone(), v.clone());
             }
@@ -119,8 +104,8 @@ impl LlmProvider for OpenAICompatProvider {
         apply_cache_key(
             &mut body,
             &mut headers,
-            self.provider_options.as_ref(),
-            self.models.get(&options.model).and_then(|m| m.options.as_ref()),
+            self.base.provider_options.as_ref(),
+            self.base.models.get(&options.model).and_then(|m| m.options.as_ref()),
             options.cache_key.as_deref(),
         );
 
@@ -133,7 +118,7 @@ impl LlmProvider for OpenAICompatProvider {
 
         // All provider-specific behaviour comes from ModelConfig (which is
         // either user-defined or built-in). No model-name prefix matching.
-        let model_cfg = self.models.get(&options.model);
+        let model_cfg = self.base.models.get(&options.model);
         let max_tokens_key = model_cfg
             .and_then(|c| c.max_tokens_key.as_deref())
             .unwrap_or("max_tokens");
@@ -180,9 +165,9 @@ impl LlmProvider for OpenAICompatProvider {
         tracing::debug!("POST {} (model={}) body={}", url, options.model, body);
 
         let response = retry_with_backoff(1, || {
-            let client = &self.client;
+            let client = &self.base.client;
             let url = &url;
-            let api_key = &self.api_key;
+            let api_key = &self.base.api_key;
             let body = &body;
             let headers = &headers;
             async move {
@@ -367,18 +352,18 @@ impl LlmProvider for OpenAICompatProvider {
     }
 
     fn list_models(&self) -> Vec<String> {
-        self.models.keys().cloned().collect()
+        self.base.models.keys().cloned().collect()
     }
 
     fn supports_images(&self, model: &str) -> bool {
-        self.models
+        self.base.models
             .get(model)
             .and_then(|c| c.image_input)
             .unwrap_or(false)
     }
 
     fn name(&self) -> &str {
-        &self.name
+        &self.base.name
     }
 }
 

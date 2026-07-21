@@ -4,7 +4,44 @@ pub mod openai_compat;
 
 use reqwest::Client;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::future::Future;
+
+use crate::core::config::ModelConfig;
+
+/// Shared provider configuration and HTTP client.
+/// Used by all concrete provider implementations.
+pub(crate) struct ProviderBase {
+    pub name: String,
+    pub api_key: String,
+    pub base_url: String,
+    pub client: Client,
+    pub models: HashMap<String, ModelConfig>,
+    pub provider_options: Option<Value>,
+    pub headers: HashMap<String, String>,
+}
+
+impl ProviderBase {
+    pub fn new(
+        name: String,
+        api_key: String,
+        base_url: String,
+        models: HashMap<String, ModelConfig>,
+        provider_options: Option<Value>,
+        headers: HashMap<String, String>,
+    ) -> Self {
+        let client = build_http_client();
+        Self {
+            name,
+            api_key,
+            base_url: base_url.trim_end_matches('/').to_string(),
+            client,
+            models,
+            provider_options,
+            headers,
+        }
+    }
+}
 
 /// Recursively merge `source` into `target`. Nested objects combine; scalars replace.
 pub(crate) fn merge_options_into(target: &mut Value, source: &Value) {
