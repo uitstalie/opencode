@@ -446,13 +446,21 @@ impl Config {
     /// Also runs migration: any plaintext api_key in config files is moved
     /// to the encrypted vault (credentials.enc) and removed from config.
     pub fn load(project_dir: &Path) -> anyhow::Result<Self> {
+        Self::load_with_options(project_dir, false)
+    }
+
+    /// Load config and optionally migrate API keys to the encrypted vault.
+    /// Migration has side effects: writes to vault, strips plaintext keys from files.
+    pub fn load_with_options(project_dir: &Path, migrate_keys: bool) -> anyhow::Result<Self> {
         let mut config = Config::default();
 
         // Load global config (~/.config/openrust/config.json)
         let global_path = Self::global_config_path();
         if global_path.exists() {
             let c = Self::load_file(&global_path)?;
-            Self::migrate_api_keys(&c, Some(&global_path));
+            if migrate_keys {
+                Self::migrate_config_keys(&c, Some(&global_path));
+            }
             config.merge(c);
         }
 
@@ -467,7 +475,9 @@ impl Config {
         for project_path in &candidates {
             if project_path.exists() {
                 let c = Self::load_file(project_path)?;
-                Self::migrate_api_keys(&c, Some(project_path));
+                if migrate_keys {
+                    Self::migrate_config_keys(&c, Some(project_path));
+                }
                 config.merge(c);
                 break;
             }
@@ -495,6 +505,39 @@ impl Config {
         Ok(config)
     }
 
+    /// Migrate plaintext API keys from config files to the encrypted vault.
+    /// This is a separate operation from `load()` to keep loading pure.
+    /// Returns the list of migrated provider names.
+    pub fn migrate(project_dir: &Path) -> anyhow::Result<Vec<String>> {
+        let mut migrated = Vec::new();
+
+        // Migrate global config
+        let global_path = Self::global_config_path();
+        if global_path.exists() {
+            let c = Self::load_file(&global_path)?;
+            let m = Self::migrate_config_keys(&c, Some(&global_path));
+            migrated.extend(m);
+        }
+
+        // Migrate project config
+        let project_base = project_dir.join(".openrust");
+        let candidates = [
+            project_base.join("config.jsonc"),
+            project_base.join("config.json"),
+            project_dir.join("openrust.json"),
+        ];
+        for project_path in &candidates {
+            if project_path.exists() {
+                let c = Self::load_file(project_path)?;
+                let m = Self::migrate_config_keys(&c, Some(project_path));
+                migrated.extend(m);
+                break;
+            }
+        }
+
+        Ok(migrated)
+    }
+
     /// Path to the global config
     pub fn global_config_path() -> PathBuf {
         crate::core::platform::PlatformPaths::detect().global_config_path()
@@ -502,7 +545,8 @@ impl Config {
 
     /// Migrate plaintext api_keys from ProviderConfig to the encrypted vault.
     /// Strips migrated keys from the source file (global or project).
-    fn migrate_api_keys(config: &Config, source_path: Option<&Path>) {
+    /// Returns the list of migrated provider names.
+    fn migrate_config_keys(config: &Config, source_path: Option<&Path>) -> Vec<String> {
         let mut to_migrate = HashMap::new();
         for (name, cfg) in &config.provider {
             if let Some(ref key) = cfg.api_key
@@ -511,7 +555,7 @@ impl Config {
                 }
         }
         if to_migrate.is_empty() {
-            return;
+            return Vec::new();
         }
         let migrated = crate::core::vault::Vault::migrate_from_config(&to_migrate);
         for provider in &migrated {
@@ -525,6 +569,7 @@ impl Config {
             let owners: Vec<String> = to_migrate.into_keys().collect();
             strip_api_keys_from_file(path, &owners);
         }
+        migrated
     }
 
     /// Load config from a single file
@@ -1069,6 +1114,8 @@ mod tests {
     #[test]
     fn project_config_preserves_unknown_top_level_fields() {
         let dir = tempdir().unwrap();
+        // Use OPENRUST_TEST_ROOT to isolate from real global config
+        unsafe { std::env::set_var("OPENRUST_TEST_ROOT", dir.path()) };
         let home_dir = dir.path().join("home");
         let global_dir = home_dir.join(".config").join("openrust");
         let global_path = global_dir.join("config.json");
@@ -1101,11 +1148,14 @@ mod tests {
         assert!(saved.contains("unknown_field"));
         assert!(saved.contains("another_unknown"));
         assert!(saved.contains("nested"));
+        unsafe { std::env::remove_var("OPENRUST_TEST_ROOT") };
     }
 
     #[test]
     fn save_never_persists_builtin_or_catalog_providers() {
         let dir = tempdir().unwrap();
+        // Use OPENRUST_TEST_ROOT to isolate from real global config
+        unsafe { std::env::set_var("OPENRUST_TEST_ROOT", dir.path()) };
         let openrust_dir = dir.path().join(".openrust");
         fs::create_dir_all(&openrust_dir).unwrap();
         let project_path = openrust_dir.join("config.json");
@@ -1132,6 +1182,7 @@ mod tests {
         for builtin in ["deepseek", "kimi-for-coding", "glm", "openai", "anthropic", "gemini"] {
             assert!(!providers.contains_key(builtin), "builtin {builtin} leaked into saved config");
         }
+        unsafe { std::env::remove_var("OPENRUST_TEST_ROOT") };
     }
 
     #[test]

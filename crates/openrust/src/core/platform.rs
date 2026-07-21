@@ -25,6 +25,18 @@ pub struct PlatformScope {
 
 impl PlatformPaths {
     pub fn detect() -> Self {
+        // Allow tests to override the config root via environment variable
+        if let Ok(test_root) = std::env::var("OPENRUST_TEST_ROOT") {
+            let root = PathBuf::from(test_root);
+            return Self {
+                kind: PlatformKind::Unknown,
+                home: root.clone(),
+                config: PlatformScope { dir: root.join("config") },
+                data: PlatformScope { dir: root.join("data") },
+                cache: PlatformScope { dir: root.join("cache") },
+            };
+        }
+
         let home = home_dir().unwrap_or_else(|| PathBuf::from("."));
         let kind = detect_kind();
         let (config_dir, data_dir, cache_dir) = match kind {
