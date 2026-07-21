@@ -48,8 +48,7 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
                 for name in config.provider.keys() {
                     let resolved = config.get_provider(name);
                     let key_status = match resolved.and_then(|r| r.api_key) {
-                        Some(k) if k.len() > 8 => format!("****{}", &k[k.len() - 4..]),
-                        Some(_) => "****".to_string(),
+                        Some(k) => super::mask_secret(&k),
                         None => "(no API key)".to_string(),
                     };
                     println!("  {}  api_key: {}", name, key_status);

@@ -831,7 +831,7 @@ impl SessionView {
     fn save_model_wire(&mut self, value: &str) {
         let v = value.trim();
         let Some(draft) = self.ui.connect_draft.as_mut() else { return };
-        let idx = draft.editing_index.unwrap();
+        let Some(idx) = draft.editing_index else { return };
         draft.models[idx].wire_name = if v.is_empty() { None } else { Some(v.to_string()) };
         draft.editing_step = ModelEditStep::ContextLimit;
         let cur = draft.models[idx].context_limit.map(|n| n.to_string()).unwrap_or_default();
@@ -849,7 +849,7 @@ impl SessionView {
     fn save_model_context(&mut self, value: &str) {
         let v = value.trim();
         let Some(draft) = self.ui.connect_draft.as_mut() else { return };
-        let idx = draft.editing_index.unwrap();
+        let Some(idx) = draft.editing_index else { return };
         draft.models[idx].context_limit = v.parse::<u64>().ok();
         draft.editing_step = ModelEditStep::OutputLimit;
         let cur = draft.models[idx].output_limit.map(|n| n.to_string()).unwrap_or_default();
@@ -867,7 +867,7 @@ impl SessionView {
     fn save_model_output(&mut self, value: &str) {
         let v = value.trim();
         let Some(draft) = self.ui.connect_draft.as_mut() else { return };
-        let idx = draft.editing_index.unwrap();
+        let Some(idx) = draft.editing_index else { return };
         draft.models[idx].output_limit = v.parse::<u64>().ok();
         draft.editing_step = ModelEditStep::InputLimit;
         let cur = draft.models[idx].input_limit.map(|n| n.to_string()).unwrap_or_default();
@@ -885,7 +885,7 @@ impl SessionView {
     fn save_model_input(&mut self, value: &str) {
         let v = value.trim();
         let Some(draft) = self.ui.connect_draft.as_mut() else { return };
-        let idx = draft.editing_index.unwrap();
+        let Some(idx) = draft.editing_index else { return };
         draft.models[idx].input_limit = v.parse::<u64>().ok();
         draft.editing_step = ModelEditStep::Reasoning;
         // Show a simple yes/no dialog for reasoning
@@ -905,7 +905,7 @@ impl SessionView {
 
     fn save_model_reasoning(&mut self, on: bool) {
         let Some(draft) = self.ui.connect_draft.as_mut() else { return };
-        let idx = draft.editing_index.unwrap();
+        let Some(idx) = draft.editing_index else { return };
         draft.models[idx].reasoning = on;
         draft.models[idx].send_reasoning_effort = on;
         draft.editing_step = ModelEditStep::Done;

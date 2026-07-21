@@ -50,12 +50,7 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
             for name in config.provider.keys() {
                 match vault.get(name) {
                     Some(k) => {
-                        let masked = if k.len() > 8 {
-                            format!("****{}", &k[k.len() - 4..])
-                        } else {
-                            "****".to_string()
-                        };
-                        println!("🔐 {}: {}", name, masked);
+                        println!("🔐 {}: {}", name, super::mask_secret(&k));
                         found = true;
                     }
                     None => {

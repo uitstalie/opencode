@@ -444,11 +444,8 @@ pub(super) fn tool_display_input(tool_name: &str, args: &str) -> String {
     };
     let summary = match tool_name {
         "bash" => obj.get("command").and_then(|v| v.as_str()).map(str::to_string),
-        "read" => obj.get("filePath").or_else(|| obj.get("path")).and_then(|v| v.as_str()).map(str::to_string),
-        "write" => obj.get("filePath").and_then(|v| v.as_str()).map(str::to_string),
-        "edit" => obj.get("filePath").and_then(|v| v.as_str()).map(str::to_string),
-        "glob" => obj.get("pattern").and_then(|v| v.as_str()).map(str::to_string),
-        "grep" => obj.get("pattern").and_then(|v| v.as_str()).map(str::to_string),
+        "read" | "write" | "edit" => obj.get("path").or_else(|| obj.get("filePath")).or_else(|| obj.get("file_path")).and_then(|v| v.as_str()).map(str::to_string),
+        "glob" | "grep" => obj.get("pattern").and_then(|v| v.as_str()).map(str::to_string),
         "task" => obj.get("prompt").and_then(|v| v.as_str()).map(str::to_string),
         "webfetch" => obj.get("url").and_then(|v| v.as_str()).map(str::to_string),
         "websearch" => obj.get("query").and_then(|v| v.as_str()).map(str::to_string),

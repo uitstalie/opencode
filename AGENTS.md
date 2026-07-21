@@ -167,7 +167,7 @@ fn foo(cond: bool) -> u32 {
 The crate follows a flat module tree under `crates/openrust/src/`:
 
 - `cli/` — CLI entrypoint and `debug` subcommands (debug-first strategy: core logic is verified via `openrust debug <subcommand>` before TUI integration).
-- `core/` — session, config, provider (trait + types), vault, crypto, compaction, permission, paths, platform, agent, session_input, token, memory.
+- `core/` — session, config, provider (trait + types), vault, crypto, compaction, permission, paths, platform, agent, token, memory, models_dev.
 - `tool/` — tool registry and individual tools.
 - `tui/` — ratatui/crossterm terminal UI, worker, rendering.
 - `provider/` — concrete LLM provider implementations (the `LlmProvider` trait itself lives in `core/provider.rs`).

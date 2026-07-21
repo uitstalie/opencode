@@ -231,11 +231,12 @@ impl LlmProvider for AnthropicProvider {
                         }
                         // Emit ToolCallStart for tool_use blocks.
                         if block["type"].as_str() == Some("tool_use") {
-                            let bi = blocks.get(&index).unwrap();
-                            yield Ok(StreamChunk::ToolCallStart {
-                                id: bi.id.clone(),
-                                name: bi.name.clone(),
-                            });
+                            if let Some(bi) = blocks.get(&index) {
+                                yield Ok(StreamChunk::ToolCallStart {
+                                    id: bi.id.clone(),
+                                    name: bi.name.clone(),
+                                });
+                            }
                         }
                     }
                     "content_block_delta" => {

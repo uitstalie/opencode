@@ -205,6 +205,7 @@ impl DialogOption {
 pub(super) fn slash_options(input: &str) -> Vec<DialogOption> {
     let items = [
         ("/thinking", "thinking", "Toggle thinking visibility"),
+        ("/think", "thinking", "Alias for /thinking"),
         ("/session", "session", "List or switch sessions"),
         ("/agent", "agent", "List or switch agents"),
         ("/task", "task", "List or update tasks"),
@@ -218,8 +219,11 @@ pub(super) fn slash_options(input: &str) -> Vec<DialogOption> {
             "models",
             "Switch registered models and reasoning effort",
         ),
+        ("/model", "models", "Alias for /models"),
         ("/compact", "compact", "Compact the current session"),
+        ("/compaction", "compact", "Alias for /compact"),
         ("/files", "files", "Toggle the file-tree sidebar"),
+        ("/tree", "files", "Alias for /files"),
         ("/diff", "diff", "Show the last edit as a diff"),
         ("/reload", "reload", "Reload config, agents, skills, rules"),
         (

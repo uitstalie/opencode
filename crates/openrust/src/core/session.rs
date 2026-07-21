@@ -1,4 +1,4 @@
-//! Session storage and message history for Phase 1B.
+//! Session storage and message history.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

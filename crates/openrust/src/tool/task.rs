@@ -218,7 +218,9 @@ pub async fn run_agent(
                 }
             }
         }
-        let mut stream = stream.expect("retry loop sets stream or returns");
+        let Some(mut stream) = stream else {
+            return Err(anyhow::anyhow!("retry loop exhausted without setting stream"));
+        };
 
         let mut assistant_text = String::new();
         let mut pending: Vec<(String, String, String)> = Vec::new();

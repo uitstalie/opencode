@@ -1,4 +1,4 @@
-//! System prompt rendering for Phase 1B.
+//! System prompt rendering.
 
 use crate::core::config::{Config, ResolvedProvider};
 

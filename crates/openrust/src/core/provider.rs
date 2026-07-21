@@ -273,7 +273,6 @@ pub trait LlmProvider: Send + Sync {
 
 // ── Factory ────────────────────────────────────────
 
-/// Detect the protocol for a provider: explicit config field, then base_url heuristic.
 /// Determine the wire protocol for a provider.
 ///
 /// Returns `None` when `protocol` is missing or set to an unrecognized

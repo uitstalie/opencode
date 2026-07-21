@@ -117,8 +117,7 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
                 );
                 if let Some(resolved) = config.get_provider(&args.provider) {
                     let key_status = match vault.get(&args.provider) {
-                        Some(k) if k.len() > 8 => format!("🔐 (vault) ****{}", &k[k.len() - 4..]),
-                        Some(_) => "🔐 (vault) ****".to_string(),
+                        Some(k) => format!("🔐 (vault) {}", super::mask_secret(&k)),
                         None => "(not set)".to_string(),
                     };
                     println!("  api_key:  {}", key_status);
@@ -158,16 +157,9 @@ fn show_config(config: &Config) {
             .to_string();
         let config_api_key = resolved.as_ref().and_then(|r| r.api_key.clone());
         let key_status = match vault.get(name) {
-            Some(k) if k.len() > 8 => format!("🔐 (vault) ****{}", &k[k.len() - 4..]),
-            Some(_) => "🔐 (vault) ****".to_string(),
+            Some(k) => format!("🔐 (vault) {}", super::mask_secret(&k)),
             None => config_api_key
-                .map(|v| {
-                    if v.len() > 8 {
-                        format!("(config) ****{}", &v[v.len() - 4..])
-                    } else {
-                        "(config) ****".to_string()
-                    }
-                })
+                .map(|v| format!("(config) {}", super::mask_secret(&v)))
                 .unwrap_or_else(|| "(not set)".to_string()),
         };
         println!("[{}]", name);

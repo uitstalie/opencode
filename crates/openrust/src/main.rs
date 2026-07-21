@@ -2,7 +2,7 @@
 //!
 //! Entry point. Parses CLI args and dispatches to TUI or debug subcommands.
 
-#![allow(dead_code)] // Phase 0: many types defined but used in later phases
+#![allow(dead_code)]
 
 use clap::Parser;
 use openrust::cli;

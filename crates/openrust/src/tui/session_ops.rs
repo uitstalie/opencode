@@ -12,14 +12,14 @@ use crate::core::provider::{self, Message, MessageContent};
 /// Lazily-initialized shared tokio runtime for fire-and-forget background
 /// threads (title, summary, compaction). Avoids creating a new `Runtime`
 /// per thread.
-fn shared_runtime() -> &'static tokio::runtime::Runtime {
-    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+fn shared_runtime() -> Option<&'static tokio::runtime::Runtime> {
+    static RUNTIME: std::sync::OnceLock<Option<tokio::runtime::Runtime>> = std::sync::OnceLock::new();
     RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .expect("failed to create background tokio runtime")
-    })
+            .ok()
+    }).as_ref()
 }
 
 impl SessionView {
@@ -261,7 +261,10 @@ impl SessionView {
             self.status = "compacting...".to_string();
 
             std::thread::spawn(move || {
-                let rt = shared_runtime();
+                let Some(rt) = shared_runtime() else {
+                    tracing::error!("failed to create background runtime");
+                    return;
+                };
                 let system = agent::builtin_agent_system("compaction")
                     .unwrap_or("Summarize this conversation history. Be concise.")
                     .to_string();
@@ -352,7 +355,10 @@ impl SessionView {
         let cwd = self.cwd.clone();
 
         std::thread::spawn(move || {
-            let rt = shared_runtime();
+            let Some(rt) = shared_runtime() else {
+                tracing::error!("failed to create background runtime");
+                return;
+            };
             let system = agent::builtin_agent_system("title")
                 .unwrap_or("Generate a concise title.")
                 .to_string();
@@ -398,7 +404,10 @@ impl SessionView {
         let cwd = self.cwd.clone();
 
         std::thread::spawn(move || {
-            let rt = shared_runtime();
+            let Some(rt) = shared_runtime() else {
+                tracing::error!("failed to create background runtime");
+                return;
+            };
             let system = agent::builtin_agent_system("summary")
                 .unwrap_or("Summarize what was done.")
                 .to_string();
@@ -624,7 +633,10 @@ impl SessionView {
             // Stagger to avoid competing with title/summary on the same LLM window
             std::thread::sleep(std::time::Duration::from_secs(5));
 
-            let rt = shared_runtime();
+            let Some(rt) = shared_runtime() else {
+                tracing::error!("failed to create background runtime");
+                return;
+            };
             let system = agent::builtin_agent_system("memory-extract")
                 .unwrap_or("Extract stable memories from the conversation.")
                 .to_string();
@@ -716,7 +728,10 @@ impl SessionView {
         ));
 
         std::thread::spawn(move || {
-            let rt = shared_runtime();
+            let Some(rt) = shared_runtime() else {
+                tracing::error!("failed to create background runtime");
+                return;
+            };
             let system = agent::builtin_agent_system("dreaming")
                 .unwrap_or("Analyze cross-session patterns.")
                 .to_string();
