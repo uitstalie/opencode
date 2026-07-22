@@ -397,7 +397,7 @@ match (event.kind, event.payload) {
 | 5 | 两个 pump 重复 | 🟡 部分修复 | 总线 demux（Ask/Permission/Progress/Done）已共享；`Prompt` 渲染分支仍 TUI/headless 各一份 |
 | 6 | headless 忙轮询 | ✅ 已修复 | 10ms sleep |
 | 7 | 每次 LLM 调用克隆完整历史 | ✅ 已修复 | `LlmProvider::chat` 改为借用 `&[Message]`/`&[ToolDef]`，调用点零拷贝 |
-| 8 | delta 无合并、无背压 | 🟡 缓解 | 渲染侧已被帧合并封顶 60fps；但 worker 仍每 delta 一个事件，channel 仍无界 |
+| 8 | delta 无合并、无背压 | ✅ 已修复 | worker 侧 8ms 攒批（pending 缓冲 + interval flush；非 delta 事件前强制 flush 保序）；渲染侧帧合并封顶 60fps |
 | 9 | sidebar dirty 时 UI 线程全量重扫描 | ❌ 仍存在 | 现在挂在 Tick 上执行，仍是 UI 线程同步扫描 |
 | 10 | 后台线程对 UI 不可见 | ✅ 已修复 | `Done` 事件 + toast |
 

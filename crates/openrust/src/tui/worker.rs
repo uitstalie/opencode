@@ -361,6 +361,25 @@ pub(super) fn spawn_prompt_worker(
                 let mut tool_outputs: Vec<ToolOutput> = Vec::new();
                 let mut finish_seen = false;
 
+                // Delta coalescing: stream chunks accumulate in pending
+                // buffers and are flushed on an 8ms tick (or immediately
+                // before any non-delta event, preserving event order)
+                // instead of one PromptEvent per chunk.
+                let mut pending_text = String::new();
+                let mut pending_thinking = String::new();
+                let mut flush_tick = tokio::time::interval(std::time::Duration::from_millis(8));
+                flush_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                macro_rules! flush_deltas {
+                    () => {
+                        if !pending_text.is_empty() {
+                            tx.send_prompt(PromptEvent::AssistantDelta(std::mem::take(&mut pending_text)));
+                        }
+                        if !pending_thinking.is_empty() {
+                            tx.send_prompt(PromptEvent::ThinkingDelta(std::mem::take(&mut pending_thinking)));
+                        }
+                    };
+                }
+
                 loop {
                     tokio::select! {
                         chunk = stream.next() => {
@@ -369,6 +388,7 @@ pub(super) fn spawn_prompt_worker(
                                 return Ok::<_, anyhow::Error>(());
                             }
                             if abort.load(Ordering::SeqCst) {
+                                flush_deltas!();
                                 tx.send_prompt(PromptEvent::Aborted);
                                 return Ok::<_, anyhow::Error>(());
                             }
@@ -376,13 +396,14 @@ pub(super) fn spawn_prompt_worker(
                                 StreamChunk::TextDelta(text) => {
                                     tracing::trace!(chars = text.len(), "prompt worker received assistant text");
                                     assistant_text.push_str(&text);
-                                    tx.send_prompt(PromptEvent::AssistantDelta(text));
+                                    pending_text.push_str(&text);
                                 }
                                 StreamChunk::ReasoningDelta(text) => {
                                     thinking_text.push_str(&text);
-                                    tx.send_prompt(PromptEvent::ThinkingDelta(text));
+                                    pending_thinking.push_str(&text);
                                 }
                                 StreamChunk::ToolCallStart { id, name } => {
+                                    flush_deltas!();
                                     pending_tools.push((id.clone(), name.clone(), String::new()));
                                     tx.send_prompt(PromptEvent::ToolCallStart { id, name });
                                 }
@@ -396,6 +417,7 @@ pub(super) fn spawn_prompt_worker(
                                     }
                                 }
                                 StreamChunk::ToolCallEnd { id } => {
+                                    flush_deltas!();
                                     let Some((call_id, name, args)) = pending_tools
                                         .iter()
                                         .find(|(cid, _, _)| cid == &id)
@@ -422,6 +444,7 @@ pub(super) fn spawn_prompt_worker(
                                     tool_outputs.push((call_id, name, args, tool_text, has_image, image_b64));
                                 }
                                 StreamChunk::Finish { usage, .. } => {
+                                    flush_deltas!();
                                     finish_seen = true;
                                     tracing::debug!(usage = ?usage, "prompt worker received stream finish");
                                     if let Some(u) = &usage {
@@ -432,17 +455,25 @@ pub(super) fn spawn_prompt_worker(
                                 }
                             }
                         }
+                        _ = flush_tick.tick() => {
+                            flush_deltas!();
+                        }
                         _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
                             if shutdown.load(Ordering::SeqCst) {
                                 return Ok::<_, anyhow::Error>(());
                             }
                             if abort.load(Ordering::SeqCst) {
+                                flush_deltas!();
                                 tx.send_prompt(PromptEvent::Aborted);
                                 return Ok::<_, anyhow::Error>(());
                             }
                         }
                     }
                 }
+
+                // Stream ended: deliver any coalesced deltas before the
+                // ToolBatch so the UI sees text before tool results.
+                flush_deltas!();
 
                 if !executed_tools.is_empty() {
                     let captured_text = assistant_text.clone();
