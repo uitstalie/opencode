@@ -405,7 +405,7 @@ match (event.kind, event.payload) {
 
 | # | 问题 | 严重度 | 说明 |
 |---|------|--------|------|
-| N1 | `run_agent` 在 async executor 上同步写 sled | 低 | 持久化 `persist_msg` 是阻塞 IO，嵌在流式循环里；sled 够快，但严格说应 `spawn_blocking` 或批量提交 |
+| N1 | `run_agent` 在 async executor 上同步写 sled | ✅ 已修复 | 持久化改为步骤边界批量落盘（`buffer_persisted` + `flush_persisted`），写次数 O(消息)→O(步骤)，同步写移出流式路径 |
 | N2 | headless 回合结束后 bus 无人 drain | 低 | 最后一个 prompt 结束后 bg 线程（summary/memory）仍可能发事件，channel 无界堆积直到进程退出（短命进程，影响小） |
 | N3 | 权限/问题请求与 abort 的交互未改善 | ✅ 已修复 | UI 侧 Esc 拒绝+停止（#3）；worker 侧 `wait_response` 每 100ms 检查 abort/shutdown 信号量，双向可中断 |
 | N4 | `Prompt` 事件隐式假设来自 Main session | 低 | demux 未按 `event.kind` 区分渲染目标；目前 run_agent 不产生 Prompt 事件所以安全，但架构上是个未声明的约定 |

@@ -184,25 +184,22 @@ pub async fn run_agent(
             events.progress(msg);
         }
     };
-    let persist_msg = |role: &str,
-                       content: &str,
-                       name: Option<String>,
-                       tool_call_id: Option<String>,
-                       tool_calls: Option<serde_json::Value>| {
-        if let Some((store, session_id)) = &persist {
-            let _ = store.append_message_detail(
-                session_id,
-                role,
-                content,
-                name,
-                tool_call_id,
-                tool_calls,
-            );
-        }
-    };
+    // Persistence is batched: messages accumulate in `pending_persist` and
+    // are flushed at step boundaries (between LLM calls), keeping sync sled
+    // writes out of the latency-sensitive streaming path and cutting write
+    // amplification from O(messages) to O(steps).
+    let mut pending_persist: Vec<PersistedMsg> = Vec::new();
     for message in &history {
-        persist_msg(&message.role, &message.content.as_text(), None, None, None);
+        buffer_persisted(
+            &mut pending_persist,
+            &message.role,
+            &message.content.as_text(),
+            None,
+            None,
+            None,
+        );
     }
+    flush_persisted(&persist, &mut pending_persist);
     let is_cancelled = || {
         if let Some(flag) = &tool_ctx.shutdown
             && flag.load(std::sync::atomic::Ordering::SeqCst)
@@ -352,7 +349,8 @@ pub async fn run_agent(
 
         if !executed_calls.is_empty() {
             last_assistant = assistant_text.clone();
-            persist_msg(
+            buffer_persisted(
+                &mut pending_persist,
                 "assistant",
                 &assistant_text,
                 None,
@@ -367,21 +365,84 @@ pub async fn run_agent(
                 tool_calls: Some(executed_calls),
             });
             for (call_id, output) in &tool_outputs {
-                persist_msg("tool", output, None, Some(call_id.clone()), None);
+                buffer_persisted(
+                    &mut pending_persist,
+                    "tool",
+                    output,
+                    None,
+                    Some(call_id.clone()),
+                    None,
+                );
                 history.push(Message::tool(output.clone(), call_id.clone()));
             }
+            flush_persisted(&persist, &mut pending_persist);
             continue;
         }
 
         if !assistant_text.trim().is_empty() {
             last_assistant = assistant_text.clone();
-            persist_msg("assistant", &assistant_text, None, None, None);
+            buffer_persisted(
+                &mut pending_persist,
+                "assistant",
+                &assistant_text,
+                None,
+                None,
+                None,
+            );
             history.push(Message::assistant(assistant_text));
         }
+        flush_persisted(&persist, &mut pending_persist);
 
         if pending.is_empty() && finish_seen {
             return Ok(last_assistant);
         }
+    }
+}
+
+/// Buffered message awaiting batch persistence
+/// (role, content, name, tool_call_id, tool_calls).
+type PersistedMsg = (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<serde_json::Value>,
+);
+
+/// Buffer a message for batch persistence at the next step boundary.
+fn buffer_persisted(
+    pending: &mut Vec<PersistedMsg>,
+    role: &str,
+    content: &str,
+    name: Option<String>,
+    tool_call_id: Option<String>,
+    tool_calls: Option<serde_json::Value>,
+) {
+    pending.push((
+        role.to_string(),
+        content.to_string(),
+        name,
+        tool_call_id,
+        tool_calls,
+    ));
+}
+
+/// Write buffered messages to the session store in one batch. Call order is
+/// preserved, so message seq numbers stay monotonic.
+fn flush_persisted(persist: &Option<(SessionStore, String)>, pending: &mut Vec<PersistedMsg>) {
+    let Some((store, session_id)) = persist else {
+        pending.clear();
+        return;
+    };
+    for (role, content, name, tool_call_id, tool_calls) in pending.drain(..) {
+        let _ = store.append_message_detail(
+            session_id,
+            &role,
+            &content,
+            name,
+            tool_call_id,
+            tool_calls,
+        );
     }
 }
 
