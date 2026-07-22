@@ -249,3 +249,124 @@ title / summary / manual compact / generate_memory (5s delay) / dream / models.d
 **已跳过（待重构时处理）**:
 - TEST-003/004/006: TUI worker/dialogs/cli 测试
 - DESIGN-001: SessionView god struct（需要大型重构）
+
+---
+
+## 8. 目标架构：Session 统一模型 + 双总线
+
+### 8.1 核心思想
+
+**一切皆 session，事件以 session 锚定，UI 按 session 路由，持久化只是 session 的副作用。**
+
+Main agent、sub-agent、后台任务（title/summary/memory/dream/compact）本质上是同一种东西：一个 agent 实例在跑自己的上下文。区别仅在于：
+
+| 维度 | Main | SubAgent | Background |
+|------|------|----------|------------|
+| 是否阻塞父级 | — | 是（task 工具同步等待） | 否（fire-and-forget） |
+| 交互能力（Ask/Permission） | 有 | 有（可配置） | 无（非交互） |
+| 事件路由 | 对话视图 | 对应 tool call 进度行 | toast / 静默写 store |
+| 上下文 | 持久会话 | 临时会话，完成即过期 | 临时会话，完成即过期 |
+
+### 8.2 身份模型
+
+每个 agent 实例拥有唯一 session，`SessionId` 即事件路由的 tag：
+
+```rust
+enum AgentKind { Main, SubAgent, Background }
+
+// Session 记录扩展（core/session.rs）
+struct Session {
+    id: String,                    // main: "session-*", 临时: "sub-*" / "bg-*"
+    kind: AgentKind,               // serde default = Main（向后兼容）
+    parent_id: Option<String>,     // agent 树，支持嵌套 task
+    ...
+}
+
+// 运行时注册表（内存）
+struct SessionEntry {
+    id: SessionId,
+    kind: AgentKind,
+    parent: Option<SessionId>,
+    abort: Arc<AtomicBool>,        // 按 session 粒度的取消
+    created_at: Instant,           // TTL / 过期销毁依据
+}
+```
+
+### 8.3 双总线
+
+**总线 1：Session 事件总线（core → 前端）**
+
+替代现在散落的 6 条 channel（prompt/ask/permission/progress/followup/sidebar），统一为一条：
+
+```rust
+struct SessionEvent {
+    session: SessionId,
+    kind: AgentKind,               // 冗余 tag，免查注册表
+    payload: EventPayload,
+}
+
+enum EventPayload {
+    Prompt(PromptEvent),           // delta / tool lifecycle / finish
+    Ask(AskRequest),               // 仍带 oneshot responder（请求/响应，非纯事件）
+    Permission(PermissionRequest), // 同上
+    Progress(String),              // sub-agent 进度
+    Done { result: Result<String, String> },  // 后台任务完成/失败
+}
+```
+
+- 初版用单条 `mpsc<SessionEvent>`（单订阅者：TUI 或 headless）
+- 未来多订阅者（telemetry/日志/测试）再升级 `tokio::sync::broadcast`
+- 引入有界 channel + worker 侧 delta 合并，顺带解决背压问题
+- `ToolContext` 不再持有裸 `ask_tx`/`permission_tx`/`progress_tx`，改为持有统一 `SessionEventSender`（解决 core 依赖 UI channel 的分层问题）
+
+**总线 2：UI 总线（TUI 内部）**
+
+crossterm 输入、对话框开关、toast、sidebar 刷新、dirty 标记——纯 UI 状态，留在 TUI 层，不进入 core。
+
+### 8.4 路由策略（tag + 集中 demux）
+
+```rust
+match (event.kind, event.payload) {
+    (Main, Prompt(e))       => 对话视图渲染,
+    (SubAgent, Progress(s)) => 更新对应 tool call 进度行,
+    (_, Ask/Permission(r))  => 弹对话框（Background 不产生此类事件）,
+    (Background, Done(..))  => toast 通知 / 静默,
+}
+```
+
+选择集中 match 而非动态注册 handler：订阅者只有 TUI 和 headless 两个且行为固定，`Box<dyn Fn>` 注册表引入不必要的生命周期复杂度。等真有插件需求再升级。
+
+### 8.5 顺序与取消语义
+
+- **顺序**：不同 session 的事件允许任意交错（tag 区分）；同一 session 内天然有序（单线程生产者）。不需要全局顺序。
+- **取消**：Esc abort main session 并沿 agent 树级联到其 sub-agent；Background session 独立存活（标题生成不该被 Esc 杀）。
+- **交互权限**：仅 Main 和 SubAgent 可发 Ask/Permission；Background 一律非交互（等价于现在 channel 为 None 的行为）。
+
+### 8.6 临时 session 持久化
+
+**前期保留持久化**（便于还原/调试 sub-agent 和后台任务的问题），后期可通过配置关闭。
+
+- 临时 session 与 main 共用 `SessionStore`，`kind` 字段区分；`list_sessions()` 默认只返回 Main，临时会话通过 debug 子命令查看
+- sub-agent：每步提交 assistant/tool 消息到自己的 session
+- 后台任务：prompt + 最终结果写入自己的 session
+- 启动时 TTL 清理：删除超过 N 天（默认 7）的临时 session
+- 配置开关：`persist_agent_sessions: bool`（默认 true），后期稳定后可关
+
+### 8.7 顺带修复的旧问题
+
+1. Auto-compaction 历史分歧（§5.4）：历史归属 session，单一数据源
+2. 后台任务静默失败（§5.10）：`Done` 事件天然可见
+3. 两个 pump 重复（§5.5）：共享 `handle_session_event()`
+4. core → UI 分层泄漏：`ToolContext` 只依赖 `SessionEventSender`
+
+### 8.8 迁移路径（已完成 ✅）
+
+1. ✅ `core/session.rs`：Session 增加 `kind`/`parent_id`；`list_sessions` 过滤临时会话（`list_agent_sessions` 用于调试）
+2. ✅ `core/event.rs`（新）：`SessionEvent`/`EventPayload`/`SessionEventSender`；`AskRequest`/`PermissionRequest`/`PromptEvent` 上移到 core
+3. ✅ `run_agent`（tool/task.rs）：临时 session 创建（`create_agent_session`）+ 历史持久化（`persist` 参数）+ progress 走总线
+4. ✅ `worker.rs`：PromptEvent 经 `SessionEventSender` 发送；`ToolContext` 三条 channel 合并为 `events`
+5. ✅ TUI/headless：统一 `drain_session_events` + demux（Ask/Permission/Progress/Done 共享 handler）；headless 忙轮询修复（10ms sleep）
+6. ✅ 后台任务（session_ops.rs）：`bg_session_anchor()` 创建 bg session、持久化、发 `Done` 事件 → TUI toast
+7. ✅ 启动清理（`cleanup_agent_sessions`，7 天 TTL）+ `persist_agent_sessions` 配置开关（默认 true）
+
+**仍未统一**：TUI 与 headless 对 `Prompt` 事件的渲染分支仍各自实现（pending_tool_calls / capture_diff / collapsed 展示差异属正常分歧），后续可提取共享的 `handle_prompt_event(state, event)` 进一步收敛。

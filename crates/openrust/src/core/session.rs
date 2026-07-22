@@ -5,10 +5,44 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
+/// Which kind of agent instance owns a session.
+///
+/// Every agent (main turn, sub-agent, background task) anchors its context
+/// to a session; `SessionId` doubles as the event-routing tag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentKind {
+    Main,
+    SubAgent,
+    Background,
+}
+
+impl Default for AgentKind {
+    fn default() -> Self {
+        Self::Main
+    }
+}
+
+impl AgentKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Main => "main",
+            Self::SubAgent => "sub_agent",
+            Self::Background => "background",
+        }
+    }
+}
+
 /// A stored chat session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: String,
+    /// Agent instance kind; missing field in old records means Main.
+    #[serde(default)]
+    pub kind: AgentKind,
+    /// Parent session for sub-agent / background sessions (agent tree).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
@@ -106,7 +140,21 @@ impl SessionStore {
         Ok(Self { db, next_seq })
     }
 
+    /// List user-facing sessions (Main kind only). Ephemeral sub-agent /
+    /// background sessions are hidden; use `list_agent_sessions` for debugging.
     pub fn list_sessions(&self) -> anyhow::Result<Vec<SessionSummary>> {
+        self.list_sessions_filtered(|s| s.kind == AgentKind::Main)
+    }
+
+    /// List ephemeral agent sessions (sub-agent / background) for debugging.
+    pub fn list_agent_sessions(&self) -> anyhow::Result<Vec<SessionSummary>> {
+        self.list_sessions_filtered(|s| s.kind != AgentKind::Main)
+    }
+
+    fn list_sessions_filtered(
+        &self,
+        keep: impl Fn(&Session) -> bool,
+    ) -> anyhow::Result<Vec<SessionSummary>> {
         let sessions_tree = self.db.open_tree("sessions")?;
         let messages_tree = self.db.open_tree("messages")?;
 
@@ -144,6 +192,7 @@ impl SessionStore {
                     None
                 }
             })
+            .filter(|session| keep(session))
             .map(|session| SessionSummary {
                 message_count: msg_counts.get(&session.id).copied().unwrap_or(0),
                 id: session.id,
@@ -281,6 +330,36 @@ impl SessionStore {
         Ok(deleted)
     }
 
+    /// Delete ephemeral agent sessions (sub-agent / background) older than
+    /// `max_age_secs`. Called on startup to GC persisted debug histories.
+    pub fn cleanup_agent_sessions(&self, max_age_secs: u64) -> anyhow::Result<usize> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let cutoff = now.saturating_sub(max_age_secs);
+
+        let old: Vec<String> = self
+            .list_agent_sessions()?
+            .into_iter()
+            .filter(|s| {
+                s.updated_at
+                    .parse::<f64>()
+                    .map(|ts| (ts as u64) < cutoff)
+                    .unwrap_or(false)
+            })
+            .map(|s| s.id)
+            .collect();
+
+        let mut deleted = 0usize;
+        for id in &old {
+            if self.delete_session(id).is_ok() {
+                deleted += 1;
+            }
+        }
+        Ok(deleted)
+    }
+
     pub fn save_message(&self, message: &Message) -> anyhow::Result<()> {
         self.db.open_tree("messages")?.insert(
             self.message_key(&message.session_id, &message.id),
@@ -311,6 +390,18 @@ impl SessionStore {
     }
 
     pub fn ensure_session(&self, id: &str) -> anyhow::Result<Session> {
+        self.ensure_session_kind(id, AgentKind::Main, None)
+    }
+
+    /// Ensure a session of the given kind exists. Used for ephemeral
+    /// sub-agent / background sessions whose history is persisted for
+    /// debugging (can be disabled via `persist_agent_sessions`).
+    pub fn ensure_session_kind(
+        &self,
+        id: &str,
+        kind: AgentKind,
+        parent_id: Option<String>,
+    ) -> anyhow::Result<Session> {
         if let Some(session) = self.get_session(id)? {
             return Ok(session);
         }
@@ -318,6 +409,8 @@ impl SessionStore {
         let now = now_string();
         let session = Session {
             id: id.to_string(),
+            kind,
+            parent_id,
             title: None,
             summary: None,
             agent: None,
@@ -662,6 +755,61 @@ fn now_micros() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_sessions_are_filtered_from_user_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::open_at(dir.path()).unwrap();
+        store.ensure_session("session-main").unwrap();
+        store
+            .ensure_session_kind("sub-1", AgentKind::SubAgent, Some("session-main".to_string()))
+            .unwrap();
+        store
+            .ensure_session_kind("bg-1", AgentKind::Background, Some("session-main".to_string()))
+            .unwrap();
+
+        let user_sessions = store.list_sessions().unwrap();
+        assert_eq!(user_sessions.len(), 1);
+        assert_eq!(user_sessions[0].id, "session-main");
+
+        let agent_sessions = store.list_agent_sessions().unwrap();
+        assert_eq!(agent_sessions.len(), 2);
+
+        let sub = store.get_session("sub-1").unwrap().unwrap();
+        assert_eq!(sub.kind, AgentKind::SubAgent);
+        assert_eq!(sub.parent_id.as_deref(), Some("session-main"));
+    }
+
+    #[test]
+    fn cleanup_agent_sessions_removes_only_old_ephemeral_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::open_at(dir.path()).unwrap();
+        store.ensure_session("session-main").unwrap();
+        store
+            .ensure_session_kind("sub-old", AgentKind::SubAgent, None)
+            .unwrap();
+        // Backdate the ephemeral session beyond the TTL.
+        store
+            .update_session("sub-old", |s| {
+                s.updated_at = "1.0".to_string();
+            })
+            .unwrap();
+
+        let deleted = store.cleanup_agent_sessions(60).unwrap();
+        assert_eq!(deleted, 1);
+        assert!(store.get_session("sub-old").unwrap().is_none());
+        // Main sessions are untouched by agent-session GC.
+        assert!(store.get_session("session-main").unwrap().is_some());
+    }
+
+    #[test]
+    fn old_session_records_default_to_main_kind() {
+        // Records written before the kind field existed must still load.
+        let json = r#"{"id":"session-legacy","title":null,"agent":null,"created_at":"1","updated_at":"1"}"#;
+        let session: Session = serde_json::from_str(json).unwrap();
+        assert_eq!(session.kind, AgentKind::Main);
+        assert_eq!(session.parent_id, None);
+    }
 
     #[test]
     fn session_store_persists_sessions_and_messages() {

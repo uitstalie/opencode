@@ -40,6 +40,7 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
         None,
         messages,
         &ctx,
+        None,
     ))?;
     println!("{}", result);
     Ok(())
@@ -110,6 +111,7 @@ mod tests {
             model: None,
             theme: None,
             search_engine: None,
+            persist_agent_sessions: true,
             background_model: None,
             provider: HashMap::from([(
                 "deepseek".to_string(),
@@ -137,6 +139,7 @@ mod tests {
             model: Some("missing-key-provider/deepseek-chat".to_string()),
             theme: None,
             search_engine: None,
+            persist_agent_sessions: true,
             background_model: None,
             provider: HashMap::from([(
                 "missing-key-provider".to_string(),
@@ -170,6 +173,7 @@ mod tests {
                 model: None,
                 theme: None,
                 search_engine: None,
+            persist_agent_sessions: true,
                 background_model: None,
                 provider: HashMap::new(),
                 presets: HashMap::new(),

@@ -6,50 +6,21 @@ use crossterm::{cursor, event::{DisableBracketedPaste, DisableMouseCapture}, exe
 use futures::StreamExt;
 use ratatui::{Terminal, backend::CrosstermBackend};
 
-use crate::core::session::SessionStore;
+use crate::core::event::{PromptEvent, SessionEvent, SessionEventSender};
+use crate::core::session::{AgentKind, SessionStore};
 use crate::core::{
     agent, compaction, provider, provider::RequestOptions, provider::StreamChunk, provider::ToolDef,
     provider::ToolFunction,
 };
 use crate::tool::catalog;
-use crate::tool::{AskRequest, PermissionRequest, ToolContext};
+use crate::tool::ToolContext;
+
+pub(super) use crate::core::event::ToolBatchItem;
 
 pub(super) struct PromptJob {
-    pub(super) receiver: mpsc::Receiver<PromptEvent>,
-    pub(super) ask_receiver: mpsc::Receiver<AskRequest>,
-    pub(super) permission_receiver: mpsc::Receiver<PermissionRequest>,
     /// Sender held by the TUI; worker drains this each step to inject
     /// follow-up user messages queued while the turn is in flight.
     pub(super) followup_tx: mpsc::Sender<String>,
-    /// Receiver for sub-agent progress strings (drained by the TUI pump).
-    pub(super) progress_rx: mpsc::Receiver<String>,
-}
-
-#[derive(Debug)]
-pub(super) enum PromptEvent {
-    AssistantDelta(String),
-    ThinkingDelta(String),
-    ToolCallStart { id: String, name: String },
-    ToolRunning { id: String, args: String },
-    ToolBatch {
-        assistant: String,
-        tool_calls: Vec<serde_json::Value>,
-        results: Vec<ToolBatchItem>,
-    },
-    Finish { prompt_tokens: u64, cache_hit_tokens: u64 },
-    Error(String),
-    /// User pressed ESC to abort the current turn.
-    Aborted,
-    /// Retry countdown: "retry 1/3 in 4s".
-    RetryStatus(String),
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct ToolBatchItem {
-    pub id: String,
-    pub name: String,
-    pub args: String,
-    pub result: String,
 }
 
 pub(super) struct SessionRuntimeGuard {
@@ -107,19 +78,24 @@ pub(super) fn spawn_prompt_worker(
     presets: std::collections::HashMap<String, Vec<String>>,
     context_window: u64,
     output_tokens: Option<u32>,
+    bus_tx: mpsc::Sender<SessionEvent>,
+    persist_agent_sessions: bool,
 ) -> PromptJob {
-    let (tx, rx) = mpsc::channel();
-    let (ask_tx, ask_rx) = mpsc::channel::<AskRequest>();
-    let (permission_tx, permission_rx) = mpsc::channel::<PermissionRequest>();
+    let events = SessionEventSender::new(
+        session_id.clone().unwrap_or_else(|| "session-unknown".to_string()),
+        AgentKind::Main,
+        bus_tx,
+    );
     let (followup_tx, followup_rx) = mpsc::channel::<String>();
-    let (progress_tx, progress_rx) = mpsc::channel::<String>();
     let session_id_for_log = session_id.clone();
+    let events_for_thread = events.clone();
     std::thread::spawn(move || {
+        let tx = events_for_thread;
         let rt = match tokio::runtime::Runtime::new() {
             Ok(rt) => rt,
             Err(err) => {
                 tracing::error!(session = ?session_id_for_log, error = %err, "tokio runtime creation failed");
-                let _ = tx.send(PromptEvent::Error(err.to_string()));
+                tx.send_prompt(PromptEvent::Error(err.to_string()));
                 return;
             }
         };
@@ -146,18 +122,13 @@ pub(super) fn spawn_prompt_worker(
                 interactive,
                 session_id,
                 store,
-                ask_tx: if interactive { Some(ask_tx) } else { None },
-                permission_tx: if interactive {
-                    Some(permission_tx)
-                } else {
-                    None
-                },
+                events: Some(tx.clone()),
                 llm: Some(Arc::clone(&llm)),
                 model: Some(model.clone()),
                 reasoning_effort: reasoning_effort.clone(),
                 shutdown: Some(Arc::clone(&shutdown)),
                 abort: Some(Arc::clone(&abort)),
-                progress_tx: Some(progress_tx),
+                persist_agent_sessions,
                 presets: presets.clone(),
                 // Wire the undo store so write/edit return undo hashes and
                 // undo_edit can restore blobs (previously None in the TUI
@@ -191,7 +162,7 @@ pub(super) fn spawn_prompt_worker(
                     return Ok::<_, anyhow::Error>(());
                 }
                 if abort.load(Ordering::SeqCst) {
-                    let _ = tx.send(PromptEvent::Aborted);
+                    tx.send_prompt(PromptEvent::Aborted);
                     return Ok::<_, anyhow::Error>(());
                 }
                 step_count += 1;
@@ -235,6 +206,15 @@ pub(super) fn spawn_prompt_worker(
                             .unwrap_or("Summarize conversation history.")
                             .to_string();
 
+                        let compact_persist = store_clone.as_ref().and_then(|store| {
+                            crate::tool::task::create_agent_session(
+                                Some(store),
+                                persist_agent_sessions,
+                                AgentKind::Background,
+                                session_id_clone.as_deref(),
+                            )
+                            .map(|id| (store.clone(), id))
+                        });
                         let summary = crate::tool::task::run_agent(
                             llm.as_ref(),
                             &model,
@@ -244,6 +224,7 @@ pub(super) fn spawn_prompt_worker(
                             None,
                             vec![provider::Message::user(compact_prompt)],
                             &tool_ctx,
+                            compact_persist,
                         )
                         .await
                         .unwrap_or_else(|_| "compaction failed".to_string());
@@ -288,7 +269,7 @@ pub(super) fn spawn_prompt_worker(
                         return Ok::<_, anyhow::Error>(());
                     }
                     if abort.load(Ordering::SeqCst) {
-                        let _ = tx.send(PromptEvent::Aborted);
+                        tx.send_prompt(PromptEvent::Aborted);
                         return Ok::<_, anyhow::Error>(());
                     }
 
@@ -329,7 +310,7 @@ pub(super) fn spawn_prompt_worker(
                                             let mut remaining_ms = delay_secs * 1000;
                                             while remaining_ms > 0 {
                                                 let secs = remaining_ms.div_ceil(1000);
-                                                let _ = tx.send(PromptEvent::RetryStatus(
+                                                tx.send_prompt(PromptEvent::RetryStatus(
                                                     format!("retry {}/{} in {}s — {}",
                                                         attempt + 1, MAX_RETRIES, secs, detail),
                                                 ));
@@ -338,7 +319,7 @@ pub(super) fn spawn_prompt_worker(
                                                     return Ok::<_, anyhow::Error>(());
                                                 }
                                                 if abort.load(Ordering::SeqCst) {
-                                                    let _ = tx.send(PromptEvent::Aborted);
+                                                    tx.send_prompt(PromptEvent::Aborted);
                                                     return Ok::<_, anyhow::Error>(());
                                                 }
                                                 remaining_ms = remaining_ms.saturating_sub(500);
@@ -354,7 +335,7 @@ pub(super) fn spawn_prompt_worker(
                                     return Ok::<_, anyhow::Error>(());
                                 }
                                 if abort.load(Ordering::SeqCst) {
-                                    let _ = tx.send(PromptEvent::Aborted);
+                                    tx.send_prompt(PromptEvent::Aborted);
                                     return Ok::<_, anyhow::Error>(());
                                 }
                             }
@@ -381,22 +362,22 @@ pub(super) fn spawn_prompt_worker(
                                 return Ok::<_, anyhow::Error>(());
                             }
                             if abort.load(Ordering::SeqCst) {
-                                let _ = tx.send(PromptEvent::Aborted);
+                                tx.send_prompt(PromptEvent::Aborted);
                                 return Ok::<_, anyhow::Error>(());
                             }
                             match chunk? {
                                 StreamChunk::TextDelta(text) => {
                                     tracing::trace!(chars = text.len(), "prompt worker received assistant text");
                                     assistant_text.push_str(&text);
-                                    let _ = tx.send(PromptEvent::AssistantDelta(text));
+                                    tx.send_prompt(PromptEvent::AssistantDelta(text));
                                 }
                                 StreamChunk::ReasoningDelta(text) => {
                                     thinking_text.push_str(&text);
-                                    let _ = tx.send(PromptEvent::ThinkingDelta(text));
+                                    tx.send_prompt(PromptEvent::ThinkingDelta(text));
                                 }
                                 StreamChunk::ToolCallStart { id, name } => {
                                     pending_tools.push((id.clone(), name.clone(), String::new()));
-                                    let _ = tx.send(PromptEvent::ToolCallStart { id, name });
+                                    tx.send_prompt(PromptEvent::ToolCallStart { id, name });
                                 }
                                 StreamChunk::ToolCallDelta { id, args } => {
                                     if let Some((_, _, buffer)) = pending_tools
@@ -415,7 +396,7 @@ pub(super) fn spawn_prompt_worker(
                                     else {
                                         continue;
                                     };
-                                    let _ = tx.send(PromptEvent::ToolRunning { id: call_id.clone(), args: args.clone() });
+                                    tx.send_prompt(PromptEvent::ToolRunning { id: call_id.clone(), args: args.clone() });
                                     let tool_output = crate::tool::run_tool(&name, &args, &tool_ctx).await;
                                     let has_image = matches!(&tool_output, crate::tool::ToolResult::Image { .. });
                                     let image_b64 = match &tool_output {
@@ -449,7 +430,7 @@ pub(super) fn spawn_prompt_worker(
                                 return Ok::<_, anyhow::Error>(());
                             }
                             if abort.load(Ordering::SeqCst) {
-                                let _ = tx.send(PromptEvent::Aborted);
+                                tx.send_prompt(PromptEvent::Aborted);
                                 return Ok::<_, anyhow::Error>(());
                             }
                         }
@@ -485,7 +466,7 @@ pub(super) fn spawn_prompt_worker(
                         })
                         .collect();
 
-                    let _ = tx.send(PromptEvent::ToolBatch {
+                    tx.send_prompt(PromptEvent::ToolBatch {
                         assistant: captured_text.clone(),
                         tool_calls: tool_calls_json,
                         results,
@@ -552,7 +533,7 @@ pub(super) fn spawn_prompt_worker(
                 }
 
                 if is_last_step {
-                    let _ = tx.send(PromptEvent::Finish {
+                    tx.send_prompt(PromptEvent::Finish {
                         prompt_tokens: total_prompt_tokens,
                         cache_hit_tokens: total_cache_hit_tokens,
                     });
@@ -560,7 +541,7 @@ pub(super) fn spawn_prompt_worker(
                 }
 
                 if pending_tools.is_empty() && finish_seen {
-                    let _ = tx.send(PromptEvent::Finish {
+                    tx.send_prompt(PromptEvent::Finish {
                         prompt_tokens: total_prompt_tokens,
                         cache_hit_tokens: total_cache_hit_tokens,
                     });
@@ -579,17 +560,11 @@ pub(super) fn spawn_prompt_worker(
 
         if let Err(err) = result {
             tracing::error!(session = ?session_id_for_log, error = %err, "prompt worker failed");
-            let _ = tx.send(PromptEvent::Error(err.to_string()));
+            tx.send_prompt(PromptEvent::Error(err.to_string()));
         }
     });
 
-    PromptJob {
-        receiver: rx,
-        ask_receiver: ask_rx,
-        permission_receiver: permission_rx,
-        followup_tx,
-        progress_rx,
-    }
+    PromptJob { followup_tx }
 }
 
 /// Whether an error from llm.chat() is worth retrying.

@@ -1,9 +1,11 @@
 //! Question tool — ask the user structured questions via the interactive UI.
 //!
-//! The tool forwards questions over `ToolContext.ask_tx` and blocks until the
+//! The tool emits an `Ask` event on the session bus and blocks until the
 //! TUI collects answers (one string per sub-question). In non-interactive
-//! contexts (`ask_tx` is `None`) it returns an error instead of hanging.
+//! contexts (`ctx.events` is `None` or not interactive) it returns an error
+//! instead of hanging.
 
+use crate::core::event::EventPayload;
 use crate::tool::{AskRequest, Tool, ToolContext, ToolParams, ToolResult};
 use serde_json::Value;
 
@@ -52,7 +54,7 @@ impl Tool for QuestionTool {
     }
 
     async fn execute(&self, p: ToolParams, ctx: &ToolContext) -> ToolResult {
-        let Some(ask_tx) = ctx.ask_tx.as_ref() else {
+        let Some(events) = ctx.events.as_ref().filter(|_| ctx.interactive) else {
             return ToolResult::error(
                 "question: interactive input is not available in this context",
             );
@@ -67,15 +69,10 @@ impl Tool for QuestionTool {
         };
 
         let (responder, answers_rx) = std::sync::mpsc::channel();
-        if ask_tx
-            .send(AskRequest {
-                questions: questions.clone(),
-                responder,
-            })
-            .is_err()
-        {
-            return ToolResult::error("question: interactive UI is no longer available");
-        }
+        events.send(EventPayload::Ask(AskRequest {
+            questions: questions.clone(),
+            responder,
+        }));
 
         let answers = match answers_rx.recv() {
             Ok(answers) => answers,
@@ -135,15 +132,23 @@ mod tests {
 
     #[tokio::test]
     async fn round_trips_answer_through_channel() {
-        let (ask_tx, ask_rx) = std::sync::mpsc::channel::<AskRequest>();
+        let (bus_tx, bus_rx) = crate::core::event::session_bus();
         // Simulated UI: receive the request and answer it.
         let ui = std::thread::spawn(move || {
-            let request = ask_rx.recv().unwrap();
+            let event = bus_rx.recv().unwrap();
+            let EventPayload::Ask(request) = event.payload else {
+                panic!("expected Ask event");
+            };
             request.responder.send(vec!["blue".to_string()]).unwrap();
         });
 
         let mut ctx = ToolContext::new(std::env::temp_dir());
-        ctx.ask_tx = Some(ask_tx);
+        ctx.interactive = true;
+        ctx.events = Some(crate::core::event::SessionEventSender::new(
+            "session-test",
+            crate::core::session::AgentKind::Main,
+            bus_tx,
+        ));
         let result = QuestionTool
             .execute(
                 ToolParams::new(serde_json::json!({

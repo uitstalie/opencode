@@ -2,6 +2,7 @@ pub mod agent;
 pub mod compaction;
 pub mod config;
 pub mod crypto;
+pub mod event;
 pub mod memory;
 pub mod models_dev;
 pub mod paths;

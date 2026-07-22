@@ -164,21 +164,9 @@ impl ToolResult {
     }
 }
 
-/// A request from a tool (e.g. `question`) for interactive user input.
-/// The tool sends this over `ToolContext.ask_tx`, then blocks on `responder`
-/// until the UI collects answers (one string per sub-question).
-pub struct AskRequest {
-    pub questions: serde_json::Value,
-    pub responder: std::sync::mpsc::Sender<Vec<String>>,
-}
-
-/// A request to confirm a permission-gated tool invocation. The tool sends this
-/// over `ToolContext.permission_tx` and blocks on `responder` (true = allow).
-pub struct PermissionRequest {
-    pub tool: String,
-    pub detail: String,
-    pub responder: std::sync::mpsc::Sender<bool>,
-}
+/// Interactive request types live in core (they travel on the session event
+/// bus); re-exported here for tool authors' convenience.
+pub use crate::core::event::{AskRequest, PermissionRequest};
 
 #[derive(Clone)]
 pub struct ToolContext {
@@ -190,11 +178,10 @@ pub struct ToolContext {
     /// Session identity for tools that persist state (todowrite).
     pub session_id: Option<String>,
     pub store: Option<crate::core::session::SessionStore>,
-    /// Channel for tools that need to ask the user a question (question).
-    /// `None` in non-interactive contexts.
-    pub ask_tx: Option<std::sync::mpsc::Sender<AskRequest>>,
-    /// Channel for interactive permission confirmation. `None` disables prompts.
-    pub permission_tx: Option<std::sync::mpsc::Sender<PermissionRequest>>,
+    /// Session event bus sender, tagged with this agent's session identity.
+    /// Tools emit Ask/Permission/Progress events here. `None` disables
+    /// interactive prompts and progress reporting.
+    pub events: Option<crate::core::event::SessionEventSender>,
     /// LLM access for tools that run a nested agent loop (task).
     pub llm: Option<Arc<dyn crate::core::provider::LlmProvider>>,
     pub model: Option<String>,
@@ -204,9 +191,9 @@ pub struct ToolContext {
     /// Per-turn abort flag (ESC). Propagated into sub-agent loops so the
     /// user can interrupt a running sub-agent.
     pub abort: Option<Arc<std::sync::atomic::AtomicBool>>,
-    /// Channel for sub-agent progress feedback. When `run_agent` sends a
-    /// short status string here, the TUI displays it live.
-    pub progress_tx: Option<std::sync::mpsc::Sender<String>>,
+    /// Persist ephemeral sub-agent / background session histories for
+    /// debugging (config `persist_agent_sessions`).
+    pub persist_agent_sessions: bool,
     /// Tool presets for resolving agent `tools` specs (config overlay + builtins).
     pub presets: std::collections::HashMap<String, Vec<String>>,
 }
@@ -221,14 +208,13 @@ impl ToolContext {
             undo_store: None,
             session_id: None,
             store: None,
-            ask_tx: None,
-            permission_tx: None,
+            events: None,
             llm: None,
             model: None,
             reasoning_effort: None,
             shutdown: None,
             abort: None,
-            progress_tx: None,
+            persist_agent_sessions: false,
             presets: std::collections::HashMap::new(),
         }
     }
@@ -315,23 +301,19 @@ pub trait Tool: Send + Sync {
             Decision::Allow => self.execute(params, ctx).await,
             Decision::Deny(reason) => ToolResult::error(reason),
             Decision::Ask(reason) => {
-                let Some(permission_tx) = &ctx.permission_tx else {
+                // Only interactive agents may raise permission prompts;
+                // background agents have no one to answer them.
+                let Some(events) = ctx.events.as_ref().filter(|_| ctx.interactive) else {
                     return ToolResult::error(format!("{}: {} (denied)", self.name(), reason));
                 };
                 let (responder, decision_rx) = std::sync::mpsc::channel();
-                if permission_tx
-                    .send(PermissionRequest {
+                events.send(crate::core::event::EventPayload::Permission(
+                    PermissionRequest {
                         tool: self.name().to_string(),
                         detail: reason.clone(),
                         responder,
-                    })
-                    .is_err()
-                {
-                    return ToolResult::error(format!(
-                        "{}: permission UI unavailable",
-                        self.name()
-                    ));
-                }
+                    },
+                ));
                 match decision_rx.recv() {
                     Ok(true) => self.execute(params, ctx).await,
                     _ => ToolResult::error(format!("{}: denied by user", self.name())),

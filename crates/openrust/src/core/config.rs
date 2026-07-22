@@ -50,6 +50,11 @@ pub struct Config {
     #[serde(default)]
     pub search_engine: Option<String>,
 
+    /// Persist ephemeral sub-agent / background session histories for
+    /// debugging. Defaults to true; disable once the event bus is stable.
+    #[serde(default = "default_persist_agent_sessions")]
+    pub persist_agent_sessions: bool,
+
     /// Providers that came from user config files (or explicit /connect
     /// edits), recorded before static builtins and the models.dev catalog
     /// are overlaid. `save_to_file` writes only these back — merged-in
@@ -826,8 +831,11 @@ pub fn parse_model_spec(spec: &str) -> (&str, &str, Option<&str>) {
 }
 
 /// Default context window sizes for well-known models when config is absent.
-pub fn default_context_window(model: &str) -> u64 {
-    let lower = model.to_lowercase();
+fn default_persist_agent_sessions() -> bool {
+    true
+}
+
+pub fn default_context_window(model: &str) -> u64 {    let lower = model.to_lowercase();
     if lower.contains("gpt-4") || lower.contains("gpt-4o") { return 128_000 }
     if lower.contains("claude-3") || lower.contains("claude-4") || lower.contains("sonnet") || lower.contains("opus") { return 200_000 }
     if lower.contains("deepseek-v3") || lower.contains("deepseek-v4") { return 128_000 }
@@ -1062,6 +1070,7 @@ mod tests {
             model: None,
             theme: None,
             search_engine: None,
+            persist_agent_sessions: true,
             background_model: None,
             provider: HashMap::from([(
                 "shared".to_string(),
@@ -1082,6 +1091,7 @@ mod tests {
             model: Some("shared/project-model".to_string()),
             theme: None,
             search_engine: None,
+            persist_agent_sessions: true,
             background_model: None,
             provider: HashMap::from([(
                 "shared".to_string(),
@@ -1192,6 +1202,7 @@ mod tests {
             model: Some("config-only-provider/deepseek-v4-pro".to_string()),
             theme: None,
             search_engine: None,
+            persist_agent_sessions: true,
             background_model: None,
             provider: HashMap::from([(
                 "config-only-provider".to_string(),

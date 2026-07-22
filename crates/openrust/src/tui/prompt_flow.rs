@@ -59,9 +59,13 @@ impl SessionView {
             self.config.presets.clone(),
             self.current_context_window(),
             self.config.resolve_output_tokens(),
+            self.bus_tx.clone(),
+            self.config.persist_agent_sessions,
         ));
         while self.prompt_job.is_some() {
             self.pump_prompt_job_for_stdout(stdout)?;
+            // Avoid busy-polling at 100% CPU for the whole turn.
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
         Ok(())
     }
@@ -129,12 +133,32 @@ impl SessionView {
     }
 
     pub(super) fn pump_prompt_job_for_stdout(&mut self, stdout: &mut io::Stdout) -> anyhow::Result<()> {
-        let (events, latest_progress) = self.drain_prompt_events();
+        let events = self.drain_session_events();
 
         let mut finished = false;
         let mut needs_render = false;
         for event in events {
-            match event {
+            let prompt_event = match event.payload {
+                super::EventPayload::Prompt(e) => e,
+                super::EventPayload::Ask(request) => {
+                    // Headless is non-interactive; never leave a tool hanging.
+                    let _ = request.responder.send(vec!["(non-interactive)".to_string()]);
+                    continue;
+                }
+                super::EventPayload::Permission(request) => {
+                    let _ = request.responder.send(false);
+                    continue;
+                }
+                super::EventPayload::Progress(msg) => {
+                    if self.ai_running {
+                        self.status = msg;
+                        needs_render = true;
+                    }
+                    continue;
+                }
+                super::EventPayload::Done { .. } => continue,
+            };
+            match prompt_event {
                 super::PromptEvent::AssistantDelta(text) => {
                     if let Some(start) = self.thinking_start.take() {
                         self.thought_duration = Some(start.elapsed());
@@ -240,13 +264,6 @@ impl SessionView {
             }
         }
 
-        if let Some(msg) = latest_progress
-            && self.ai_running
-        {
-            self.status = msg;
-            needs_render = true;
-        }
-
         if needs_render {
             self.render(stdout, Some(&self.status))?;
         }
@@ -300,6 +317,8 @@ impl SessionView {
             self.config.presets.clone(),
             self.current_context_window(),
             self.config.resolve_output_tokens(),
+            self.bus_tx.clone(),
+            self.config.persist_agent_sessions,
         ));
         Ok(())
     }

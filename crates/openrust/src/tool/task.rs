@@ -6,9 +6,40 @@ use crate::core::agent;
 use crate::core::provider::{
     self, LlmProvider, Message, MessageContent, RequestOptions, StreamChunk, ToolDef, ToolFunction,
 };
+use crate::core::session::{AgentKind, SessionStore};
 use crate::require_str;
 use crate::tool::{Tool, ToolContext, ToolParams, ToolResult, catalog, run_tool};
 use serde_json::Value;
+
+/// Generate a session id for an ephemeral agent session (`sub-*` / `bg-*`).
+pub fn agent_session_id(kind: AgentKind) -> String {
+    let prefix = match kind {
+        AgentKind::SubAgent => "sub",
+        AgentKind::Background => "bg",
+        AgentKind::Main => "session",
+    };
+    let micros = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros();
+    format!("{prefix}-{micros}")
+}
+
+/// Create and register an ephemeral agent session for history persistence.
+/// Returns `None` when persistence is disabled or no store is available.
+pub fn create_agent_session(
+    store: Option<&SessionStore>,
+    persist_enabled: bool,
+    kind: AgentKind,
+    parent: Option<&str>,
+) -> Option<String> {
+    let store = store.filter(|_| persist_enabled && kind != AgentKind::Main)?;
+    let id = agent_session_id(kind);
+    store
+        .ensure_session_kind(&id, kind, parent.map(str::to_string))
+        .ok()?;
+    Some(id)
+}
 
 pub struct TaskTool;
 
@@ -53,17 +84,32 @@ impl Tool for TaskTool {
             ));
         };
 
-        // Sub-agent context: no LLM (prevents recursive task), no interactive
-        // channels, no session store (prevents overwriting parent's TODO list).
+        // Sub-agent gets its own ephemeral session anchoring its context and
+        // history (persisted for debugging when enabled). No LLM (prevents
+        // recursive task), non-interactive, no store in ctx (keeps the
+        // parent's TODO list isolated).
+        let sub_id = agent_session_id(AgentKind::SubAgent);
+        let persist = match (&ctx.store, ctx.persist_agent_sessions) {
+            (Some(store), true) => {
+                let _ = store.ensure_session_kind(
+                    &sub_id,
+                    AgentKind::SubAgent,
+                    ctx.session_id.clone(),
+                );
+                Some((store.clone(), sub_id.clone()))
+            }
+            _ => None,
+        };
         let sub_ctx = ToolContext {
             llm: None,
-            ask_tx: None,
-            permission_tx: None,
             interactive: false,
             store: None,
             session_id: None,
             abort: ctx.abort.clone(),
-            progress_tx: ctx.progress_tx.clone(),
+            events: ctx
+                .events
+                .as_ref()
+                .map(|e| e.child(sub_id.clone(), AgentKind::SubAgent)),
             ..ctx.clone()
         };
 
@@ -78,6 +124,7 @@ impl Tool for TaskTool {
             ctx.reasoning_effort.as_deref(),
             initial,
             &sub_ctx,
+            persist,
         )
         .await
         {
@@ -93,6 +140,10 @@ impl Tool for TaskTool {
 
 /// Run a headless agent loop (no UI events): stream, execute tools locally, feed
 /// results back, and repeat until the model finishes. Returns the final text.
+///
+/// `persist` optionally anchors the run to an ephemeral session: committed
+/// messages are appended to `(store, session_id)` so sub-agent / background
+/// histories can be inspected later.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_agent(
     llm: &dyn LlmProvider,
@@ -103,6 +154,7 @@ pub async fn run_agent(
     reasoning_effort: Option<&str>,
     initial: Vec<Message>,
     tool_ctx: &ToolContext,
+    persist: Option<(SessionStore, String)>,
 ) -> anyhow::Result<String> {
     let allowed = catalog::resolve_tool_names(tool_spec, &tool_ctx.presets, true);
     let tool_defs: Vec<ToolDef> = allowed
@@ -123,10 +175,29 @@ pub async fn run_agent(
     let mut step_count: u32 = 0;
 
     let send_progress = |msg: String| {
-        if let Some(tx) = &tool_ctx.progress_tx {
-            let _ = tx.send(msg);
+        if let Some(events) = &tool_ctx.events {
+            events.progress(msg);
         }
     };
+    let persist_msg = |role: &str,
+                       content: &str,
+                       name: Option<String>,
+                       tool_call_id: Option<String>,
+                       tool_calls: Option<serde_json::Value>| {
+        if let Some((store, session_id)) = &persist {
+            let _ = store.append_message_detail(
+                session_id,
+                role,
+                content,
+                name,
+                tool_call_id,
+                tool_calls,
+            );
+        }
+    };
+    for message in &history {
+        persist_msg(&message.role, &message.content.as_text(), None, None, None);
+    }
     let is_cancelled = || {
         if let Some(flag) = &tool_ctx.shutdown
             && flag.load(std::sync::atomic::Ordering::SeqCst)
@@ -276,6 +347,13 @@ pub async fn run_agent(
 
         if !executed_calls.is_empty() {
             last_assistant = assistant_text.clone();
+            persist_msg(
+                "assistant",
+                &assistant_text,
+                None,
+                None,
+                serde_json::to_value(&executed_calls).ok(),
+            );
             history.push(Message {
                 role: "assistant".to_string(),
                 content: MessageContent::text(assistant_text.clone()),
@@ -284,6 +362,7 @@ pub async fn run_agent(
                 tool_calls: Some(executed_calls),
             });
             for (call_id, output) in &tool_outputs {
+                persist_msg("tool", output, None, Some(call_id.clone()), None);
                 history.push(Message::tool(output.clone(), call_id.clone()));
             }
             continue;
@@ -291,6 +370,7 @@ pub async fn run_agent(
 
         if !assistant_text.trim().is_empty() {
             last_assistant = assistant_text.clone();
+            persist_msg("assistant", &assistant_text, None, None, None);
             history.push(Message::assistant(assistant_text));
         }
 
@@ -378,6 +458,68 @@ mod tests {
         fn name(&self) -> &str {
             "fake"
         }
+    }
+
+    #[tokio::test]
+    async fn run_agent_persists_ephemeral_session_history() {
+        struct TextProvider;
+
+        #[async_trait::async_trait]
+        impl LlmProvider for TextProvider {
+            async fn chat(
+                &self,
+                _messages: Vec<Message>,
+                _tools: Vec<ToolDef>,
+                _options: RequestOptions,
+            ) -> anyhow::Result<provider::ChunkStream> {
+                Ok(Box::pin(futures::stream::iter(vec![
+                    Ok(StreamChunk::TextDelta("final answer".to_string())),
+                    Ok(StreamChunk::Finish { usage: None, reason: None }),
+                ])))
+            }
+
+            fn list_models(&self) -> Vec<String> {
+                vec!["fake-model".to_string()]
+            }
+
+            fn name(&self) -> &str {
+                "fake"
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::open_at(dir.path()).unwrap();
+        store
+            .ensure_session_kind("sub-test", AgentKind::SubAgent, Some("session-main".to_string()))
+            .unwrap();
+        let ctx = ToolContext::new(dir.path().to_path_buf());
+
+        let output = run_agent(
+            &TextProvider,
+            "fake-model",
+            "system",
+            "none",
+            5,
+            None,
+            vec![Message::user("hello")],
+            &ctx,
+            Some((store.clone(), "sub-test".to_string())),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(output, "final answer");
+        let messages = store.get_messages("sub-test").unwrap();
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.role == "user" && m.content == "hello")
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.role == "assistant" && m.content == "final answer")
+        );
     }
 
     #[tokio::test]

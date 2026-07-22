@@ -7,7 +7,9 @@ use super::util::now_micros;
 use super::{SessionView, ViewMode};
 use crate::core::agent;
 use crate::core::compaction;
+use crate::core::event::SessionEventSender;
 use crate::core::provider::{self, Message, MessageContent};
+use crate::core::session::{AgentKind, SessionStore};
 
 /// Lazily-initialized shared tokio runtime for fire-and-forget background
 /// threads (title, summary, compaction). Avoids creating a new `Runtime`
@@ -23,6 +25,29 @@ fn shared_runtime() -> Option<&'static tokio::runtime::Runtime> {
 }
 
 impl SessionView {
+    /// Prepare a background agent session: a bus sender tagged with the new
+    /// session id plus an optional persistence anchor (store + session id)
+    /// when `persist_agent_sessions` is enabled.
+    pub(super) fn bg_session_anchor(
+        &self,
+    ) -> (SessionEventSender, Option<(SessionStore, String)>) {
+        let id = crate::tool::task::agent_session_id(AgentKind::Background);
+        let persist = match (&self.store, self.config.persist_agent_sessions) {
+            (Some(store), true) => {
+                let _ = store.ensure_session_kind(
+                    &id,
+                    AgentKind::Background,
+                    Some(self.session_id.clone()),
+                );
+                Some((store.clone(), id.clone()))
+            }
+            _ => None,
+        };
+        let events =
+            SessionEventSender::new(id, AgentKind::Background, self.bus_tx.clone());
+        (events, persist)
+    }
+
     pub(super) fn create_session(&mut self) {
         self.session_id = format!("session-{}", now_micros());
         self.messages.clear();
@@ -258,11 +283,13 @@ impl SessionView {
                 .collect::<Vec<_>>()
                 .join("\n");
             let cwd = self.cwd.clone();
+            let (events, persist) = self.bg_session_anchor();
             self.status = "compacting...".to_string();
 
             std::thread::spawn(move || {
                 let Some(rt) = shared_runtime() else {
                     tracing::error!("failed to create background runtime");
+                    events.done(Err("compaction failed: no runtime".to_string()));
                     return;
                 };
                 let system = agent::builtin_agent_system("compaction")
@@ -281,6 +308,7 @@ impl SessionView {
                     None,
                     vec![provider::Message::user(prompt)],
                     &crate::tool::ToolContext::new(cwd),
+                    persist,
                 ));
                 match result {
                     Ok(summary) if !summary.trim().is_empty() => {
@@ -290,9 +318,14 @@ impl SessionView {
                             recent_text,
                         );
                         let _ = store_clone.flush();
+                        events.done(Ok("compaction checkpoint saved".to_string()));
                     }
-                    _ => {
+                    Ok(_) => {
                         tracing::warn!("compaction LLM returned empty result, skipping checkpoint");
+                        events.done(Err("compaction returned empty result".to_string()));
+                    }
+                    Err(e) => {
+                        events.done(Err(format!("compaction failed: {e}")));
                     }
                 }
             });
@@ -353,6 +386,7 @@ impl SessionView {
             return;
         };
         let cwd = self.cwd.clone();
+        let (events, persist) = self.bg_session_anchor();
 
         std::thread::spawn(move || {
             let Some(rt) = shared_runtime() else {
@@ -371,13 +405,18 @@ impl SessionView {
                 None,
                 vec![provider::Message::user(user_text)],
                 &crate::tool::ToolContext::new(cwd),
+                persist,
             ));
-            if let Ok(title) = result {
-                let title = title.trim().chars().take(50).collect::<String>();
-                if !title.is_empty() {
-                    let _ = store.set_title(&session_id, title);
-                    let _ = store.flush();
+            match result {
+                Ok(title) => {
+                    let title = title.trim().chars().take(50).collect::<String>();
+                    if !title.is_empty() {
+                        let _ = store.set_title(&session_id, title);
+                        let _ = store.flush();
+                    }
+                    events.done(Ok(String::new()));
                 }
+                Err(e) => events.done(Err(format!("title generation failed: {e}"))),
             }
         });
     }
@@ -402,6 +441,7 @@ impl SessionView {
             .collect::<Vec<_>>()
             .join("\n");
         let cwd = self.cwd.clone();
+        let (events, persist) = self.bg_session_anchor();
 
         std::thread::spawn(move || {
             let Some(rt) = shared_runtime() else {
@@ -420,13 +460,18 @@ impl SessionView {
                 None,
                 vec![provider::Message::user(conversation)],
                 &crate::tool::ToolContext::new(cwd),
+                persist,
             ));
-            if let Ok(summary) = result {
-                let summary = summary.trim().to_string();
-                if !summary.is_empty() {
-                    let _ = store.set_summary(&session_id, summary);
-                    let _ = store.flush();
+            match result {
+                Ok(summary) => {
+                    let summary = summary.trim().to_string();
+                    if !summary.is_empty() {
+                        let _ = store.set_summary(&session_id, summary);
+                        let _ = store.flush();
+                    }
+                    events.done(Ok(String::new()));
                 }
+                Err(e) => events.done(Err(format!("summary generation failed: {e}"))),
             }
         });
     }
@@ -628,6 +673,7 @@ impl SessionView {
             .join("\n");
         let cwd = self.cwd.clone();
         let store_clone = store.clone();
+        let (events, persist) = self.bg_session_anchor();
 
         std::thread::spawn(move || {
             // Stagger to avoid competing with title/summary on the same LLM window
@@ -649,6 +695,7 @@ impl SessionView {
                 None,
                 vec![provider::Message::user(conversation)],
                 &crate::tool::ToolContext::new(cwd),
+                persist,
             ));
 
             // Advance watermark regardless of success/failure so we don't
@@ -656,8 +703,12 @@ impl SessionView {
             let _ = store_clone.set_memory_watermark(&session_id, last_seq);
             let _ = store_clone.flush();
 
-            if let Err(e) = result {
-                tracing::warn!("memory extraction failed: {e}");
+            match result {
+                Ok(_) => events.done(Ok(String::new())),
+                Err(e) => {
+                    tracing::warn!("memory extraction failed: {e}");
+                    events.done(Err(format!("memory extraction failed: {e}")));
+                }
             }
         });
     }
@@ -721,6 +772,7 @@ impl SessionView {
 
         let cwd = self.cwd.clone();
         let session_count = sessions.len();
+        let (events, persist) = self.bg_session_anchor();
         self.status = "dreaming...".to_string();
         self.note(format!(
             "dreaming: analyzing {} session(s) in background...",
@@ -730,6 +782,7 @@ impl SessionView {
         std::thread::spawn(move || {
             let Some(rt) = shared_runtime() else {
                 tracing::error!("failed to create background runtime");
+                events.done(Err("dreaming failed: no runtime".to_string()));
                 return;
             };
             let system = agent::builtin_agent_system("dreaming")
@@ -749,9 +802,14 @@ impl SessionView {
                 None,
                 vec![provider::Message::user(prompt)],
                 &crate::tool::ToolContext::new(cwd),
+                persist,
             ));
-            if let Err(e) = result {
-                tracing::warn!("dreaming failed: {e}");
+            match result {
+                Ok(_) => events.done(Ok("dreaming done".to_string())),
+                Err(e) => {
+                    tracing::warn!("dreaming failed: {e}");
+                    events.done(Err(format!("dreaming failed: {e}")));
+                }
             }
         });
     }

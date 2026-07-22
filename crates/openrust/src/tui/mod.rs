@@ -21,6 +21,7 @@ use tui_textarea::TextArea;
 
 use crate::core::{
     config::Config,
+    event::{EventPayload, PromptEvent, SessionEvent},
     provider::{self, Message, MessageContent},
     session::SessionStore,
 };
@@ -59,7 +60,7 @@ use util::*;
 use dialog::{Dialog, DialogKind, slash_options};
 use input::{load_script};
 use render::{DisplayMessage, Theme, display_message_lines};
-use worker::{PromptEvent, PromptJob, SessionRuntimeGuard, spawn_prompt_worker};
+use worker::{PromptJob, SessionRuntimeGuard, spawn_prompt_worker};
 
 pub fn run(script: Option<PathBuf>, prompt: Option<String>) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
@@ -143,6 +144,10 @@ struct SessionView {
     diff_visible: bool,
     last_diff: Option<(String, String, String)>,
     prompt_job: Option<PromptJob>,
+    /// Session event bus: workers, sub-agents, and background tasks all
+    /// publish here; the pump drains `bus_rx` and routes by session tag.
+    bus_tx: mpsc::Sender<SessionEvent>,
+    bus_rx: mpsc::Receiver<SessionEvent>,
     /// In-flight tool calls awaiting results, shown live with a spinner.
     pending_tool_calls: Vec<PendingTool>,
     shutdown: Arc<AtomicBool>,
@@ -192,6 +197,14 @@ impl SessionView {
                 Ok(n) => tracing::info!(count = n, max_age_days = 30, "cleaned old sessions"),
                 Err(e) => tracing::error!(err = %e, "cleanup_old_sessions failed"),
             }
+            // GC persisted ephemeral agent sessions (sub-agent / background
+            // debug histories) after 7 days.
+            let agent_cleanup_age = 7 * 24 * 60 * 60;
+            match store.cleanup_agent_sessions(agent_cleanup_age) {
+                Ok(0) => {}
+                Ok(n) => tracing::info!(count = n, max_age_days = 7, "cleaned old agent sessions"),
+                Err(e) => tracing::error!(err = %e, "cleanup_agent_sessions failed"),
+            }
         }
         // Load initial task list for TODO panel
         let initial_tasks = store
@@ -200,6 +213,7 @@ impl SessionView {
             .unwrap_or_default();
         let initial_task_count = initial_tasks.len();
         let theme = theme::resolve(config.theme.as_ref());
+        let (bus_tx, bus_rx) = crate::core::event::session_bus();
         Self {
             provider_name,
             model,
@@ -242,6 +256,8 @@ impl SessionView {
             diff_visible: false,
             last_diff: None,
             prompt_job: None,
+            bus_tx,
+            bus_rx,
             pending_tool_calls: Vec::new(),
             shutdown: Arc::new(AtomicBool::new(false)),
             abort: Arc::new(AtomicBool::new(false)),
@@ -335,8 +351,6 @@ impl SessionView {
 
         loop {
             let mut needs_render = self.pump_prompt_job()?;
-            needs_render |= self.poll_ask_request();
-            needs_render |= self.poll_permission_request();
             if self.sidebar_visible
                 && let Some(tree) = &mut self.sidebar {
                     needs_render |= tree.poll_refresh();
@@ -506,27 +520,16 @@ impl SessionView {
         ));
     }
 
-    /// Drain events from the prompt job receiver.
-    fn drain_prompt_events(&self) -> (Vec<PromptEvent>, Option<String>) {
-        let Some(job) = &self.prompt_job else {
-            return (Vec::new(), None);
-        };
-
+    /// Drain events from the session event bus.
+    fn drain_session_events(&self) -> Vec<SessionEvent> {
         let mut events = Vec::new();
         loop {
-            match job.receiver.try_recv() {
+            match self.bus_rx.try_recv() {
                 Ok(event) => events.push(event),
-                Err(mpsc::TryRecvError::Empty) => break,
-                Err(mpsc::TryRecvError::Disconnected) => break,
+                Err(mpsc::TryRecvError::Empty) | Err(mpsc::TryRecvError::Disconnected) => break,
             }
         }
-
-        let mut latest_progress: Option<String> = None;
-        while let Ok(msg) = job.progress_rx.try_recv() {
-            latest_progress = Some(msg);
-        }
-
-        (events, latest_progress)
+        events
     }
 
     /// Handle thinking preview state changes.
@@ -597,11 +600,32 @@ impl SessionView {
     fn pump_prompt_job(
         &mut self,
     ) -> anyhow::Result<bool> {
-        let (events, latest_progress) = self.drain_prompt_events();
+        let events = self.drain_session_events();
 
         let mut needs_render = false;
         for event in events {
-            match event {
+            match event.payload {
+                EventPayload::Ask(request) => {
+                    needs_render |= self.handle_ask_request(request);
+                }
+                EventPayload::Permission(request) => {
+                    needs_render |= self.handle_permission_request(request);
+                }
+                EventPayload::Progress(msg) => {
+                    if self.ai_running {
+                        self.status = msg;
+                        needs_render = true;
+                    }
+                }
+                EventPayload::Done { result } => {
+                    match result {
+                        Ok(msg) if !msg.is_empty() => self.note(msg),
+                        Err(err) => self.note_error(err),
+                        _ => {}
+                    }
+                    needs_render = true;
+                }
+                EventPayload::Prompt(event) => match event {
                 PromptEvent::AssistantDelta(text) => {
                     if let Some(start) = self.thinking_start.take() {
                         self.thought_duration = Some(start.elapsed());
@@ -717,14 +741,8 @@ impl SessionView {
                     self.status = msg;
                     needs_render = true;
                 }
+                },
             }
-        }
-
-        if let Some(msg) = latest_progress
-            && self.ai_running
-        {
-            self.status = msg;
-            needs_render = true;
         }
 
         Ok(needs_render)

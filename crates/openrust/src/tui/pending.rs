@@ -2,23 +2,20 @@
 
 use crossterm::event::{self, KeyCode};
 
+use crate::core::event::{AskRequest, PermissionRequest};
+
 use super::util::{char_column_to_byte_index, normalize_single_line_text, single_line_textarea, textarea_input_from_key_event};
 use super::{PendingPermission, PendingQuestion, SessionView};
 
 impl SessionView {
-    pub(super) fn poll_permission_request(&mut self) -> bool {
+    pub(super) fn handle_permission_request(&mut self, request: PermissionRequest) -> bool {
         if self.ui.pending_permission.is_some() {
+            // A dialog is already open; deny the extra request so the tool
+            // doesn't block forever (the worker is sequential, so this is
+            // unexpected but must not deadlock).
+            let _ = request.responder.send(false);
             return false;
         }
-        let request = {
-            let Some(job) = &self.prompt_job else {
-                return false;
-            };
-            match job.permission_receiver.try_recv() {
-                Ok(request) => request,
-                Err(_) => return false,
-            }
-        };
         self.ui.pending_permission = Some(PendingPermission {
             responder: request.responder,
             tool: request.tool,
@@ -122,19 +119,11 @@ impl SessionView {
         self.cursor_index = char_column_to_byte_index(&self.input, self.input_editor.cursor().1);
     }
 
-    pub(super) fn poll_ask_request(&mut self) -> bool {
+    pub(super) fn handle_ask_request(&mut self, request: AskRequest) -> bool {
         if self.ui.pending_question.is_some() {
+            let _ = request.responder.send(vec!["(busy)".to_string()]);
             return false;
         }
-        let request = {
-            let Some(job) = &self.prompt_job else {
-                return false;
-            };
-            match job.ask_receiver.try_recv() {
-                Ok(request) => request,
-                Err(_) => return false,
-            }
-        };
         self.ui.pending_question = PendingQuestion::from_request(request);
         if self.ui.pending_question.is_some() {
             self.status = "question: awaiting your answer".to_string();
