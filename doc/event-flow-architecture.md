@@ -396,7 +396,7 @@ match (event.kind, event.payload) {
 | 4 | auto-compaction 历史分歧 | ✅ 已修复 | worker 压缩后发 `Compacted` 事件；TUI 从 store 重建历史（`compaction_window`：最近 checkpoint 前 3 条全量消息 → 对话结束），三方数据源对齐 |
 | 5 | 两个 pump 重复 | 🟡 部分修复 | 总线 demux（Ask/Permission/Progress/Done）已共享；`Prompt` 渲染分支仍 TUI/headless 各一份 |
 | 6 | headless 忙轮询 | ✅ 已修复 | 10ms sleep |
-| 7 | 每次 LLM 调用克隆完整历史 | ❌ 仍存在 | `llm.chat(history.clone(), ...)` |
+| 7 | 每次 LLM 调用克隆完整历史 | ✅ 已修复 | `LlmProvider::chat` 改为借用 `&[Message]`/`&[ToolDef]`，调用点零拷贝 |
 | 8 | delta 无合并、无背压 | 🟡 缓解 | 渲染侧已被帧合并封顶 60fps；但 worker 仍每 delta 一个事件，channel 仍无界 |
 | 9 | sidebar dirty 时 UI 线程全量重扫描 | ❌ 仍存在 | 现在挂在 Tick 上执行，仍是 UI 线程同步扫描 |
 | 10 | 后台线程对 UI 不可见 | ✅ 已修复 | `Done` 事件 + toast |

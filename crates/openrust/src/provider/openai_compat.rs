@@ -40,8 +40,8 @@ impl OpenAICompatProvider {
 impl LlmProvider for OpenAICompatProvider {
     async fn chat(
         &self,
-        messages: Vec<Message>,
-        tools: Vec<crate::core::provider::ToolDef>,
+        messages: &[Message],
+        tools: &[crate::core::provider::ToolDef],
         options: RequestOptions,
     ) -> anyhow::Result<ChunkStream> {
         let url = format!("{}/chat/completions", self.base.base_url);

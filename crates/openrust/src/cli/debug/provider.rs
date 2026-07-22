@@ -99,8 +99,8 @@ pub fn run(cmd: Cmd) -> anyhow::Result<()> {
 
                 let mut stream = provider
                     .chat(
-                        messages,
-                        vec![],
+                        &messages,
+                        &[],
                         crate::core::provider::RequestOptions {
                             model: model_id,
                             temperature: None,

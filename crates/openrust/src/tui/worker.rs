@@ -281,8 +281,8 @@ pub(super) fn spawn_prompt_worker(
                     }
 
                     let chat = llm.chat(
-                        history.clone(),
-                        tool_defs.clone(),
+                        &history,
+                        &tool_defs,
                         RequestOptions {
                             model: model.clone(),
                             temperature: None,

@@ -249,11 +249,13 @@ pub type ChunkStream = Pin<Box<dyn Stream<Item = anyhow::Result<StreamChunk>> + 
 
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
-    /// Send a chat completion request, returning a stream of chunks
+    /// Send a chat completion request, returning a stream of chunks.
+    /// Messages and tools are borrowed — providers serialize without
+    /// taking ownership, avoiding an O(history) clone per call.
     async fn chat(
         &self,
-        messages: Vec<Message>,
-        tools: Vec<ToolDef>,
+        messages: &[Message],
+        tools: &[ToolDef],
         options: RequestOptions,
     ) -> anyhow::Result<ChunkStream>;
 

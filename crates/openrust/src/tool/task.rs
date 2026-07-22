@@ -241,8 +241,8 @@ pub async fn run_agent(
             if is_cancelled() { return Ok(last_assistant); }
 
             let chat = llm.chat(
-                history.clone(),
-                tool_defs.clone(),
+                &history,
+                &tool_defs,
                 RequestOptions {
                     model: model.to_string(),
                     temperature: None,
@@ -419,8 +419,8 @@ mod tests {
     impl LlmProvider for FakeProvider {
         async fn chat(
             &self,
-            messages: Vec<Message>,
-            _tools: Vec<ToolDef>,
+            messages: &[Message],
+            _tools: &[ToolDef],
             _options: RequestOptions,
         ) -> anyhow::Result<provider::ChunkStream> {
             let mut calls = self.calls.lock().unwrap();
@@ -473,8 +473,8 @@ mod tests {
         impl LlmProvider for TextProvider {
             async fn chat(
                 &self,
-                _messages: Vec<Message>,
-                _tools: Vec<ToolDef>,
+                _messages: &[Message],
+                _tools: &[ToolDef],
                 _options: RequestOptions,
             ) -> anyhow::Result<provider::ChunkStream> {
                 Ok(Box::pin(futures::stream::iter(vec![

@@ -40,8 +40,8 @@ impl AnthropicProvider {
 impl LlmProvider for AnthropicProvider {
     async fn chat(
         &self,
-        messages: Vec<Message>,
-        tools: Vec<crate::core::provider::ToolDef>,
+        messages: &[Message],
+        tools: &[crate::core::provider::ToolDef],
         options: RequestOptions,
     ) -> anyhow::Result<ChunkStream> {
         let url = format!("{}/messages", self.base.base_url);
@@ -49,7 +49,7 @@ impl LlmProvider for AnthropicProvider {
         // Split system messages from conversation messages and transform to Anthropic format.
         let mut system_text = String::new();
         let mut conv: Vec<&Message> = Vec::new();
-        for msg in &messages {
+        for msg in messages {
             if msg.role == "system" {
                 if !system_text.is_empty() {
                     system_text.push_str("\n\n");

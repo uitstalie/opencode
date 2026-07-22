@@ -197,14 +197,14 @@ impl SessionView {
         let result = rt.block_on(async {
                 let mut stream = provider
                     .chat(
-                        vec![Message {
+                        &[Message {
                             role: "user".to_string(),
                             content: MessageContent::text("reply ok"),
                             name: None,
                             tool_call_id: None,
                             tool_calls: None,
                         }],
-                        vec![],
+                        &[],
                         RequestOptions {
                             model,
                             temperature: None,

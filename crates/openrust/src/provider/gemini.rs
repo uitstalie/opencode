@@ -41,8 +41,8 @@ impl GeminiProvider {
 impl LlmProvider for GeminiProvider {
     async fn chat(
         &self,
-        messages: Vec<Message>,
-        tools: Vec<crate::core::provider::ToolDef>,
+        messages: &[Message],
+        tools: &[crate::core::provider::ToolDef],
         options: RequestOptions,
     ) -> anyhow::Result<ChunkStream> {
         let url = format!(
@@ -52,7 +52,7 @@ impl LlmProvider for GeminiProvider {
 
         let mut system_text = String::new();
         let mut conv: Vec<&Message> = Vec::new();
-        for msg in &messages {
+        for msg in messages {
             if msg.role == "system" {
                 if !system_text.is_empty() {
                     system_text.push_str("\n\n");
