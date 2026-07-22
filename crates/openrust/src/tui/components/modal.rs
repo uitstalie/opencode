@@ -177,10 +177,14 @@ fn render_dialog_panel(view: &SessionView, frame: &mut Frame, area: Rect, dialog
 fn question_widget(view: &SessionView, q: &PendingQuestion) -> Paragraph<'static> {
     let theme = &view.theme;
     let item = q.item();
-    let title = if item.header.is_empty() {
-        format!(" Question {}/{} ", q.current + 1, q.items.len())
+    let base_title = if item.header.is_empty() {
+        format!("Question {}/{}", q.current + 1, q.items.len())
     } else {
-        format!(" {} ({}/{}) ", item.header, q.current + 1, q.items.len())
+        format!("{} ({}/{})", item.header, q.current + 1, q.items.len())
+    };
+    let title = match q.origin {
+        "main" => format!(" {base_title} "),
+        origin => format!(" {base_title} · {origin} "),
     };
 
     // Confirm sub-page: review the chosen options (incl. custom text).
@@ -340,7 +344,10 @@ fn permission_widget(view: &SessionView, permission: &PendingPermission) -> Para
     Paragraph::new(lines)
         .block(
             Block::default()
-                .title(" Permission ")
+                .title(match permission.origin {
+                    "main" => " Permission ".to_string(),
+                    origin => format!(" Permission · {origin} "),
+                })
                 .title_alignment(ratatui::layout::Alignment::Center)
                 .title_style(theme.title_style())
                 .borders(Borders::ALL)

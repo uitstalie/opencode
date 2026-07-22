@@ -3,9 +3,19 @@
 use crossterm::event::{self, KeyCode};
 
 use crate::core::event::{AskRequest, PermissionRequest};
+use crate::core::session::AgentKind;
 
 use super::util::{char_column_to_byte_index, normalize_single_line_text, single_line_textarea, textarea_input_from_key_event};
 use super::{PendingPermission, PendingQuestion, SessionView};
+
+/// Display label for the agent that raised an interactive request.
+fn origin_label(kind: AgentKind) -> &'static str {
+    match kind {
+        AgentKind::Main => "main",
+        AgentKind::SubAgent => "sub-agent",
+        AgentKind::Background => "background",
+    }
+}
 
 impl SessionView {
     /// Deny/cancel any in-flight interactive requests so a worker blocked
@@ -20,7 +30,11 @@ impl SessionView {
         }
     }
 
-    pub(super) fn handle_permission_request(&mut self, request: PermissionRequest) -> bool {
+    pub(super) fn handle_permission_request(
+        &mut self,
+        request: PermissionRequest,
+        kind: AgentKind,
+    ) -> bool {
         if self.ui.pending_permission.is_some() {
             // A dialog is already open; deny the extra request so the tool
             // doesn't block forever (the worker is sequential, so this is
@@ -33,6 +47,7 @@ impl SessionView {
             tool: request.tool,
             detail: request.detail,
             allow: false,
+            origin: origin_label(kind),
         });
         self.status = "permission: awaiting your decision".to_string();
         true
@@ -131,12 +146,12 @@ impl SessionView {
         self.cursor_index = char_column_to_byte_index(&self.input, self.input_editor.cursor().1);
     }
 
-    pub(super) fn handle_ask_request(&mut self, request: AskRequest) -> bool {
+    pub(super) fn handle_ask_request(&mut self, request: AskRequest, kind: AgentKind) -> bool {
         if self.ui.pending_question.is_some() {
             let _ = request.responder.send(vec!["(busy)".to_string()]);
             return false;
         }
-        self.ui.pending_question = PendingQuestion::from_request(request);
+        self.ui.pending_question = PendingQuestion::from_request(request, origin_label(kind));
         if self.ui.pending_question.is_some() {
             self.status = "question: awaiting your answer".to_string();
             return true;

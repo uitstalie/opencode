@@ -20,6 +20,8 @@ pub(super) struct QuestionItem {
 
 pub(super) struct PendingQuestion {
     pub(super) responder: std::sync::mpsc::Sender<Vec<String>>,
+    /// Which agent is asking ("main" / "sub-agent"), shown in the title.
+    pub(super) origin: &'static str,
     pub(super) items: Vec<QuestionItem>,
     pub(super) current: usize,
     pub(super) selected: usize,
@@ -47,7 +49,7 @@ pub(super) enum SelectEnter {
 
 impl PendingQuestion {
     /// Build from an `AskRequest`. Returns `None` if the payload has no valid questions.
-    pub(super) fn from_request(request: AskRequest) -> Option<Self> {
+    pub(super) fn from_request(request: AskRequest, origin: &'static str) -> Option<Self> {
         let items: Vec<QuestionItem> = request
             .questions
             .as_array()?
@@ -96,6 +98,7 @@ impl PendingQuestion {
         }
         Some(Self {
             responder: request.responder,
+            origin,
             items,
             current: 0,
             selected: 0,
@@ -228,6 +231,8 @@ pub(super) struct PendingPermission {
     pub(super) tool: String,
     pub(super) detail: String,
     pub(super) allow: bool,
+    /// Which agent is asking ("main" / "sub-agent"), shown in the title.
+    pub(super) origin: &'static str,
 }
 
 pub(super) struct PendingTextInput {

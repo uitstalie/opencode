@@ -74,9 +74,9 @@ impl Tool for QuestionTool {
             responder,
         }));
 
-        let answers = match answers_rx.recv() {
+        let answers = match crate::tool::wait_response(&answers_rx, ctx) {
             Ok(answers) => answers,
-            Err(_) => return ToolResult::error("question: no answer was received"),
+            Err(reason) => return ToolResult::error(format!("question: {}", reason)),
         };
 
         let rendered = questions
@@ -164,5 +164,47 @@ mod tests {
         ui.join().unwrap();
         let text = result.into_text();
         assert!(text.contains("color: blue"));
+    }
+
+    #[tokio::test]
+    async fn abort_interrupts_unanswered_wait() {
+        let (bus_tx, bus_rx) = crate::core::event::session_bus();
+        // UI receives the request but never answers; the abort flag fires
+        // instead and must interrupt the wait.
+        let ui = std::thread::spawn(move || {
+            let event = bus_rx.recv().unwrap();
+            // Hold the request (keeping its responder alive) without answering.
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            drop(event);
+        });
+        let abort = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let abort_writer = std::sync::Arc::clone(&abort);
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            abort_writer.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+
+        let mut ctx = ToolContext::new(std::env::temp_dir());
+        ctx.interactive = true;
+        ctx.abort = Some(abort);
+        ctx.events = Some(crate::core::event::SessionEventSender::new(
+            "session-test",
+            crate::core::session::AgentKind::Main,
+            bus_tx,
+        ));
+        let result = QuestionTool
+            .execute(
+                ToolParams::new(serde_json::json!({
+                    "questions": [{
+                        "question": "Favorite color?",
+                        "header": "color",
+                        "options": [{ "label": "blue", "description": "" }]
+                    }]
+                })),
+                &ctx,
+            )
+            .await;
+        ui.join().unwrap();
+        assert!(result.into_text().contains("aborted"));
     }
 }

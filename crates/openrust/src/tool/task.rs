@@ -86,8 +86,10 @@ impl Tool for TaskTool {
 
         // Sub-agent gets its own ephemeral session anchoring its context and
         // history (persisted for debugging when enabled). No LLM (prevents
-        // recursive task), non-interactive, no store in ctx (keeps the
-        // parent's TODO list isolated).
+        // recursive task), no store in ctx (keeps the parent's TODO list
+        // isolated). Interactivity is inherited: the sub-agent's permission /
+        // question requests ride the bus with its SubAgent tag and are shown
+        // on the main UI; abort propagates through the shared flag.
         let sub_id = agent_session_id(AgentKind::SubAgent);
         let persist = match (&ctx.store, ctx.persist_agent_sessions) {
             (Some(store), true) => {
@@ -102,7 +104,7 @@ impl Tool for TaskTool {
         };
         let sub_ctx = ToolContext {
             llm: None,
-            interactive: false,
+            interactive: ctx.interactive,
             store: None,
             session_id: None,
             abort: ctx.abort.clone(),
@@ -159,6 +161,9 @@ pub async fn run_agent(
     let allowed = catalog::resolve_tool_names(tool_spec, &tool_ctx.presets, true);
     let tool_defs: Vec<ToolDef> = allowed
         .iter()
+        // Background agents never wait on the user: the question tool is
+        // removed entirely so the model cannot even call it.
+        .filter(|meta| tool_ctx.interactive || meta.name != "question")
         .filter_map(|meta| catalog::create_tool(meta.name, None))
         .map(|tool| ToolDef {
             r#type: "function".to_string(),

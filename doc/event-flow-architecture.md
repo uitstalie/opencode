@@ -391,7 +391,7 @@ match (event.kind, event.payload) {
 | # | 问题 | 状态 | 说明 |
 |---|------|------|------|
 | 1 | terminal guard 对 panic 无效 | ✅ 已修复 | guard 在 `run_inner` 之前创建 |
-| 2 | async executor 上阻塞 `recv()`（权限/问题） | ❌ 仍存在 | `tool/mod.rs` `decision_rx.recv()`、`question.rs` `answers_rx.recv()`；ESC-abort 无法中断等待中的权限/问题 |
+| 2 | async executor 上阻塞 `recv()`（权限/问题） | ✅ 已修复 | `wait_response()`：recv_timeout(100ms) 轮询 + abort/shutdown 信号量检查；background agent 权限一律 deny、question 工具从 tool_defs 剔除；sub-agent 请求经 bus 路由到主界面并标注来源 |
 | 3 | Aborted/Error 后模态对话框未清理 | ✅ 已修复 | `dismiss_pending_modals()` 在 Aborted/Error 分支清理并回绝 responder；Esc 在 AI 运行中专职"取消并停止回合"（含权限/问题对话框），"返回"导航改用 ← 键 |
 | 4 | auto-compaction 历史分歧 | ❌ 仍存在 | worker 压缩自己的 history，TUI `self.messages` 不感知；session 统一模型为修复铺了路但尚未切换数据源 |
 | 5 | 两个 pump 重复 | 🟡 部分修复 | 总线 demux（Ask/Permission/Progress/Done）已共享；`Prompt` 渲染分支仍 TUI/headless 各一份 |
@@ -407,7 +407,7 @@ match (event.kind, event.payload) {
 |---|------|--------|------|
 | N1 | `run_agent` 在 async executor 上同步写 sled | 低 | 持久化 `persist_msg` 是阻塞 IO，嵌在流式循环里；sled 够快，但严格说应 `spawn_blocking` 或批量提交 |
 | N2 | headless 回合结束后 bus 无人 drain | 低 | 最后一个 prompt 结束后 bg 线程（summary/memory）仍可能发事件，channel 无界堆积直到进程退出（短命进程，影响小） |
-| N3 | 权限/问题请求与 abort 的交互未改善 | 🟡 缓解 | Esc 现在能中断打开中的权限/问题对话框（拒绝请求 + 中止回合）；但 worker 阻塞在 `recv()` 期间仍无法自发响应 abort（与 #2 同源） |
+| N3 | 权限/问题请求与 abort 的交互未改善 | ✅ 已修复 | UI 侧 Esc 拒绝+停止（#3）；worker 侧 `wait_response` 每 100ms 检查 abort/shutdown 信号量，双向可中断 |
 | N4 | `Prompt` 事件隐式假设来自 Main session | 低 | demux 未按 `event.kind` 区分渲染目标；目前 run_agent 不产生 Prompt 事件所以安全，但架构上是个未声明的约定 |
 | N5 | tick 线程/session 转发线程不随 shutdown 退出 | 低 | 依赖进程退出回收；交互模式下无碍，库化复用时需注意 |
 

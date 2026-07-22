@@ -227,6 +227,33 @@ impl ToolContext {
 
 // ── Project scope ──────────────────────────────────
 
+/// Wait for a UI response on a sync channel without blocking the async
+/// executor indefinitely: polls with a timeout and watches the abort /
+/// shutdown flags ("semaphore"), so a worker waiting on a permission or
+/// question answer can still be interrupted.
+pub(crate) fn wait_response<T>(
+    rx: &std::sync::mpsc::Receiver<T>,
+    ctx: &ToolContext,
+) -> Result<T, String> {
+    loop {
+        match rx.recv_timeout(std::time::Duration::from_millis(100)) {
+            Ok(value) => return Ok(value),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                let flagged = [&ctx.abort, &ctx.shutdown]
+                    .into_iter()
+                    .flatten()
+                    .any(|flag| flag.load(std::sync::atomic::Ordering::SeqCst));
+                if flagged {
+                    return Err("aborted by user".to_string());
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return Err("interactive UI is no longer available".to_string());
+            }
+        }
+    }
+}
+
 pub fn resolve_path(ctx: &ToolContext, path: &str) -> PathBuf {
     let candidate = std::path::Path::new(path);
     if candidate.is_absolute() {
@@ -314,9 +341,12 @@ pub trait Tool: Send + Sync {
                         responder,
                     },
                 ));
-                match decision_rx.recv() {
+                match wait_response(&decision_rx, ctx) {
                     Ok(true) => self.execute(params, ctx).await,
-                    _ => ToolResult::error(format!("{}: denied by user", self.name())),
+                    Ok(false) => ToolResult::error(format!("{}: denied by user", self.name())),
+                    Err(reason) => {
+                        ToolResult::error(format!("{}: {}", self.name(), reason))
+                    }
                 }
             }
         }
@@ -350,4 +380,37 @@ pub trait Tool: Send + Sync {
 /// Factory: get a tool by name (for CLI debug usage).
 pub fn create_tool(name: &str, undo_store: Option<Arc<UndoStore>>) -> Option<Box<dyn Tool>> {
     catalog::create_tool(name, undo_store)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wait_response_returns_aborted_when_flag_set() {
+        let (_tx, rx) = std::sync::mpsc::channel::<bool>();
+        let abort = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut ctx = ToolContext::new(std::path::PathBuf::new());
+        ctx.abort = Some(Arc::clone(&abort));
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            abort.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        let result = wait_response(&rx, &ctx);
+        writer.join().unwrap();
+        assert_eq!(result.unwrap_err(), "aborted by user");
+    }
+
+    #[test]
+    fn wait_response_returns_value_when_answered() {
+        let (tx, rx) = std::sync::mpsc::channel::<bool>();
+        let ctx = ToolContext::new(std::path::PathBuf::new());
+        let responder = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            let _ = tx.send(true);
+        });
+        let result = wait_response(&rx, &ctx);
+        responder.join().unwrap();
+        assert_eq!(result.unwrap(), true);
+    }
 }

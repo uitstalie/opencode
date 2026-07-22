@@ -631,29 +631,30 @@ impl SessionView {
     /// session tag distinguishes main / sub-agent / background agents).
     /// Returns true when a re-render is needed.
     fn handle_session_event(&mut self, event: SessionEvent) -> bool {
+        let kind = event.kind;
         let mut needs_render = false;
         match event.payload {
-                EventPayload::Ask(request) => {
-                    needs_render |= self.handle_ask_request(request);
-                }
-                EventPayload::Permission(request) => {
-                    needs_render |= self.handle_permission_request(request);
-                }
-                EventPayload::Progress(msg) => {
-                    if self.ai_running {
-                        self.status = msg;
-                        needs_render = true;
-                    }
-                }
-                EventPayload::Done { result } => {
-                    match result {
-                        Ok(msg) if !msg.is_empty() => self.note(msg),
-                        Err(err) => self.note_error(err),
-                        _ => {}
-                    }
+            EventPayload::Ask(request) => {
+                needs_render |= self.handle_ask_request(request, kind);
+            }
+            EventPayload::Permission(request) => {
+                needs_render |= self.handle_permission_request(request, kind);
+            }
+            EventPayload::Progress(msg) => {
+                if self.ai_running {
+                    self.status = msg;
                     needs_render = true;
                 }
-                EventPayload::Prompt(event) => match event {
+            }
+            EventPayload::Done { result } => {
+                match result {
+                    Ok(msg) if !msg.is_empty() => self.note(msg),
+                    Err(err) => self.note_error(err),
+                    _ => {}
+                }
+                needs_render = true;
+            }
+            EventPayload::Prompt(event) => match event {
                 PromptEvent::AssistantDelta(text) => {
                     if let Some(start) = self.thinking_start.take() {
                         self.thought_duration = Some(start.elapsed());
