@@ -256,6 +256,9 @@ pub(super) fn spawn_prompt_worker(
                                 },
                             );
                             current_total_tokens = 0;
+                            tx.send_prompt(PromptEvent::Compacted {
+                                drained: compact_cutoff,
+                            });
                         }
                     }
                 }

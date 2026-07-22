@@ -258,6 +258,10 @@ impl SessionView {
                     self.status = msg;
                     needs_render = true;
                 }
+                super::PromptEvent::Compacted { drained } => {
+                    self.reload_compacted_history(drained);
+                    needs_render = true;
+                }
             }
             if finished {
                 break;

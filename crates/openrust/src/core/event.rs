@@ -22,6 +22,10 @@ pub enum PromptEvent {
         results: Vec<ToolBatchItem>,
     },
     Finish { prompt_tokens: u64, cache_hit_tokens: u64 },
+    /// Auto-compaction checkpoint was written to the session store;
+    /// `drained` = number of old messages folded into the summary. The UI
+    /// realigns its history from the store (see `compaction_window`).
+    Compacted { drained: usize },
     Error(String),
     /// User pressed ESC to abort the current turn.
     Aborted,

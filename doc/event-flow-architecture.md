@@ -393,7 +393,7 @@ match (event.kind, event.payload) {
 | 1 | terminal guard 对 panic 无效 | ✅ 已修复 | guard 在 `run_inner` 之前创建 |
 | 2 | async executor 上阻塞 `recv()`（权限/问题） | ✅ 已修复 | `wait_response()`：recv_timeout(100ms) 轮询 + abort/shutdown 信号量检查；background agent 权限一律 deny、question 工具从 tool_defs 剔除；sub-agent 请求经 bus 路由到主界面并标注来源 |
 | 3 | Aborted/Error 后模态对话框未清理 | ✅ 已修复 | `dismiss_pending_modals()` 在 Aborted/Error 分支清理并回绝 responder；Esc 在 AI 运行中专职"取消并停止回合"（含权限/问题对话框），"返回"导航改用 ← 键 |
-| 4 | auto-compaction 历史分歧 | ❌ 仍存在 | worker 压缩自己的 history，TUI `self.messages` 不感知；session 统一模型为修复铺了路但尚未切换数据源 |
+| 4 | auto-compaction 历史分歧 | ✅ 已修复 | worker 压缩后发 `Compacted` 事件；TUI 从 store 重建历史（`compaction_window`：最近 checkpoint 前 3 条全量消息 → 对话结束），三方数据源对齐 |
 | 5 | 两个 pump 重复 | 🟡 部分修复 | 总线 demux（Ask/Permission/Progress/Done）已共享；`Prompt` 渲染分支仍 TUI/headless 各一份 |
 | 6 | headless 忙轮询 | ✅ 已修复 | 10ms sleep |
 | 7 | 每次 LLM 调用克隆完整历史 | ❌ 仍存在 | `llm.chat(history.clone(), ...)` |

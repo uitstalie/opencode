@@ -94,6 +94,17 @@ pub struct Task {
     pub updated_at: String,
 }
 
+/// Prompt-context window after compaction: locate the most recent
+/// compaction checkpoint, start a few messages (`keep_before`) ahead of it
+/// for continuity, and run to the end of the conversation. When no
+/// checkpoint exists the full history is used.
+pub fn compaction_window(messages: &[Message], keep_before: usize) -> &[Message] {
+    let Some(index) = messages.iter().rposition(|m| m.summary.is_some()) else {
+        return messages;
+    };
+    &messages[index.saturating_sub(keep_before)..]
+}
+
 #[derive(Debug, Clone)]
 pub struct SessionSummary {
     pub id: String,
@@ -809,6 +820,50 @@ mod tests {
         let session: Session = serde_json::from_str(json).unwrap();
         assert_eq!(session.kind, AgentKind::Main);
         assert_eq!(session.parent_id, None);
+    }
+
+    #[test]
+    fn compaction_window_anchors_before_latest_checkpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::open_at(dir.path()).unwrap();
+        store.ensure_session("session-w").unwrap();
+        for i in 0..6 {
+            store
+                .append_message("session-w", "user", &format!("m{i}"))
+                .unwrap();
+        }
+        store
+            .append_compaction("session-w", "checkpoint".to_string(), "recent".to_string())
+            .unwrap();
+        store
+            .append_message("session-w", "assistant", "after")
+            .unwrap();
+
+        let messages = store.get_messages("session-w").unwrap();
+        let window = compaction_window(&messages, 3);
+        // 3 full messages before the checkpoint + checkpoint + everything after.
+        assert_eq!(window.len(), 5);
+        assert_eq!(window[0].content, "m3");
+        assert_eq!(window[3].summary.as_deref(), Some("checkpoint"));
+        assert_eq!(window[4].content, "after");
+
+        // keep_before larger than available history clamps to the start.
+        let wide = compaction_window(&messages, 100);
+        assert_eq!(wide.len(), messages.len());
+    }
+
+    #[test]
+    fn compaction_window_without_checkpoint_is_full_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::open_at(dir.path()).unwrap();
+        store.ensure_session("session-nc").unwrap();
+        store.append_message("session-nc", "user", "one").unwrap();
+        store
+            .append_message("session-nc", "assistant", "two")
+            .unwrap();
+
+        let messages = store.get_messages("session-nc").unwrap();
+        assert_eq!(compaction_window(&messages, 3).len(), 2);
     }
 
     #[test]

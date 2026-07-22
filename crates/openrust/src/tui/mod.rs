@@ -112,6 +112,19 @@ pub fn run(script: Option<PathBuf>, prompt: Option<String>) -> anyhow::Result<()
     session.run()
 }
 
+fn store_message_to_message(m: &crate::core::session::Message) -> Message {
+    Message {
+        role: m.role.clone(),
+        content: MessageContent::text(m.content.clone()),
+        name: m.name.clone(),
+        tool_call_id: m.tool_call_id.clone(),
+        tool_calls: m
+            .tool_calls
+            .as_ref()
+            .and_then(|v| serde_json::from_value(v.clone()).ok()),
+    }
+}
+
 struct SessionView {
     provider_name: String,
     model: String,
@@ -601,9 +614,28 @@ impl SessionView {
         self.display.push(render::DisplayMessage::new("assistant", assistant));
     }
 
+    /// Realign `self.messages` with the store after an auto-compaction
+    /// checkpoint: the window anchored a few full messages before the
+    /// latest checkpoint through the end of the conversation.
+    fn reload_compacted_history(&mut self, drained: usize) {
+        if let Some(store) = &self.store
+            && let Ok(all) = store.get_messages(&self.session_id)
+        {
+            let window = crate::core::session::compaction_window(&all, 3);
+            self.messages = window
+                .iter()
+                .filter(|m| matches!(m.role.as_str(), "user" | "assistant" | "tool" | "system"))
+                .map(store_message_to_message)
+                .collect();
+        }
+        self.display.push(render::DisplayMessage::new(
+            "system",
+            &format!("auto-compacted {drained} message(s) into checkpoint"),
+        ));
+    }
+
     /// Save tool result to history and display.
-    fn save_tool_result(&mut self, name: &str, id: &str, args: &str, result: &str) {
-        self.persist_message_detail("tool", result, Some(name.to_string()), Some(id.to_string()), None);
+    fn save_tool_result(&mut self, name: &str, id: &str, args: &str, result: &str) {        self.persist_message_detail("tool", result, Some(name.to_string()), Some(id.to_string()), None);
         self.messages.push(Message {
             role: "tool".to_string(),
             content: MessageContent::text(result.to_string()),
@@ -770,6 +802,10 @@ impl SessionView {
                 }
                 PromptEvent::RetryStatus(msg) => {
                     self.status = msg;
+                    needs_render = true;
+                }
+                PromptEvent::Compacted { drained } => {
+                    self.reload_compacted_history(drained);
                     needs_render = true;
                 }
                 },
