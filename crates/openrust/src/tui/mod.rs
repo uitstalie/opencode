@@ -738,6 +738,7 @@ impl SessionView {
                 }
                 PromptEvent::Error(err) => {
                     self.note_error(format!("provider error: {}", err));
+                    self.dismiss_pending_modals();
                     self.pending_tool_calls.clear();
                     self.ai_running = false;
                     self.prompt_job = None;
@@ -756,6 +757,7 @@ impl SessionView {
                     if !assistant.is_empty() {
                         self.save_assistant_message(&assistant, None);
                     }
+                    self.dismiss_pending_modals();
                     self.pending_tool_calls.clear();
                     self.ai_running = false;
                     self.prompt_job = None;

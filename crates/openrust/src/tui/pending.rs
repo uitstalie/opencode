@@ -8,6 +8,18 @@ use super::util::{char_column_to_byte_index, normalize_single_line_text, single_
 use super::{PendingPermission, PendingQuestion, SessionView};
 
 impl SessionView {
+    /// Deny/cancel any in-flight interactive requests so a worker blocked
+    /// waiting for an answer unblocks immediately. Used when the turn is
+    /// aborted or errors out while a modal is open.
+    pub(super) fn dismiss_pending_modals(&mut self) {
+        if let Some(permission) = self.ui.pending_permission.take() {
+            let _ = permission.responder.send(false);
+        }
+        if let Some(question) = self.ui.pending_question.take() {
+            let _ = question.responder.send(vec!["(cancelled)".to_string()]);
+        }
+    }
+
     pub(super) fn handle_permission_request(&mut self, request: PermissionRequest) -> bool {
         if self.ui.pending_permission.is_some() {
             // A dialog is already open; deny the extra request so the tool
@@ -157,7 +169,7 @@ impl SessionView {
                 }
             } else if q.typing.is_some() {
                 match key.code {
-                    KeyCode::Esc => {
+                    KeyCode::Esc | KeyCode::Left => {
                         q.typing = None;
                         Outcome::None
                     }

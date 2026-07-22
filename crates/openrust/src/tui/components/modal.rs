@@ -202,7 +202,7 @@ fn question_widget(view: &SessionView, q: &PendingQuestion) -> Paragraph<'static
         }
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "Enter 提交答案 · Esc/← 返回修改",
+            "Enter 提交答案 · ← 返回修改 · Esc 取消并停止回合",
             theme.muted_style(),
         )));
         return Paragraph::new(lines)
@@ -283,11 +283,11 @@ fn question_widget(view: &SessionView, q: &PendingQuestion) -> Paragraph<'static
     }
     lines.push(Line::from(""));
     let hint = if q.typing.is_some() {
-        "Enter 确认输入 · Esc 返回选项"
+        "Enter 确认输入 · ← 返回选项 · Esc 取消并停止回合"
     } else if item.multiple {
-        "↑/↓ 移动 · Enter/Space 勾选 · Done 行确认 · Esc 取消"
+        "↑/↓ 移动 · Enter/Space 选择/取消 · Done 行确认 · Esc 取消并停止回合"
     } else {
-        "↑/↓ 移动 · Enter 选择 · Esc 取消"
+        "↑/↓ 移动 · Enter 选择 · Esc 取消并停止回合"
     };
     lines.push(Line::from(Span::styled(hint, theme.muted_style())));
 
@@ -333,7 +333,7 @@ fn permission_widget(view: &SessionView, permission: &PendingPermission) -> Para
         ]),
         Line::from(""),
         Line::from(Span::styled(
-            "A/Y 允许 · D/N/Esc 拒绝 · ←/→ 切换 · Enter 确认",
+            "A/Y 允许 · D/N 拒绝 · Esc 拒绝并停止回合 · ←/→ 切换 · Enter 确认",
             theme.muted_style(),
         )),
     ];

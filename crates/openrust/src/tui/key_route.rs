@@ -34,10 +34,26 @@ impl SessionView {
 
         // ━━ Z::Modal (blocking) — consume ALL keys ━━
         if self.ui.pending_permission.is_some() {
+            // ESC while the AI is running: reject the request AND stop the
+            // whole turn (unblocks the worker with a deny, then aborts).
+            if key.code == KeyCode::Esc && self.ai_running {
+                self.dismiss_pending_modals();
+                self.abort_current_turn();
+                return Ok(KeyFlow::Consumed);
+            }
             self.handle_permission_key(key);
             return Ok(KeyFlow::Consumed);
         }
         if self.ui.pending_question.is_some() {
+            // ESC while the AI is running always cancels the question AND
+            // stops the whole turn — in every sub-state (selecting, typing,
+            // confirming). Enter/Space own select/deselect; ESC does not
+            // double as a "go back" key.
+            if key.code == KeyCode::Esc && self.ai_running {
+                self.dismiss_pending_modals();
+                self.abort_current_turn();
+                return Ok(KeyFlow::Consumed);
+            }
             self.handle_question_key(key);
             return Ok(KeyFlow::Consumed);
         }
