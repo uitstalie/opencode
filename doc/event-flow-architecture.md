@@ -1,5 +1,8 @@
 # TUI 事件流架构分析
 
+> **注意**：§1–§4 是 2026-07 重构**之前**的快照，仅作历史参考。
+> 当前架构见 §8（session 统一模型 + 双总线）与 §9（新架构复审）。
+
 ## 1. 事件生产者 (Producers)
 
 ### 1.1 Prompt Worker (`worker.rs`)
@@ -376,3 +379,42 @@ match (event.kind, event.payload) {
 7. ✅ 启动清理（`cleanup_agent_sessions`，7 天 TTL）+ `persist_agent_sessions` 配置开关（默认 true）
 
 **仍未统一**：TUI 与 headless 对 `Prompt` 事件的渲染分支仍各自实现（pending_tool_calls / capture_diff / collapsed 展示差异属正常分歧），后续可提取共享的 `handle_prompt_event(state, event)` 进一步收敛。
+
+---
+
+## 9. 新架构复审（2026-07）
+
+事件总线 + UI 总线 + vsync 帧合成落地后，对照 §5 的旧问题逐条复查，并排查新引入的问题。
+
+### 9.1 旧问题现状
+
+| # | 问题 | 状态 | 说明 |
+|---|------|------|------|
+| 1 | terminal guard 对 panic 无效 | ✅ 已修复 | guard 在 `run_inner` 之前创建 |
+| 2 | async executor 上阻塞 `recv()`（权限/问题） | ❌ 仍存在 | `tool/mod.rs` `decision_rx.recv()`、`question.rs` `answers_rx.recv()`；ESC-abort 无法中断等待中的权限/问题 |
+| 3 | Aborted/Error 后模态对话框未清理 | ❌ 仍存在 | `handle_session_event` 的 Aborted/Error 分支未清除 `ui.pending_question`/`ui.pending_permission` |
+| 4 | auto-compaction 历史分歧 | ❌ 仍存在 | worker 压缩自己的 history，TUI `self.messages` 不感知；session 统一模型为修复铺了路但尚未切换数据源 |
+| 5 | 两个 pump 重复 | 🟡 部分修复 | 总线 demux（Ask/Permission/Progress/Done）已共享；`Prompt` 渲染分支仍 TUI/headless 各一份 |
+| 6 | headless 忙轮询 | ✅ 已修复 | 10ms sleep |
+| 7 | 每次 LLM 调用克隆完整历史 | ❌ 仍存在 | `llm.chat(history.clone(), ...)` |
+| 8 | delta 无合并、无背压 | 🟡 缓解 | 渲染侧已被帧合并封顶 60fps；但 worker 仍每 delta 一个事件，channel 仍无界 |
+| 9 | sidebar dirty 时 UI 线程全量重扫描 | ❌ 仍存在 | 现在挂在 Tick 上执行，仍是 UI 线程同步扫描 |
+| 10 | 后台线程对 UI 不可见 | ✅ 已修复 | `Done` 事件 + toast |
+
+### 9.2 新引入的问题
+
+| # | 问题 | 严重度 | 说明 |
+|---|------|--------|------|
+| N1 | `run_agent` 在 async executor 上同步写 sled | 低 | 持久化 `persist_msg` 是阻塞 IO，嵌在流式循环里；sled 够快，但严格说应 `spawn_blocking` 或批量提交 |
+| N2 | headless 回合结束后 bus 无人 drain | 低 | 最后一个 prompt 结束后 bg 线程（summary/memory）仍可能发事件，channel 无界堆积直到进程退出（短命进程，影响小） |
+| N3 | 权限/问题请求与 abort 的交互未改善 | 中 | worker 阻塞在 `decision_rx.recv()` 时看不到 abort flag；用户必须回答对话框才能结束回合（与 #2 同源，总线化后更值得关注：现在它是唯一无法被事件中断的阻塞点） |
+| N4 | `Prompt` 事件隐式假设来自 Main session | 低 | demux 未按 `event.kind` 区分渲染目标；目前 run_agent 不产生 Prompt 事件所以安全，但架构上是个未声明的约定 |
+| N5 | tick 线程/session 转发线程不随 shutdown 退出 | 低 | 依赖进程退出回收；交互模式下无碍，库化复用时需注意 |
+
+### 9.3 建议处理顺序
+
+1. **#3（模态清理）**：Aborted/Error 分支清除 pending 对话框 —— 小改动，正确性问题
+2. **#2/#3-N3（abort 可中断的权限等待）**：`recv_timeout` 轮询 + abort 检查，或 `spawn_blocking`
+3. **#4（历史单一数据源）**：worker 回合结束时把提交的 history 通过事件回传（`Finish` 携带或新增 `HistoryCommitted` 事件），TUI 替换 `self.messages`
+4. **#8（worker 侧 delta 攒批）**：按 ~8ms 窗口合并 TextDelta，进一步降低事件量
+5. **N1（持久化批量提交）**：`persist_msg` 缓冲到步骤边界批量写
