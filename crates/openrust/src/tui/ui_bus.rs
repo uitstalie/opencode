@@ -26,8 +26,10 @@ pub(super) enum UiEvent {
 
 pub(super) struct UiBus {
     pub(super) rx: mpsc::Receiver<UiEvent>,
-    /// Mirror of `ai_running`; the tick thread speeds up while set.
-    animate: Arc<AtomicBool>,
+    /// Fast-tick flag: the tick thread runs at frame cadence (16ms) while
+    /// set — either animating (AI running) or a dirty frame awaits the
+    /// next vsync. Cleared state drops to a 500ms housekeeping tick.
+    fast_tick: Arc<AtomicBool>,
 }
 
 impl UiBus {
@@ -39,7 +41,7 @@ impl UiBus {
         shutdown: Arc<AtomicBool>,
     ) -> Self {
         let (tx, rx) = mpsc::channel::<UiEvent>();
-        let animate = Arc::new(AtomicBool::new(false));
+        let fast_tick = Arc::new(AtomicBool::new(false));
 
         // Crossterm input reader. Blocks on read(); the thread dies with the
         // process when the TUI exits.
@@ -78,13 +80,13 @@ impl UiBus {
             });
         }
 
-        // Tick generator: 16 ms (~60 Hz) while animating (tool spinner,
-        // streaming), 500 ms when idle (toast expiry, sidebar poll).
+        // Tick generator (vsync): 16 ms (~60 Hz) while animating or a dirty
+        // frame is pending, 500 ms when fully idle (toast expiry, sidebar).
         {
-            let animate = Arc::clone(&animate);
+            let fast_tick = Arc::clone(&fast_tick);
             std::thread::spawn(move || {
                 loop {
-                    let interval = if animate.load(Ordering::SeqCst) {
+                    let interval = if fast_tick.load(Ordering::SeqCst) {
                         Duration::from_millis(16)
                     } else {
                         Duration::from_millis(500)
@@ -97,12 +99,13 @@ impl UiBus {
             });
         }
 
-        Self { rx, animate }
+        Self { rx, fast_tick }
     }
 
-    /// Mirror the animation state into the tick thread.
-    pub(super) fn set_animate(&self, animating: bool) {
-        self.animate.store(animating, Ordering::SeqCst);
+    /// Control tick pacing: fast (frame cadence) while animating or a dirty
+    /// frame awaits composition.
+    pub(super) fn set_fast_tick(&self, fast: bool) {
+        self.fast_tick.store(fast, Ordering::SeqCst);
     }
 
     /// Block until the next event arrives.

@@ -161,6 +161,10 @@ struct SessionView {
     thinking_start: Option<Instant>,
     thought_duration: Option<Duration>,
     render: RenderState,
+    /// Frame composition flag (SurfaceFlinger-style): handlers only mark the
+    /// frame dirty; the actual draw happens on the next vsync Tick. When no
+    /// handler dirtied the frame, the previous frame is reused (no draw).
+    frame_dirty: bool,
     /// Cached task count (updated on todowrite events, avoids per-frame SQLite queries).
     task_count: std::cell::Cell<usize>,
     /// Cached task list for the TODO panel (updated on todowrite events).
@@ -284,6 +288,7 @@ impl SessionView {
             },
             task_count: std::cell::Cell::new(initial_task_count),
             cached_tasks: std::cell::RefCell::new(initial_tasks),
+            frame_dirty: false,
         }
     }
 
@@ -360,37 +365,44 @@ impl SessionView {
         self.status = self.default_status_message();
         self.render_terminal(terminal)?;
 
-        // Event-driven main loop: block on the UI bus, drain a full batch,
-        // then render at most once per batch.
+        // Event-driven main loop with SurfaceFlinger-style frame composition:
+        // handlers only mark `frame_dirty`; the draw happens on the next
+        // vsync Tick. Multiple dirty sources within one frame interval
+        // coalesce into a single draw; a Tick with no dirty flag reuses the
+        // previous frame (no draw at all).
         loop {
-            ui_bus.set_animate(self.ai_running);
+            ui_bus.set_fast_tick(self.ai_running || self.frame_dirty);
             let Some(first) = ui_bus.recv() else {
                 break;
             };
             let mut batch = vec![first];
             batch.extend(ui_bus.drain());
 
-            let mut needs_render = false;
             let mut should_exit = false;
             for event in batch {
                 match event {
                     UiEvent::Session(session_event) => {
-                        needs_render |= self.handle_session_event(*session_event);
+                        self.frame_dirty |= self.handle_session_event(*session_event);
                     }
                     UiEvent::Tick => {
                         if self.sidebar_visible
                             && let Some(tree) = &mut self.sidebar {
-                                needs_render |= tree.poll_refresh();
+                                self.frame_dirty |= tree.poll_refresh();
                             }
                         if let Some(deadline) = self.ui.toast_deadline
                             && Instant::now() >= deadline {
                                 self.ui.toast = None;
                                 self.ui.toast_deadline = None;
-                                needs_render = true;
+                                self.frame_dirty = true;
                             }
-                        // Drive the tool spinner / streaming animation.
+                        // Streaming / spinner frames: animating state always
+                        // composes a new frame at vsync cadence.
                         if self.ai_running {
-                            needs_render = true;
+                            self.frame_dirty = true;
+                        }
+                        if self.frame_dirty {
+                            self.render_terminal(terminal)?;
+                            self.frame_dirty = false;
                         }
                     }
                     UiEvent::Input(Event::Key(key)) => {
@@ -399,7 +411,7 @@ impl SessionView {
                                 should_exit = true;
                                 break;
                             }
-                            view::KeyFlow::Consumed => needs_render = true,
+                            view::KeyFlow::Consumed => self.frame_dirty = true,
                             view::KeyFlow::Propagate => {}
                         }
                     }
@@ -408,7 +420,7 @@ impl SessionView {
                             continue;
                         }
                         self.handle_mouse_event(mouse, terminal)?;
-                        needs_render = true;
+                        self.frame_dirty = true;
                     }
                     UiEvent::Input(Event::Paste(text)) => {
                         if self.ui.pending_text_input.is_some() {
@@ -416,7 +428,7 @@ impl SessionView {
                         } else {
                             self.insert_input_text(&text);
                         }
-                        needs_render = true;
+                        self.frame_dirty = true;
                     }
                     UiEvent::Input(_) => {}
                 }
@@ -427,9 +439,10 @@ impl SessionView {
             }
 
             self.maybe_start_next_prompt(terminal)?;
-            self.status = self.default_status_message();
-            if needs_render {
-                self.render_terminal(terminal)?;
+            let status = self.default_status_message();
+            if status != self.status {
+                self.status = status;
+                self.frame_dirty = true;
             }
         }
 
