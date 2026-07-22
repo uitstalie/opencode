@@ -78,14 +78,14 @@ impl UiBus {
             });
         }
 
-        // Tick generator: 33 ms while animating (tool spinner, streaming),
-        // 500 ms when idle (toast expiry, sidebar poll).
+        // Tick generator: 16 ms (~60 Hz) while animating (tool spinner,
+        // streaming), 500 ms when idle (toast expiry, sidebar poll).
         {
             let animate = Arc::clone(&animate);
             std::thread::spawn(move || {
                 loop {
                     let interval = if animate.load(Ordering::SeqCst) {
-                        Duration::from_millis(33)
+                        Duration::from_millis(16)
                     } else {
                         Duration::from_millis(500)
                     };
