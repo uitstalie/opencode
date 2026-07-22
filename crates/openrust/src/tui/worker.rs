@@ -40,6 +40,10 @@ impl SessionRuntimeGuard {
             shutdown,
         }
     }
+
+    pub(super) fn terminal_mut(&mut self) -> &mut Terminal<CrosstermBackend<std::io::Stdout>> {
+        self.terminal.as_mut().expect("terminal already taken")
+    }
 }
 
 impl Drop for SessionRuntimeGuard {

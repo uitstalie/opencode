@@ -135,10 +135,7 @@ title / summary / manual compact / generate_memory (5s delay) / dream / models.d
 
 ### Bug / 正确性
 
-1. **`SessionRuntimeGuard` 对 panic 无效** (`mod.rs:308-311`)
-   - Guard 在 `run_inner` 返回后才创建并立即 drop
-   - Panic 时终端处于 raw mode/alternate screen
-   - **修复**: 在 `run_inner` 之前创建 guard
+1. ~~**`SessionRuntimeGuard` 对 panic 无效**~~ ✅ 已修复（guard 在 `run_inner` 之前创建）
 
 2. **在 async executor 上阻塞 `recv()`** (`tool/mod.rs:335`, `tool/question.rs:80`)
    - 权限/问题等待是同步 `mpsc::Receiver::recv()` 在 async 代码中
@@ -160,9 +157,7 @@ title / summary / manual compact / generate_memory (5s delay) / dream / models.d
    - ~130 行近乎相同的 `match` on `PromptEvent`
    - Headless 版本缺少 `capture_diff`、task-count 更新、abort 时的 assistant 文本保存
 
-6. **Headless 模式忙轮询** (`prompt_flow.rs:63-65`)
-   - `while self.prompt_job.is_some() { pump_prompt_job_for_stdout(...) }`
-   - 100% CPU 空转整个回合
+6. ~~**Headless 模式忙轮询**~~ ✅ 已修复（10ms sleep）
 
 7. **每次 LLM 调用都克隆完整历史** (`worker.rs:296`)
    - `llm.chat(history.clone(), tool_defs.clone(), ...)`
@@ -319,9 +314,20 @@ enum EventPayload {
 - 引入有界 channel + worker 侧 delta 合并，顺带解决背压问题
 - `ToolContext` 不再持有裸 `ask_tx`/`permission_tx`/`progress_tx`，改为持有统一 `SessionEventSender`（解决 core 依赖 UI channel 的分层问题）
 
-**总线 2：UI 总线（TUI 内部）**
+**总线 2：UI 总线（TUI 内部）**（✅ 已实现，`tui/ui_bus.rs`）
 
-crossterm 输入、对话框开关、toast、sidebar 刷新、dirty 标记——纯 UI 状态，留在 TUI 层，不进入 core。
+```rust
+enum UiEvent {
+    Input(crossterm::event::Event),  // 输入线程转发
+    Session(Box<SessionEvent>),      // session 总线转发线程
+    Tick,                            // 动画/家政 tick（运行中 33ms，空闲 500ms）
+}
+```
+
+- 主循环从"`event::poll(33ms)` + 多个 `try_recv` 轮询"改为**阻塞 `recv()` + 批量 drain + 每批最多渲染一次**
+- Tick 驱动：tool spinner 动画、toast 过期、sidebar 文件监视刷新
+- 空闲时 tick 降频到 500ms（仅家政），CPU 占用接近零
+- Headless 模式不受影响（直接 drain session 总线）
 
 ### 8.4 路由策略（tag + 集中 demux）
 

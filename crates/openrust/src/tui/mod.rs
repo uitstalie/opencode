@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use crossterm::{
     cursor,
-    event::{self, EnableBracketedPaste, EnableMouseCapture, Event},
+    event::{EnableBracketedPaste, EnableMouseCapture, Event},
     execute,
     terminal,
 };
@@ -49,12 +49,14 @@ mod sidebar;
 mod templates;
 pub(super) mod theme;
 mod types;
+mod ui_bus;
 mod util;
 mod view;
 mod widgets;
 mod worker;
 
 pub(in crate::tui) use types::*;
+use ui_bus::{UiBus, UiEvent};
 use util::*;
 
 use dialog::{Dialog, DialogKind, slash_options};
@@ -145,9 +147,10 @@ struct SessionView {
     last_diff: Option<(String, String, String)>,
     prompt_job: Option<PromptJob>,
     /// Session event bus: workers, sub-agents, and background tasks all
-    /// publish here; the pump drains `bus_rx` and routes by session tag.
+    /// publish here. In interactive mode a forwarder thread moves events
+    /// onto the UI bus; headless mode drains this directly.
     bus_tx: mpsc::Sender<SessionEvent>,
-    bus_rx: mpsc::Receiver<SessionEvent>,
+    bus_rx: Option<mpsc::Receiver<SessionEvent>>,
     /// In-flight tool calls awaiting results, shown live with a spinner.
     pending_tool_calls: Vec<PendingTool>,
     shutdown: Arc<AtomicBool>,
@@ -257,7 +260,7 @@ impl SessionView {
             last_diff: None,
             prompt_job: None,
             bus_tx,
-            bus_rx,
+            bus_rx: Some(bus_rx),
             pending_tool_calls: Vec::new(),
             shutdown: Arc::new(AtomicBool::new(false)),
             abort: Arc::new(AtomicBool::new(false)),
@@ -320,9 +323,16 @@ impl SessionView {
             EnableMouseCapture
         )?;
         let backend = CrosstermBackend::new(stdout);
-        let mut terminal = Terminal::new(backend)?;
-        let run_result = self.run_inner(&mut terminal);
-        let guard = SessionRuntimeGuard::new(terminal, Arc::clone(&self.shutdown));
+        let terminal = Terminal::new(backend)?;
+        // Create the guard before running so a panic still restores the
+        // terminal (previously it was created after run_inner returned).
+        let mut guard = SessionRuntimeGuard::new(terminal, Arc::clone(&self.shutdown));
+        let session_rx = self
+            .bus_rx
+            .take()
+            .expect("session bus receiver already taken");
+        let ui_bus = UiBus::spawn(session_rx, Arc::clone(&self.shutdown));
+        let run_result = self.run_inner(guard.terminal_mut(), &ui_bus);
         drop(guard);
 
         run_result
@@ -340,6 +350,7 @@ impl SessionView {
     fn run_inner(
         &mut self,
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        ui_bus: &UiBus,
     ) -> anyhow::Result<()> {
         let pending = std::mem::take(&mut self.transcript);
         for prompt in pending {
@@ -349,73 +360,75 @@ impl SessionView {
         self.status = self.default_status_message();
         self.render_terminal(terminal)?;
 
+        // Event-driven main loop: block on the UI bus, drain a full batch,
+        // then render at most once per batch.
         loop {
-            let mut needs_render = self.pump_prompt_job()?;
-            if self.sidebar_visible
-                && let Some(tree) = &mut self.sidebar {
-                    needs_render |= tree.poll_refresh();
-                }
-            self.maybe_start_next_prompt(terminal)?;
-            self.status = self.default_status_message();
-            if let Some(deadline) = self.ui.toast_deadline
-                && Instant::now() >= deadline {
-                    self.ui.toast = None;
-                    self.ui.toast_deadline = None;
-                    needs_render = true;
-                }
-            // 30fps tick: drives animation (tool spinner) while the AI is
-            // running, keeps input latency low while idle. On poll timeout we
-            // force a redraw when the AI is active so live elements keep
-            // animating even without new worker events.
-            let poll_timeout = Duration::from_millis(33);
-            if !event::poll(poll_timeout)? {
-                if needs_render || self.ai_running {
-                    self.render_terminal(terminal)?;
-                }
-                continue;
-            }
+            ui_bus.set_animate(self.ai_running);
+            let Some(first) = ui_bus.recv() else {
+                break;
+            };
+            let mut batch = vec![first];
+            batch.extend(ui_bus.drain());
 
-            let mut handled_input = false;
-            let mut should_break = false;
-            let mut events = vec![event::read()?];
-            while event::poll(Duration::from_millis(0))? {
-                events.push(event::read()?);
-            }
-
-            for event in events {
+            let mut needs_render = false;
+            let mut should_exit = false;
+            for event in batch {
                 match event {
-                    Event::Key(key) => match self.route_key(key, terminal)? {
-                        view::KeyFlow::Exit => {
-                            should_break = true;
-                            break;
+                    UiEvent::Session(session_event) => {
+                        needs_render |= self.handle_session_event(*session_event);
+                    }
+                    UiEvent::Tick => {
+                        if self.sidebar_visible
+                            && let Some(tree) = &mut self.sidebar {
+                                needs_render |= tree.poll_refresh();
+                            }
+                        if let Some(deadline) = self.ui.toast_deadline
+                            && Instant::now() >= deadline {
+                                self.ui.toast = None;
+                                self.ui.toast_deadline = None;
+                                needs_render = true;
+                            }
+                        // Drive the tool spinner / streaming animation.
+                        if self.ai_running {
+                            needs_render = true;
                         }
-                        view::KeyFlow::Consumed => handled_input = true,
-                        view::KeyFlow::Propagate => {}
-                    },
-                    Event::Mouse(mouse) => {
+                    }
+                    UiEvent::Input(Event::Key(key)) => {
+                        match self.route_key(key, terminal)? {
+                            view::KeyFlow::Exit => {
+                                should_exit = true;
+                                break;
+                            }
+                            view::KeyFlow::Consumed => needs_render = true,
+                            view::KeyFlow::Propagate => {}
+                        }
+                    }
+                    UiEvent::Input(Event::Mouse(mouse)) => {
                         if matches!(mouse.kind, crossterm::event::MouseEventKind::Moved) {
                             continue;
                         }
                         self.handle_mouse_event(mouse, terminal)?;
-                        handled_input = true;
+                        needs_render = true;
                     }
-                    Event::Paste(text) => {
+                    UiEvent::Input(Event::Paste(text)) => {
                         if self.ui.pending_text_input.is_some() {
                             self.insert_pending_text_input(&text);
                         } else {
                             self.insert_input_text(&text);
                         }
-                        handled_input = true;
+                        needs_render = true;
                     }
-                    _ => {}
+                    UiEvent::Input(_) => {}
                 }
             }
 
-            if should_break {
+            if should_exit {
                 break;
             }
 
-            if handled_input || needs_render {
+            self.maybe_start_next_prompt(terminal)?;
+            self.status = self.default_status_message();
+            if needs_render {
                 self.render_terminal(terminal)?;
             }
         }
@@ -520,11 +533,15 @@ impl SessionView {
         ));
     }
 
-    /// Drain events from the session event bus.
+    /// Drain events from the session event bus (headless mode only; in
+    /// interactive mode the UI bus forwarder owns the receiver).
     fn drain_session_events(&self) -> Vec<SessionEvent> {
         let mut events = Vec::new();
+        let Some(bus_rx) = &self.bus_rx else {
+            return events;
+        };
         loop {
-            match self.bus_rx.try_recv() {
+            match bus_rx.try_recv() {
                 Ok(event) => events.push(event),
                 Err(mpsc::TryRecvError::Empty) | Err(mpsc::TryRecvError::Disconnected) => break,
             }
@@ -597,14 +614,12 @@ impl SessionView {
         self.display.push(render::DisplayMessage::new_collapsed("tool", &display_text));
     }
 
-    fn pump_prompt_job(
-        &mut self,
-    ) -> anyhow::Result<bool> {
-        let events = self.drain_session_events();
-
+    /// Handle one event from the session bus (routed by payload; the
+    /// session tag distinguishes main / sub-agent / background agents).
+    /// Returns true when a re-render is needed.
+    fn handle_session_event(&mut self, event: SessionEvent) -> bool {
         let mut needs_render = false;
-        for event in events {
-            match event.payload {
+        match event.payload {
                 EventPayload::Ask(request) => {
                     needs_render |= self.handle_ask_request(request);
                 }
@@ -743,9 +758,7 @@ impl SessionView {
                 }
                 },
             }
-        }
-
-        Ok(needs_render)
+        needs_render
     }
 }
 
