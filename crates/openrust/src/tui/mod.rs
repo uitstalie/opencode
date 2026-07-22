@@ -45,7 +45,6 @@ mod prompt_flow;
 mod provider_ops;
 mod session_ops;
 mod session_render;
-mod sidebar;
 mod templates;
 pub(super) mod theme;
 mod types;
@@ -154,7 +153,6 @@ struct SessionView {
     thinking_mode: ThinkingMode,
     reasoning_effort: Option<String>,
     ui: DialogState,
-    sidebar: Option<sidebar::FileTree>,
     sidebar_visible: bool,
     diff_visible: bool,
     last_diff: Option<(String, String, String)>,
@@ -271,7 +269,6 @@ impl SessionView {
                 connect_draft: None,
                 pending_provider: None,
             },
-            sidebar: None,
             sidebar_visible: false,
             diff_visible: false,
             last_diff: None,
@@ -398,10 +395,6 @@ impl SessionView {
                         self.frame_dirty |= self.handle_session_event(*session_event);
                     }
                     UiEvent::Tick => {
-                        if self.sidebar_visible
-                            && let Some(tree) = &mut self.sidebar {
-                                self.frame_dirty |= tree.poll_refresh();
-                            }
                         if let Some(deadline) = self.ui.toast_deadline
                             && Instant::now() >= deadline {
                                 self.ui.toast = None;
@@ -465,9 +458,6 @@ impl SessionView {
 
     fn toggle_sidebar(&mut self) {
         self.sidebar_visible = !self.sidebar_visible;
-        if self.sidebar_visible && self.sidebar.is_none() {
-            self.sidebar = Some(sidebar::FileTree::new(self.cwd.clone()));
-        }
         self.note(if self.sidebar_visible {
             "sidebar: on".to_string()
         } else {

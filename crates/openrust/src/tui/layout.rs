@@ -9,8 +9,8 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 pub(super) struct SessionLayout {
     /// Main conversation area (already minus sidebar if present).
     pub session: Rect,
-    /// Files tree sub-region inside the sidebar.
-    pub sidebar_files: Option<Rect>,
+    /// Workspace path block inside the sidebar.
+    pub sidebar_workspace: Option<Rect>,
     /// TODO panel sub-region inside the sidebar.
     pub sidebar_todo: Option<Rect>,
     /// Input box area.
@@ -36,7 +36,6 @@ pub(super) struct HomeLayout {
 pub(super) fn session_layout(
     area: Rect,
     sidebar_visible: bool,
-    has_sidebar: bool,
     task_count: usize,
 ) -> SessionLayout {
     let main = Layout::default()
@@ -49,7 +48,7 @@ pub(super) fn session_layout(
     let info = main[2];
     let status = main[3];
 
-    let (session, sidebar) = if sidebar_visible && has_sidebar {
+    let (session, sidebar) = if sidebar_visible {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(32), Constraint::Min(20)])
@@ -59,14 +58,19 @@ pub(super) fn session_layout(
         (session_full, None)
     };
 
-    let (sidebar_files, sidebar_todo) = sidebar.map(|side| {
+    let (sidebar_workspace, sidebar_todo) = sidebar.map(|side| {
+        // Workspace path is a small fixed-height block; TODO takes the rest.
+        let workspace_height = 4u16.min(side.height);
         if task_count == 0 {
-            (Some(side), None)
-        } else {
-            let todo_height = (task_count as u16 + 2).min(side.height / 2).max(4);
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Min(5), Constraint::Length(todo_height)])
+                .constraints([Constraint::Length(workspace_height), Constraint::Min(0)])
+                .split(side);
+            (Some(chunks[0]), None)
+        } else {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(workspace_height), Constraint::Min(5)])
                 .split(side);
             (Some(chunks[0]), Some(chunks[1]))
         }
@@ -74,7 +78,7 @@ pub(super) fn session_layout(
 
     SessionLayout {
         session,
-        sidebar_files,
+        sidebar_workspace,
         sidebar_todo,
         input,
         info,

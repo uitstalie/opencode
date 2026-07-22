@@ -50,9 +50,9 @@ pub(super) enum Layer {
         hint: Rect,
         status_msg: Rect,
     },
-    /// File tree + TODO panel.
+    /// Workspace path + TODO panel.
     Sidebar {
-        files: Option<Rect>,
+        workspace: Option<Rect>,
         todo: Option<Rect>,
     },
     /// Conversation history panel.
@@ -104,8 +104,8 @@ impl Layer {
             } => {
                 components::HomeContent::new(view).render(frame, *header, *hint, *status_msg);
             }
-            Self::Sidebar { files, todo } => {
-                components::SidebarPanel::new(view).render(frame, *files, *todo);
+            Self::Sidebar { workspace, todo } => {
+                components::SidebarPanel::new(view).render(frame, *workspace, *todo);
             }
             Self::Session(area) => {
                 components::SessionPanel::new(view).render(frame, *area);
@@ -186,13 +186,12 @@ impl SessionView {
         let layout = super::layout::session_layout(
             area,
             self.sidebar_visible,
-            self.sidebar.is_some(),
             self.task_count.get(),
         );
         self.render.input_area.set(layout.input);
         vec![
             Layer::Sidebar {
-                files: layout.sidebar_files,
+                workspace: layout.sidebar_workspace,
                 todo: layout.sidebar_todo,
             },
             Layer::Session(layout.session),

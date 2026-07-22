@@ -69,9 +69,6 @@ pulldown-cmark = { version = "0.12", default-features = false }
 # Syntax highlight (Phase 2) — fancy-regex keeps this pure Rust (no onig/C).
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 
-# File watching (Phase 2)
-notify = "7"
-
 # Clipboard (Phase 2)
 arboard = "3"
 

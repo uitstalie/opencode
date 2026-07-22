@@ -222,7 +222,7 @@ pub(super) fn slash_options(input: &str) -> Vec<DialogOption> {
         ("/model", "models", "Alias for /models"),
         ("/compact", "compact", "Compact the current session"),
         ("/compaction", "compact", "Alias for /compact"),
-        ("/files", "files", "Toggle the file-tree sidebar"),
+        ("/files", "files", "Toggle the workspace sidebar"),
         ("/tree", "files", "Alias for /files"),
         ("/diff", "diff", "Show the last edit as a diff"),
         ("/reload", "reload", "Reload config, agents, skills, rules"),

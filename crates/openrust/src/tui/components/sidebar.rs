@@ -1,4 +1,4 @@
-//! Sidebar panel — file tree and TODO list in the sidebar column.
+//! Sidebar panel — workspace path and TODO list in the sidebar column.
 
 use ratatui::{
     Frame,
@@ -18,29 +18,31 @@ impl<'a> SidebarPanel<'a> {
         Self { view }
     }
 
-    /// Render the file tree into `files_area` if present, and the
+    /// Render the workspace path into `workspace_area` if present, and the
     /// TODO panel into `todo_area` if present.
     pub fn render(
         &self,
         frame: &mut Frame,
-        files_area: Option<Rect>,
+        workspace_area: Option<Rect>,
         todo_area: Option<Rect>,
     ) {
         let view = self.view;
-        if let Some(area) = files_area
-            && let Some(tree) = &view.sidebar
-        {
-            let sidebar = Paragraph::new(tree.lines(&view.theme))
+        if let Some(area) = workspace_area {
+            let path = Line::from(Span::styled(
+                view.cwd.display().to_string(),
+                view.theme.sidebar_style(),
+            ));
+            let workspace = Paragraph::new(vec![path])
                 .style(view.theme.sidebar_style())
                 .block(
                     Block::default()
-                        .title(" Files ")
+                        .title(" Workspace ")
                         .title_style(view.theme.title_style())
                         .borders(Borders::ALL)
                         .border_style(view.theme.border_style()),
                 )
                 .wrap(Wrap { trim: false });
-            frame.render_widget(sidebar, area);
+            frame.render_widget(workspace, area);
         }
 
         if let Some(area) = todo_area {

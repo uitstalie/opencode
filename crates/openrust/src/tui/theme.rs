@@ -212,16 +212,6 @@ impl Theme {
         Style::default().fg(self.list_marker)
     }
 
-    pub fn sidebar_dir_style(&self) -> Style {
-        Style::default()
-            .fg(self.active_border)
-            .add_modifier(Modifier::BOLD)
-    }
-
-    pub fn sidebar_file_style(&self) -> Style {
-        Style::default().fg(self.text)
-    }
-
     /// syntect theme name for code-block highlighting.
     pub fn syntect_theme(&self) -> &str {
         &self.syntect_theme
