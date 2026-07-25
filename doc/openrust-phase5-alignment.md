@@ -38,7 +38,7 @@ Phase 5 不推翻 Phase 1 / 2 已完成结论，而是审计这些能力与最�
 | Tool replay compatibility | 主线 request 在存在历史 tool call 且当前 tools 为空时注入 `_noop` 兼容 Copilot | OpenRust 每轮传完整 tool catalog；尚未覆盖“历史 tool call + tools disabled”重放兼容 | 补测试即可 / 补行为待判定 | Phase 5 |
 | Tool registry metadata | 主线工具执行返回 metadata，注入 session/message/tool call 等追踪字段 | OpenRust `ToolResult::Structured` 有 metadata，但多数工具和 runner 未系统写入追踪元数据 | 补行为即可 | Phase 4 门槛 |
 | Read tool missing/failure | 主线 read 对缺失路径、二进制、媒体限制、路径逃逸做统一 ToolFailure | OpenRust read 已覆盖 missing path、offset、目录分页、相对路径，但错误模型较简单，缺少二进制/媒体/路径逃逸等完整语义 | 补行为即可 | Phase 3 |
-| Web tool failure bounds | 主线 webfetch/websearch 有 URL 校验、timeout 上限、Cloudflare retry、content-type 限制和统一 ToolFailure | OpenRust webfetch 有 timeout 上限和 HTTP 错误处理，但 URL/content-type/Cloudflare/错误归一化较弱；websearch 也需单独审计 | 补行为即可 | Phase 3 |
+| Web tool failure bounds | 主线 webfetch/websearch 有 URL 校验、timeout 上限、Cloudflare retry、content-type 限制和统一 ToolFailure | ~~OpenRust webfetch 有 timeout 上限和 HTTP 错误处理，但 URL/content-type/Cloudflare/错误归一化较弱~~ **已补齐（2026-07-25）**：webfetch 有 URL/私网校验、timeout 上限、按 format 的 Accept 头、403+`cf-mitigated: challenge` 时用诚实 UA 重试一次、content-type 限制、5MB 上限；websearch 多引擎 fallback，全部引擎失败时返回 ToolFailure 而非空结果 | ~~补行为即可~~ 已对齐 | Phase 3 |
 | Skill load errors | 主线 skill 加载 frontmatter 错误会发布 Session.Event.Error，并在 TUI inline 显示 | OpenRust skill 只剥离 frontmatter，不解析/验证 frontmatter，也没有 inline load error 事件 | 补行为即可 | Phase 3/4 门槛 |
 | Skill discovery | 主线支持 built-in skill、项目/全局/配置路径/URL、多目录扫描、权限过滤、重复名覆盖规则 | OpenRust skill 支持 `.opencode/skills`、`skills`、全局 config skills；不支持 URL、内置注册顺序、权限过滤完整语义 | 补行为即可 | Phase 3 |
 | Memory tools | 当前 Rust 分支有 memory/todo 方向；`dev-ai-release` 基线没有 `memory-review/record` 文件 | 这是本分支增强，不是落后主线；需决定是否保留为 OpenRust 独立能力 | 本地增强待决策 | Phase 5 决策项 |
