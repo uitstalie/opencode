@@ -9,7 +9,13 @@ use std::collections::HashMap;
 const MAX_TIMEOUT: u64 = 120;
 
 /// Max response body size in bytes.
-const MAX_BODY_SIZE: usize = 2 * 1024 * 1024;
+const MAX_BODY_SIZE: usize = 5 * 1024 * 1024;
+
+/// Browser UA for the first attempt; many sites reject obvious bot agents.
+const BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
+
+/// Honest UA for the Cloudflare-challenge retry (TLS fingerprint mismatch workaround).
+const HONEST_UA: &str = "openrust/0.0";
 
 /// Content types we accept as text.
 const TEXT_CONTENT_TYPES: &[&str] = &[
@@ -41,6 +47,7 @@ impl Tool for WebFetchTool {
     async fn execute(&self, p: ToolParams, _ctx: &ToolContext) -> ToolResult {
         let url = require_str!(p, "url");
         let timeout = p.u64_or("timeout", 30).min(MAX_TIMEOUT);
+        let format = p.opt_str("format").unwrap_or("markdown");
 
         if let Err(msg) = validate_url(url) {
             return ToolResult::error(msg);
@@ -49,24 +56,39 @@ impl Tool for WebFetchTool {
         let client = try_tool!(
             reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(timeout))
-                .user_agent("openrust/0.0")
                 .redirect(reqwest::redirect::Policy::none())
                 .build(),
             |e| format!("Client error: {}", e)
         );
 
-        let resp = match client.get(url).send().await {
+        let accept = match format {
+            "markdown" => "text/markdown;q=1.0, text/x-markdown;q=0.9, text/plain;q=0.8, text/html;q=0.7, */*;q=0.1",
+            "text" => "text/plain;q=1.0, text/markdown;q=0.9, text/html;q=0.8, */*;q=0.1",
+            "html" => "text/html;q=1.0, application/xhtml+xml;q=0.9, text/plain;q=0.8, text/markdown;q=0.7, */*;q=0.1",
+            _ => "*/*",
+        };
+        let send = |ua: &str| {
+            client
+                .get(url)
+                .header(reqwest::header::USER_AGENT, ua)
+                .header(reqwest::header::ACCEPT, accept)
+                .header(reqwest::header::ACCEPT_LANGUAGE, "en-US,en;q=0.9")
+        };
+
+        let resp = match send(BROWSER_UA).send().await {
             Ok(r) => r,
-            Err(e) => {
-                let err_str = e.to_string();
-                if err_str.contains("Cloudflare") || err_str.contains("403") || err_str.contains("1020") {
-                    return ToolResult::error(format!(
-                        "Blocked by Cloudflare: {}. Try again or use a different source.",
-                        url
-                    ));
-                }
-                return ToolResult::error(format!("Fetch failed: {}", err_str));
+            Err(e) => return ToolResult::error(format!("Fetch failed: {}", e)),
+        };
+
+        // Cloudflare bot detection answers 403 + `cf-mitigated: challenge`;
+        // retry once with the honest UA (TLS fingerprint mismatch workaround).
+        let resp = if is_cloudflare_challenge(&resp) {
+            match send(HONEST_UA).send().await {
+                Ok(r) => r,
+                Err(e) => return ToolResult::error(format!("Fetch failed on retry: {}", e)),
             }
+        } else {
+            resp
         };
 
         let status = resp.status();
@@ -80,6 +102,12 @@ impl Tool for WebFetchTool {
             ));
         }
         if !status.is_success() {
+            if is_cloudflare_challenge(&resp) {
+                return ToolResult::error(format!(
+                    "Blocked by Cloudflare bot detection: {}. Try a different source.",
+                    url
+                ));
+            }
             return ToolResult::error(format!(
                 "HTTP {} fetching {}",
                 status.as_u16(),
@@ -115,7 +143,6 @@ impl Tool for WebFetchTool {
             ));
         }
 
-        let format = p.opt_str("format").unwrap_or("markdown");
         let content = if format == "html" {
             body.clone()
         } else {
@@ -140,6 +167,16 @@ impl Tool for WebFetchTool {
         metadata.insert("truncated".to_string(), serde_json::json!(truncated));
         ToolResult::Structured { content: out, metadata }
     }
+}
+
+/// Cloudflare bot detection responds 403 with `cf-mitigated: challenge`.
+fn is_cloudflare_challenge(resp: &reqwest::Response) -> bool {
+    resp.status() == reqwest::StatusCode::FORBIDDEN
+        && resp
+            .headers()
+            .get("cf-mitigated")
+            .and_then(|v| v.to_str().ok())
+            == Some("challenge")
 }
 
 fn validate_url(url_str: &str) -> Result<(), String> {

@@ -90,6 +90,9 @@ impl Tool for WebSearchTool {
         );
 
         let mut attempts: Vec<String> = Vec::new();
+        // Distinguish "engine responded but had no hits" from "engine failed"
+        // so the final result can be a proper error when nothing worked.
+        let mut any_engine_ok = false;
         for engine in engines {
             let resp = client.get(engine.url(query)).send().await;
             let html = match resp {
@@ -109,6 +112,7 @@ impl Tool for WebSearchTool {
                     continue;
                 }
             };
+            any_engine_ok = true;
 
             let results = engine.parse(&html, limit);
             if results.is_empty() {
@@ -136,6 +140,12 @@ impl Tool for WebSearchTool {
             };
         }
 
+        if !any_engine_ok {
+            return ToolResult::error(format!(
+                "All search engines failed: {}",
+                attempts.join("; ")
+            ));
+        }
         ToolResult::text(format!(
             "No results found for this query. (attempts: {})",
             attempts.join("; ")
